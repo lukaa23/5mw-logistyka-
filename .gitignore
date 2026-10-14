@@ -4,5 +4,6 @@ __pycache__/
 pypdf/
 .venv/
 frontend/node_modules/
+runtime-packages/
 data/*.db
 data/uploads/

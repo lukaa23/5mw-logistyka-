@@ -9,7 +9,7 @@ Zakres instrukcji montażowych celowo obejmuje konstrukcję mechaniczną. Parser
 1. Pobierz i rozpakuj pełną paczkę ZIP.
 2. Zainstaluj [Python 3.11 lub nowszy](https://www.python.org/downloads/) i podczas instalacji zaznacz dodanie Pythona do systemu.
 3. Uruchom `Uruchom-Windows.bat`.
-4. Przy pierwszym uruchomieniu instalator utworzy środowisko i pobierze zależności. Następnie program otworzy się pod adresem `http://127.0.0.1:8765`.
+4. Skrypt sprawdzi Python 3.11 przez `py -3.11`, a przy pierwszym uruchomieniu pobierze zależności do lokalnego folderu `runtime-packages`. Następnie program otworzy się pod adresem `http://127.0.0.1:8765`.
 
 Dane i wgrane dokumenty są przechowywane w folderze `data`. Nie usuwaj tego folderu, jeśli chcesz zachować historię.
 
