@@ -7,15 +7,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import Integer, func, select
+from sqlalchemy import Integer, delete, func, select
 from sqlalchemy.orm import Session, selectinload
 from .auth import create_token, current_user, decode_token, hash_password, roles, verify_password
 from .database import Base, SessionLocal, UPLOAD_DIR, engine, get_db
-from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, Project, RFI, RowType, RowTypeComponent, Section, User, WorkLog, Zone
+from .migrations import ensure_schema_columns
+from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, MaterialTemplate, Project, ProjectMaterial, RFI, RowType, RowTypeComponent, Section, SiteDelivery, SiteDeliveryItem, User, WorkLog, Zone
 from .services.parser import analyze
 from .services.report import daily_report
 
-app=FastAPI(title="ASOLAR Enterprise Construction & Logistics Manager",version="2.0.0")
+app=FastAPI(title="ASOLAR Universal PV Construction Manager",version="3.0.0")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024
 MAX_PHOTO_SIZE=25*1024*1024
@@ -25,24 +26,33 @@ def utc_now():
 
 class LoginIn(BaseModel): username:str; password:str
 class UserIn(BaseModel): username:str; full_name:str; role:str; password:str=Field(min_length=8)
-class ProjectIn(BaseModel): name:str; location:str=""; capacity_mw:float=0
+class ProjectIn(BaseModel): name:str; location:str=""; capacity_mw:float=0; structure_type:str="tracker"
+class ProjectUpdate(BaseModel): name:str|None=None; location:str|None=None; capacity_mw:float|None=None; structure_type:str|None=None; archived:bool|None=None
 class ZoneIn(BaseModel): project_id:int; name:str
 class SectionIn(BaseModel): zone_id:int; name:str
-class RowsIn(BaseModel): section_id:int; prefix:str="R"; start_number:int=1; count:int=Field(ge=1,le=2000); row_type_id:int|None=None; length_m:float=0
-class RowStatusIn(BaseModel): built:bool|None=None; qc_checked:bool|None=None; note:str|None=None
+class NameUpdate(BaseModel): name:str=Field(min_length=1,max_length=180)
+class RowsIn(BaseModel): section_id:int; prefix:str="R"; start_number:int=1; count:int=Field(ge=1,le=2000); template_id:int|None=None; variant_name:str=""; length_m:float=0; specification:str=""; material_quantities:dict[str,float]=Field(default_factory=dict)
+class RowIn(BaseModel): section_id:int; code:str; template_id:int|None=None; variant_name:str=""; length_m:float=0; specification:str=""; material_quantities:dict[str,float]=Field(default_factory=dict)
+class RowUpdate(BaseModel): code:str|None=None; template_id:int|None=None; variant_name:str|None=None; length_m:float|None=None; specification:str|None=None; material_quantities:dict[str,float]|None=None; built:bool|None=None; qc_checked:bool|None=None; note:str|None=None
 class RFIIn(BaseModel): project_id:int; row_id:int|None=None; title:str; description:str; priority:str="normalny"; client_id:str|None=None
 class RFIUpdate(BaseModel): status:str|None=None; assigned_to_id:int|None=None; priority:str|None=None
-class WorkLogIn(BaseModel): project_id:int; work_date:date=Field(default_factory=date.today); team:str; stage:str; people:int=Field(ge=1,le=1000); hours:float=Field(gt=0,le=24); rows_completed:float=Field(ge=0); note:str=""; client_id:str|None=None
-class DeliveryItemIn(BaseModel): component_id:int; quantity_received:float=Field(gt=0); quantity_damaged:float=Field(ge=0,default=0)
+class WorkLogIn(BaseModel): project_id:int; work_date:date=Field(default_factory=date.today); team:str; stage:str; people:int=Field(ge=1,le=1000); hours:float=Field(gt=0,le=24,default=8); rows_completed:float=Field(ge=0); qc_notes:str=""; note:str=""; row_id:int|None=None; client_id:str|None=None
+class WorkLogUpdate(BaseModel): work_date:date|None=None; team:str|None=None; stage:str|None=None; people:int|None=Field(default=None,ge=1,le=1000); hours:float|None=Field(default=None,gt=0,le=24); rows_completed:float|None=Field(default=None,ge=0); qc_notes:str|None=None; note:str|None=None; row_id:int|None=None
+class DeliveryItemIn(BaseModel): material_id:int; quantity_received:float=Field(gt=0); quantity_damaged:float=Field(ge=0,default=0)
 class DeliveryIn(BaseModel): project_id:int; delivery_date:date=Field(default_factory=date.today); wz_number:str; supplier:str=""; note:str=""; client_id:str|None=None; items:list[DeliveryItemIn]
-class CalculatorIn(BaseModel): row_type_id:int; length_m:float=Field(gt=0,le=500); row_count:int=Field(ge=1,le=5000)
+class MaterialIn(BaseModel): slot_number:int=Field(ge=1,le=3); name:str=Field(min_length=1,max_length=180); unit:str="szt."; required_quantity:float=Field(ge=0)
+class MaterialListIn(BaseModel): items:list[MaterialIn]=Field(min_length=3,max_length=3)
+class TemplateIn(BaseModel): project_id:int; name:str=Field(min_length=1,max_length=120); structure_type:str=""; default_length_m:float=Field(ge=0,le=1000); specification:str=""; materials:dict[str,float]=Field(default_factory=dict)
+class TemplateUpdate(BaseModel): name:str|None=None; structure_type:str|None=None; default_length_m:float|None=None; specification:str|None=None; materials:dict[str,float]|None=None
+class CalculatorIn(BaseModel): project_id:int; template_id:int|None=None; variant_name:str=""; length_m:float=Field(ge=0,le=1000); row_count:int=Field(ge=1,le=5000); materials:dict[str,float]|None=None
 
 def audit(db,user,action,entity_type,entity_id=None,details=""):
     db.add(AuditEvent(user_id=user.id if user else None,action=action,entity_type=entity_type,entity_id=entity_id,details=details))
 
 def user_dict(user): return {"id":user.id,"username":user.username,"full_name":user.full_name,"role":user.role,"active":user.active}
+def project_dict(project): return {"id":project.id,"name":project.name,"location":project.location,"capacity_mw":project.capacity_mw,"structure_type":project.structure_type,"archived":project.archived,"archived_at":project.archived_at}
 def row_dict(row):
-    return {"id":row.id,"code":row.code,"section_id":row.section_id,"row_type_id":row.row_type_id,"row_type":row.row_type.name if row.row_type else None,"length_m":row.length_m,"built":row.built,"built_by":row.built_by.full_name if row.built_by else None,"built_at":row.built_at,"qc_checked":row.qc_checked,"qc_by":row.qc_by.full_name if row.qc_by else None,"qc_at":row.qc_at,"note":row.note}
+    return {"id":row.id,"code":row.code,"section_id":row.section_id,"template_id":row.template_id,"variant_name":row.variant_name,"length_m":row.length_m,"specification":row.specification,"material_quantities":json.loads(row.material_quantities_json or "{}"),"built":row.built,"built_by":row.built_by.full_name if row.built_by else None,"built_at":row.built_at,"qc_checked":row.qc_checked,"qc_by":row.qc_by.full_name if row.qc_by else None,"qc_at":row.qc_at,"note":row.note}
 
 class Realtime:
     def __init__(self): self.clients=[]
@@ -55,8 +65,16 @@ class Realtime:
             except Exception:self.disconnect(ws)
 realtime=Realtime()
 
+DEFAULT_MATERIALS=((1,"Rury / profile konstrukcyjne","szt."),(2,"Płatwie","szt."),(3,"Śruby i łączenia","szt."))
+
+def ensure_materials(db,project_id):
+    existing={item.slot_number for item in db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==project_id))}
+    for slot,name,unit in DEFAULT_MATERIALS:
+        if slot not in existing:db.add(ProjectMaterial(project_id=project_id,slot_number=slot,name=name,unit=unit,required_quantity=0))
+
 def seed():
     Base.metadata.create_all(engine)
+    ensure_schema_columns(engine)
     with SessionLocal() as db:
         if not db.scalar(select(func.count(User.id))):
             db.add_all([
@@ -65,25 +83,14 @@ def seed():
                 User(username="magazynier",full_name="Magazynier",role="magazynier",password_hash=hash_password("Magazyn2026!"))])
         project=db.scalar(select(Project).limit(1))
         if not project:
-            project=Project(name="Farma PV 6,5 MW",location="Projekt budowy",capacity_mw=6.5); db.add(project); db.flush()
+            project=Project(name="Farma PV 6,5 MW",location="Projekt budowy",capacity_mw=6.5,structure_type="tracker"); db.add(project); db.flush()
             zone=Zone(project_id=project.id,name="Strefa A"); db.add(zone); db.flush(); db.add(Section(zone_id=zone.id,name="Sekcja A1"))
-        presets=[("1P×28",38.459,30),("1P×42",57.946,44),("1P×56",77.080,58),("1P×70",95.481,73)]
-        for name,length,purlins in presets:
-            row_type=db.scalar(select(RowType).where(RowType.name==name))
-            if not row_type:
-                row_type=RowType(name=name,structure_kind="tracker 1-noga",reference_length_m=length,description="Wariant referencyjny z manual v.2"); db.add(row_type); db.flush()
-            seed_components=[(f"PURLIN-{name}","Płatew","Konstrukcja",purlins),(f"UBOLT-{name}","Śruba U M10","Śruby",purlins),(f"NUT-M10-{name}","Nakrętka kołnierzowa M10","Śruby",purlins*2)]
-            for sku,cname,cat,qty in seed_components:
-                comp=db.scalar(select(Component).where(Component.sku==sku))
-                if not comp:
-                    comp=Component(sku=sku,name=cname,category=cat,unit="szt.",torque_min_nm=25 if "NUT" in sku else None,torque_max_nm=32 if "NUT" in sku else None); db.add(comp); db.flush()
-                if not db.scalar(select(RowTypeComponent).where(RowTypeComponent.row_type_id==row_type.id,RowTypeComponent.component_id==comp.id)):
-                    db.add(RowTypeComponent(row_type_id=row_type.id,component_id=comp.id,quantity=qty))
+        for item in db.scalars(select(Project)).all():ensure_materials(db,item.id)
         db.commit()
 seed()
 
 @app.get("/api/health")
-def health(): return {"status":"ok","version":"2.0.0","time":utc_now()}
+def health(): return {"status":"ok","version":"3.0.0","time":utc_now()}
 
 @app.post("/api/auth/login")
 def login(data:LoginIn,db:Session=Depends(get_db)):
@@ -104,26 +111,77 @@ def create_user(data:UserIn,db:Session=Depends(get_db),user=Depends(roles("kiero
     item=User(username=data.username,full_name=data.full_name,role=data.role,password_hash=hash_password(data.password));db.add(item);db.commit();return user_dict(item)
 
 @app.get("/api/projects")
-def projects(db:Session=Depends(get_db),user=Depends(current_user)):
-    return [{"id":x.id,"name":x.name,"location":x.location,"capacity_mw":x.capacity_mw} for x in db.scalars(select(Project).order_by(Project.name))]
+def projects(include_archived:bool=False,db:Session=Depends(get_db),user=Depends(current_user)):
+    query=select(Project).order_by(Project.archived,Project.name)
+    if not include_archived:query=query.where(Project.archived==False)
+    return [project_dict(x) for x in db.scalars(query)]
 
 @app.post("/api/projects")
 async def create_project(data:ProjectIn,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
-    item=Project(**data.model_dump());db.add(item);db.flush();audit(db,user,"create","project",item.id,item.name);db.commit();await realtime.send("project.changed",{"id":item.id});return {"id":item.id}
+    item=Project(**data.model_dump());db.add(item);db.flush();ensure_materials(db,item.id);audit(db,user,"create","project",item.id,item.name);db.commit();await realtime.send("project.changed",{"id":item.id});return project_dict(item)
+
+@app.patch("/api/projects/{project_id}")
+async def update_project(project_id:int,data:ProjectUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    item=db.get(Project,project_id)
+    if not item:raise HTTPException(404,"Brak projektu")
+    values=data.model_dump(exclude_none=True)
+    if "archived" in values:item.archived_at=utc_now() if values["archived"] else None
+    for key,value in values.items():setattr(item,key,value)
+    audit(db,user,"update","project",item.id,json.dumps(values,ensure_ascii=False));db.commit();await realtime.send("project.changed",{"id":item.id});return project_dict(item)
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    item=db.get(Project,project_id)
+    if not item:raise HTTPException(404,"Brak projektu")
+    row_ids=list(db.scalars(select(ConstructionRow.id).join(Section).join(Zone).where(Zone.project_id==project_id)))
+    rfi_ids=list(db.scalars(select(RFI.id).where(RFI.project_id==project_id)))
+    log_ids=list(db.scalars(select(WorkLog.id).where(WorkLog.project_id==project_id)))
+    attachments=db.scalars(select(Attachment).where((Attachment.entity_type=="row") & (Attachment.entity_id.in_(row_ids or [-1])) | (Attachment.entity_type=="rfi") & (Attachment.entity_id.in_(rfi_ids or [-1])) | (Attachment.entity_type=="worklog") & (Attachment.entity_id.in_(log_ids or [-1])))).all()
+    for photo in attachments:(UPLOAD_DIR/photo.stored_name).unlink(missing_ok=True);db.delete(photo)
+    for document in db.scalars(select(Document).where(Document.project_id==project_id)).all():(UPLOAD_DIR/document.stored_name).unlink(missing_ok=True);db.delete(document)
+    db.execute(delete(RFI).where(RFI.project_id==project_id));db.execute(delete(WorkLog).where(WorkLog.project_id==project_id));db.execute(delete(Delivery).where(Delivery.project_id==project_id));db.execute(delete(SiteDelivery).where(SiteDelivery.project_id==project_id))
+    db.delete(item);db.commit();await realtime.send("project.deleted",{"id":project_id});return {"ok":True}
 
 @app.get("/api/projects/{project_id}/tree")
 def project_tree(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
     project=db.scalar(select(Project).where(Project.id==project_id).options(selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.row_type),selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.built_by),selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.qc_by)))
     if not project: raise HTTPException(404,"Brak projektu")
-    return {"id":project.id,"name":project.name,"location":project.location,"capacity_mw":project.capacity_mw,"zones":[{"id":z.id,"name":z.name,"sections":[{"id":s.id,"name":s.name,"archived":s.archived,"rows":[row_dict(r) for r in s.rows]} for s in z.sections]} for z in project.zones]}
+    return {**project_dict(project),"zones":[{"id":z.id,"name":z.name,"sections":[{"id":s.id,"name":s.name,"archived":s.archived,"rows":[row_dict(r) for r in s.rows]} for s in z.sections]} for z in project.zones]}
 
 @app.post("/api/zones")
 async def create_zone(data:ZoneIn,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
     item=Zone(**data.model_dump());db.add(item);db.flush();audit(db,user,"create","zone",item.id,item.name);db.commit();await realtime.send("structure.changed",{"project_id":data.project_id});return {"id":item.id}
 
+@app.patch("/api/zones/{zone_id}")
+async def update_zone(zone_id:int,data:NameUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    item=db.get(Zone,zone_id)
+    if not item:raise HTTPException(404,"Brak strefy")
+    item.name=data.name;db.commit();await realtime.send("structure.changed",{"project_id":item.project_id});return {"ok":True}
+
 @app.post("/api/sections")
 async def create_section(data:SectionIn,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
     item=Section(**data.model_dump());db.add(item);db.flush();audit(db,user,"create","section",item.id,item.name);db.commit();await realtime.send("structure.changed");return {"id":item.id}
+
+@app.patch("/api/sections/{section_id}")
+async def update_section(section_id:int,data:NameUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    item=db.get(Section,section_id)
+    if not item:raise HTTPException(404,"Brak sekcji")
+    item.name=data.name;db.commit();await realtime.send("structure.changed");return {"ok":True}
+
+@app.delete("/api/sections/{section_id}")
+async def delete_section(section_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    item=db.get(Section,section_id)
+    if not item:raise HTTPException(404,"Brak sekcji")
+    row_ids=list(db.scalars(select(ConstructionRow.id).where(ConstructionRow.section_id==section_id)))
+    for rfi in db.scalars(select(RFI).where(RFI.row_id.in_(row_ids or [-1]))):rfi.row_id=None
+    for photo in db.scalars(select(Attachment).where(Attachment.entity_type=="row",Attachment.entity_id.in_(row_ids or [-1]))).all():(UPLOAD_DIR/photo.stored_name).unlink(missing_ok=True);db.delete(photo)
+    db.delete(item);db.commit();await realtime.send("structure.changed");return {"ok":True}
+
+@app.post("/api/rows")
+async def create_row(data:RowIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    if not db.get(Section,data.section_id):raise HTTPException(404,"Brak sekcji")
+    if db.scalar(select(ConstructionRow).where(ConstructionRow.section_id==data.section_id,ConstructionRow.code==data.code)):raise HTTPException(409,"Rząd o tym oznaczeniu już istnieje w sekcji")
+    values=data.model_dump(exclude={"material_quantities"});item=ConstructionRow(**values,material_quantities_json=json.dumps(data.material_quantities,ensure_ascii=False));db.add(item);db.flush();audit(db,user,"create","row",item.id,item.code);db.commit();await realtime.send("structure.changed");return row_dict(item)
 
 @app.post("/api/rows/bulk")
 async def create_rows(data:RowsIn,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
@@ -133,11 +191,11 @@ async def create_rows(data:RowsIn,db:Session=Depends(get_db),user=Depends(roles(
     for i in range(data.start_number,data.start_number+data.count):
         code=f"{data.prefix}{i:03d}"
         if db.scalar(select(ConstructionRow).where(ConstructionRow.section_id==data.section_id,ConstructionRow.code==code)): continue
-        row=ConstructionRow(section_id=data.section_id,row_type_id=data.row_type_id,code=code,length_m=data.length_m);db.add(row);db.flush();created.append(row.id)
+        row=ConstructionRow(section_id=data.section_id,template_id=data.template_id,code=code,variant_name=data.variant_name,length_m=data.length_m,specification=data.specification,material_quantities_json=json.dumps(data.material_quantities,ensure_ascii=False));db.add(row);db.flush();created.append(row.id)
     audit(db,user,"bulk_create","row",details=f"{len(created)} rzędów");db.commit();await realtime.send("structure.changed");return {"created":len(created),"ids":created}
 
 @app.patch("/api/rows/{row_id}")
-async def update_row(row_id:int,data:RowStatusIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+async def update_row(row_id:int,data:RowUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
     row=db.get(ConstructionRow,row_id)
     if not row: raise HTTPException(404,"Brak rzędu")
     now=utc_now()
@@ -149,7 +207,19 @@ async def update_row(row_id:int,data:RowStatusIn,db:Session=Depends(get_db),user
         if data.qc_checked and not row.built: raise HTTPException(400,"Najpierw oznacz rząd jako zbudowany")
         row.qc_checked=data.qc_checked;row.qc_by_id=user.id if data.qc_checked else None;row.qc_at=now if data.qc_checked else None
     if data.note is not None: row.note=data.note
-    audit(db,user,"update_status","row",row.id,json.dumps(data.model_dump(exclude_none=True),ensure_ascii=False));db.commit();await realtime.send("row.changed",{"id":row.id});db.refresh(row);return row_dict(row)
+    values=data.model_dump(exclude_unset=True,exclude={"built","qc_checked","note","material_quantities"})
+    for key,value in values.items():setattr(row,key,value)
+    if "material_quantities" in data.model_fields_set:row.material_quantities_json=json.dumps(data.material_quantities or {},ensure_ascii=False)
+    audit(db,user,"update","row",row.id,json.dumps(data.model_dump(exclude_unset=True),ensure_ascii=False));db.commit();await realtime.send("row.changed",{"id":row.id});db.refresh(row);return row_dict(row)
+
+@app.delete("/api/rows/{row_id}")
+async def delete_row(row_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    row=db.get(ConstructionRow,row_id)
+    if not row:raise HTTPException(404,"Brak rzędu")
+    for rfi in db.scalars(select(RFI).where(RFI.row_id==row_id)):rfi.row_id=None
+    for log in db.scalars(select(WorkLog).where(WorkLog.row_id==row_id)):log.row_id=None
+    for photo in db.scalars(select(Attachment).where(Attachment.entity_type=="row",Attachment.entity_id==row_id)).all():(UPLOAD_DIR/photo.stored_name).unlink(missing_ok=True);db.delete(photo)
+    db.delete(row);db.commit();await realtime.send("structure.changed");return {"ok":True}
 
 @app.post("/api/sections/{section_id}/archive")
 async def archive_section(section_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
@@ -177,30 +247,50 @@ def requirements(project_id:int|None=None,section_id:int|None=None,db:Session=De
 def components(db:Session=Depends(get_db),user=Depends(current_user)):
     return [{"id":x.id,"sku":x.sku,"name":x.name,"category":x.category,"unit":x.unit,"torque_min_nm":x.torque_min_nm,"torque_max_nm":x.torque_max_nm} for x in db.scalars(select(Component).order_by(Component.category,Component.name))]
 
+def template_dict(item):
+    return {"id":item.id,"project_id":item.project_id,"name":item.name,"structure_type":item.structure_type,"default_length_m":item.default_length_m,"specification":item.specification,"materials":json.loads(item.materials_json or "{}"),"updated_at":item.updated_at}
+
+def clean_three_materials(values):
+    return {str(slot):max(0,float((values or {}).get(str(slot),(values or {}).get(slot,0)) or 0)) for slot in range(1,4)}
+
+@app.get("/api/material-templates")
+def material_templates(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+    return [template_dict(item) for item in db.scalars(select(MaterialTemplate).where(MaterialTemplate.project_id==project_id).order_by(MaterialTemplate.name))]
+
+@app.post("/api/material-templates")
+async def create_template(data:TemplateIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    if not db.get(Project,data.project_id):raise HTTPException(404,"Brak projektu")
+    if db.scalar(select(MaterialTemplate).where(MaterialTemplate.project_id==data.project_id,MaterialTemplate.name==data.name)):raise HTTPException(409,"Szablon o tej nazwie już istnieje")
+    values=data.model_dump(exclude={"materials"});item=MaterialTemplate(**values,materials_json=json.dumps(clean_three_materials(data.materials),ensure_ascii=False));db.add(item);db.flush();audit(db,user,"create","material_template",item.id,item.name);db.commit();await realtime.send("template.changed",{"id":item.id});return template_dict(item)
+
+@app.patch("/api/material-templates/{template_id}")
+async def update_template(template_id:int,data:TemplateUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    item=db.get(MaterialTemplate,template_id)
+    if not item:raise HTTPException(404,"Brak szablonu")
+    values=data.model_dump(exclude_unset=True,exclude={"materials"})
+    for key,value in values.items():setattr(item,key,value)
+    if "materials" in data.model_fields_set:item.materials_json=json.dumps(clean_three_materials(data.materials),ensure_ascii=False)
+    item.updated_at=utc_now();db.commit();await realtime.send("template.changed",{"id":item.id});return template_dict(item)
+
+@app.delete("/api/material-templates/{template_id}")
+async def delete_template(template_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    item=db.get(MaterialTemplate,template_id)
+    if not item:raise HTTPException(404,"Brak szablonu")
+    for row in db.scalars(select(ConstructionRow).where(ConstructionRow.template_id==template_id)):row.template_id=None
+    db.delete(item);db.commit();await realtime.send("template.changed");return {"ok":True}
+
 @app.post("/api/calculator")
 def calculate_equipment(data:CalculatorIn,db:Session=Depends(get_db),user=Depends(current_user)):
-    row_type=db.scalar(select(RowType).where(RowType.id==data.row_type_id).options(selectinload(RowType.components).selectinload(RowTypeComponent.component)))
-    if not row_type: raise HTTPException(404,"Brak typu konstrukcji")
-    reference=row_type.reference_length_m or data.length_m
-    factor=data.length_m/reference
-    materials=[]
-    torque_values=[]
-    for relation in row_type.components:
-        per_row=math.ceil(relation.quantity*factor)
-        component=relation.component
-        materials.append({"component_id":component.id,"sku":component.sku,"name":component.name,"category":component.category,"unit":component.unit,"per_row":per_row,"total":per_row*data.row_count,"torque_min_nm":component.torque_min_nm,"torque_max_nm":component.torque_max_nm})
-        if component.torque_min_nm is not None:
-            torque_values.append((component.torque_min_nm,component.torque_max_nm or component.torque_min_nm))
-    torque_min=min((x[0] for x in torque_values),default=20)
-    torque_max=max((x[1] for x in torque_values),default=100)
-    tools=[
-        {"name":"Klucz dynamometryczny","quantity":max(1,math.ceil(data.row_count/8)),"specification":f"zakres obejmujący {torque_min:g}–{torque_max:g} Nm"},
-        {"name":"Klucz udarowy akumulatorowy","quantity":max(1,math.ceil(data.row_count/10)),"specification":"z kompletem nasadek zgodnych z BOM"},
-        {"name":"Klucz płasko-oczkowy / nasadki","quantity":max(2,math.ceil(data.row_count/5)),"specification":"rozmiary według śrub z BOM"},
-        {"name":"Poziomica i taśma miernicza","quantity":max(1,math.ceil(data.row_count/12)),"specification":"kontrola osi i położenia konstrukcji"},
-        {"name":"Marker, kreda traserska, zestaw kontroli QC","quantity":1,"specification":"na brygadę"},
-    ]
-    return {"row_type":{"id":row_type.id,"name":row_type.name,"structure_kind":row_type.structure_kind,"reference_length_m":reference},"input":{"length_m":data.length_m,"row_count":data.row_count,"scale_factor":round(factor,4)},"materials":materials,"tools":tools,"assumption":"Ilości elementów liniowych są zaokrąglane w górę względem długości referencyjnej BOM. Wynik należy porównać z zatwierdzoną dokumentacją projektu."}
+    if not db.get(Project,data.project_id):raise HTTPException(404,"Brak projektu")
+    template=db.get(MaterialTemplate,data.template_id) if data.template_id else None
+    if template and template.project_id!=data.project_id:raise HTTPException(400,"Szablon należy do innego projektu")
+    source=data.materials if data.materials is not None else (json.loads(template.materials_json or "{}") if template else {})
+    quantities=clean_three_materials(source)
+    slots=db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==data.project_id).order_by(ProjectMaterial.slot_number)).all()
+    ensure_materials(db,data.project_id)
+    if len(slots)!=3:db.flush();slots=db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==data.project_id).order_by(ProjectMaterial.slot_number)).all()
+    materials=[{"material_id":slot.id,"slot_number":slot.slot_number,"name":slot.name,"unit":slot.unit,"per_row":quantities[str(slot.slot_number)],"total":quantities[str(slot.slot_number)]*data.row_count} for slot in slots]
+    return {"template":template_dict(template) if template else None,"variant_name":data.variant_name or (template.name if template else "Konfiguracja własna"),"input":{"length_m":data.length_m,"row_count":data.row_count},"materials":materials,"assumption":"Ilości nie są automatycznie skalowane długością. Użytkownik może ręcznie zmienić każdą z trzech pozycji przed obliczeniem lub zapisaniem szablonu."}
 
 @app.get("/api/documents")
 def documents(project_id:int|None=None,db:Session=Depends(get_db),user=Depends(current_user)):
@@ -243,13 +333,34 @@ async def create_worklog(data:WorkLogIn,db:Session=Depends(get_db),user=Depends(
     if data.client_id:
         existing=db.scalar(select(WorkLog).where(WorkLog.client_id==data.client_id))
         if existing:return {"id":existing.id,"deduplicated":True}
+    if data.row_id:
+        row=db.scalar(select(ConstructionRow).join(Section).join(Zone).where(ConstructionRow.id==data.row_id,Zone.project_id==data.project_id))
+        if not row:raise HTTPException(400,"Rząd nie należy do wybranego projektu")
     item=WorkLog(**data.model_dump(),author_id=user.id);db.add(item);db.flush();audit(db,user,"create","worklog",item.id);db.commit();await realtime.send("worklog.changed",{"project_id":data.project_id});return {"id":item.id}
 
 @app.get("/api/worklogs")
 def worklogs(project_id:int,work_date:date|None=None,db:Session=Depends(get_db),user=Depends(current_user)):
     q=select(WorkLog).where(WorkLog.project_id==project_id).order_by(WorkLog.work_date.desc(),WorkLog.created_at.desc())
     if work_date:q=q.where(WorkLog.work_date==work_date)
-    return [{"id":x.id,"work_date":x.work_date,"team":x.team,"stage":x.stage,"people":x.people,"hours":x.hours,"rows_completed":x.rows_completed,"manhours":x.people*x.hours,"note":x.note} for x in db.scalars(q).all()]
+    result=[]
+    for x in db.scalars(q).all():
+        photos=db.scalar(select(func.count(Attachment.id)).where(Attachment.entity_type=="worklog",Attachment.entity_id==x.id)) or 0
+        result.append({"id":x.id,"work_date":x.work_date,"team":x.team,"stage":x.stage,"people":x.people,"hours":x.hours,"rows_completed":x.rows_completed,"manhours":x.people*x.hours,"qc_notes":x.qc_notes,"note":x.note,"row_id":x.row_id,"photos":photos})
+    return result
+
+@app.patch("/api/worklogs/{worklog_id}")
+async def update_worklog(worklog_id:int,data:WorkLogUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    item=db.get(WorkLog,worklog_id)
+    if not item:raise HTTPException(404,"Brak meldunku")
+    for key,value in data.model_dump(exclude_unset=True).items():setattr(item,key,value)
+    db.commit();await realtime.send("worklog.changed",{"project_id":item.project_id});return {"ok":True}
+
+@app.delete("/api/worklogs/{worklog_id}")
+async def delete_worklog(worklog_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    item=db.get(WorkLog,worklog_id)
+    if not item:raise HTTPException(404,"Brak meldunku")
+    for photo in db.scalars(select(Attachment).where(Attachment.entity_type=="worklog",Attachment.entity_id==worklog_id)).all():(UPLOAD_DIR/photo.stored_name).unlink(missing_ok=True);db.delete(photo)
+    project_id=item.project_id;db.delete(item);db.commit();await realtime.send("worklog.changed",{"project_id":project_id});return {"ok":True}
 
 @app.post("/api/rfis")
 async def create_rfi(data:RFIIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
@@ -278,9 +389,10 @@ async def update_rfi(rfi_id:int,data:RFIUpdate,db:Session=Depends(get_db),user=D
 
 @app.post("/api/{entity_type}/{entity_id}/photos")
 async def upload_photo(entity_type:str,entity_id:int,file:UploadFile=File(...),db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
-    if entity_type not in ("row","rfi"):raise HTTPException(400,"Zdjęcie można przypisać do rzędu lub RFI")
-    entity=db.get(ConstructionRow if entity_type=="row" else RFI,entity_id)
-    if not entity:raise HTTPException(404,"Nie znaleziono wskazanego rzędu lub RFI")
+    entity_models={"row":ConstructionRow,"rfi":RFI,"worklog":WorkLog}
+    if entity_type not in entity_models:raise HTTPException(400,"Zdjęcie można przypisać do rzędu, RFI lub meldunku")
+    entity=db.get(entity_models[entity_type],entity_id)
+    if not entity:raise HTTPException(404,"Nie znaleziono wskazanego obiektu")
     if file.size is not None and file.size>MAX_PHOTO_SIZE:raise HTTPException(413,"Zdjęcie przekracza limit 25 MB")
     mime=file.content_type or "application/octet-stream"
     if not mime.startswith("image/"):raise HTTPException(400,"Wymagany plik zdjęcia")
@@ -292,7 +404,7 @@ async def upload_photo(entity_type:str,entity_id:int,file:UploadFile=File(...),d
 
 @app.get("/api/{entity_type}/{entity_id}/photos")
 def photos(entity_type:str,entity_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
-    if entity_type not in ("row","rfi"):raise HTTPException(400,"Nieznany typ obiektu")
+    if entity_type not in ("row","rfi","worklog"):raise HTTPException(400,"Nieznany typ obiektu")
     items=db.scalars(select(Attachment).where(Attachment.entity_type==entity_type,Attachment.entity_id==entity_id).order_by(Attachment.created_at.desc())).all()
     return [{"id":item.id,"filename":item.filename,"mime_type":item.mime_type,"created_at":item.created_at,"url":f"/api/attachments/{item.id}"} for item in items]
 
@@ -305,26 +417,40 @@ def attachment(attachment_id:int,db:Session=Depends(get_db),user=Depends(current
 @app.post("/api/deliveries")
 async def create_delivery(data:DeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","magazynier"))):
     if data.client_id:
-        existing=db.scalar(select(Delivery).where(Delivery.client_id==data.client_id))
+        existing=db.scalar(select(SiteDelivery).where(SiteDelivery.client_id==data.client_id))
         if existing:return {"id":existing.id,"deduplicated":True}
-    payload=data.model_dump(exclude={"items"});item=Delivery(**payload,created_by_id=user.id);db.add(item);db.flush()
-    for value in data.items:db.add(DeliveryItem(delivery_id=item.id,**value.model_dump()))
+    material_ids={item.id for item in db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==data.project_id))}
+    if any(value.material_id not in material_ids for value in data.items):raise HTTPException(400,"Pozycja dostawy nie należy do trzech materiałów projektu")
+    payload=data.model_dump(exclude={"items"});item=SiteDelivery(**payload,created_by_id=user.id);db.add(item);db.flush()
+    for value in data.items:db.add(SiteDeliveryItem(delivery_id=item.id,**value.model_dump()))
     audit(db,user,"create","delivery",item.id,item.wz_number);db.commit();await realtime.send("delivery.changed",{"project_id":data.project_id});return {"id":item.id}
 
 @app.get("/api/deliveries")
 def deliveries(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
-    items=db.scalars(select(Delivery).where(Delivery.project_id==project_id).options(selectinload(Delivery.items).selectinload(DeliveryItem.component)).order_by(Delivery.delivery_date.desc())).all()
-    return [{"id":x.id,"delivery_date":x.delivery_date,"wz_number":x.wz_number,"supplier":x.supplier,"note":x.note,"items":[{"component_id":i.component_id,"name":i.component.name,"sku":i.component.sku,"quantity_received":i.quantity_received,"quantity_damaged":i.quantity_damaged,"unit":i.component.unit} for i in x.items]} for x in items]
+    items=db.scalars(select(SiteDelivery).where(SiteDelivery.project_id==project_id).options(selectinload(SiteDelivery.items).selectinload(SiteDeliveryItem.material)).order_by(SiteDelivery.delivery_date.desc(),SiteDelivery.created_at.desc())).all()
+    return [{"id":x.id,"delivery_date":x.delivery_date,"wz_number":x.wz_number,"supplier":x.supplier,"note":x.note,"items":[{"material_id":i.material_id,"name":i.material.name,"quantity_received":i.quantity_received,"quantity_damaged":i.quantity_damaged,"unit":i.material.unit} for i in x.items]} for x in items]
+
+@app.get("/api/projects/{project_id}/materials")
+def project_materials(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    ensure_materials(db,project_id);db.commit()
+    return [{"id":item.id,"slot_number":item.slot_number,"name":item.name,"unit":item.unit,"required_quantity":item.required_quantity} for item in db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==project_id).order_by(ProjectMaterial.slot_number))]
+
+@app.put("/api/projects/{project_id}/materials")
+async def update_project_materials(project_id:int,data:MaterialListIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","magazynier"))):
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    if {item.slot_number for item in data.items}!={1,2,3}:raise HTTPException(400,"Lista musi zawierać dokładnie pozycje 1, 2 i 3")
+    ensure_materials(db,project_id);db.flush();by_slot={item.slot_number:item for item in db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==project_id))}
+    for value in data.items:
+        item=by_slot[value.slot_number];item.name=value.name;item.unit=value.unit;item.required_quantity=value.required_quantity
+    audit(db,user,"update","project_materials",project_id);db.commit();await realtime.send("materials.changed",{"project_id":project_id});return {"ok":True}
 
 @app.get("/api/logistics/stock")
 def stock(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
-    required={c.id:(c,req) for c,req,_ in db.execute(requirements_query(db,project_id=project_id))}
-    received=dict(db.execute(select(DeliveryItem.component_id,func.sum(DeliveryItem.quantity_received-DeliveryItem.quantity_damaged)).join(Delivery).where(Delivery.project_id==project_id).group_by(DeliveryItem.component_id)).all())
-    ids=set(required)|set(received);result=[]
-    for cid in ids:
-        comp=required.get(cid,(db.get(Component,cid),0))[0];req=float(required.get(cid,(None,0))[1] or 0);got=float(received.get(cid,0) or 0)
-        result.append({"component_id":cid,"sku":comp.sku,"name":comp.name,"unit":comp.unit,"required":req,"available":got,"balance":got-req,"status":"komplet" if got>=req else "brak"})
-    return sorted(result,key=lambda x:(x["status"],x["name"]))
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    ensure_materials(db,project_id);db.commit();slots=db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==project_id).order_by(ProjectMaterial.slot_number)).all()
+    received=dict(db.execute(select(SiteDeliveryItem.material_id,func.sum(SiteDeliveryItem.quantity_received-SiteDeliveryItem.quantity_damaged)).join(SiteDelivery).where(SiteDelivery.project_id==project_id).group_by(SiteDeliveryItem.material_id)).all())
+    return [{"material_id":item.id,"slot_number":item.slot_number,"name":item.name,"unit":item.unit,"required":float(item.required_quantity or 0),"available":float(received.get(item.id,0) or 0),"balance":float(received.get(item.id,0) or 0)-float(item.required_quantity or 0),"status":"komplet" if float(received.get(item.id,0) or 0)>=float(item.required_quantity or 0) else "brak"} for item in slots]
 
 @app.get("/api/dashboard")
 def dashboard(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):

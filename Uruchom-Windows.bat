@@ -17,12 +17,12 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist "runtime-packages\.asolar-deps-v2" (
+if not exist "runtime-packages\.asolar-deps-v3" (
   echo [ASOLAR] Przygotowanie srodowiska przy pierwszym uruchomieniu...
   if not exist "runtime-packages" mkdir "runtime-packages"
   py -3.11 -m pip install --upgrade --target "runtime-packages" -r requirements.txt
   if errorlevel 1 goto :error
-  type nul > "runtime-packages\.asolar-deps-v2"
+  type nul > "runtime-packages\.asolar-deps-v3"
 )
 
 if not exist "frontend\dist\index.html" (

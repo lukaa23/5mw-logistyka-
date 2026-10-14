@@ -3,19 +3,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
-TEST_DB = Path(tempfile.gettempdir()) / "asolar-enterprise-test.db"
+TEST_DB = Path(tempfile.gettempdir()) / "asolar-universal-test.db"
 TEST_DB.unlink(missing_ok=True)
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB}"
 os.environ["ASOLAR_SECRET"] = "test-only-secret"
 
 from fastapi.testclient import TestClient
-from app.main import app
-from app.database import SessionLocal
-from app.services.parser import analyze
 from openpyxl import Workbook
 
+from app.database import SessionLocal
+from app.main import app
+from app.services.parser import analyze
 
-class EnterpriseWorkflowTest(unittest.TestCase):
+
+class UniversalWorkflowTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(app)
@@ -29,100 +30,137 @@ class EnterpriseWorkflowTest(unittest.TestCase):
         assert response.status_code == 200, response.text
         return {"Authorization": f"Bearer {response.json()['token']}"}
 
-    def test_complete_construction_logistics_and_reporting_workflow(self):
-        project = self.client.post(
-            "/api/projects",
-            headers=self.manager,
-            json={"name": "Test PV", "location": "Polska", "capacity_mw": 5.0},
+    def test_flexible_project_rows_templates_reports_and_field_stock(self):
+        created = self.client.post(
+            "/api/projects", headers=self.manager,
+            json={"name": "Universal PV", "location": "Poznań", "capacity_mw": 7.25, "structure_type": "tracker 1-noga / wariant własny"},
         )
-        self.assertEqual(project.status_code, 200, project.text)
-        project_id = project.json()["id"]
+        self.assertEqual(created.status_code, 200, created.text)
+        project_id = created.json()["id"]
 
-        zone = self.client.post("/api/zones", headers=self.manager, json={"project_id": project_id, "name": "Z1"})
-        section = self.client.post("/api/sections", headers=self.manager, json={"zone_id": zone.json()["id"], "name": "S1"})
-        section_id = section.json()["id"]
-        row_type_id = self.client.get("/api/row-types", headers=self.manager).json()[0]["id"]
-
-        rows = self.client.post(
-            "/api/rows/bulk",
-            headers=self.manager,
-            json={"section_id": section_id, "prefix": "T", "start_number": 1, "count": 2, "row_type_id": row_type_id, "length_m": 40},
+        edited = self.client.patch(
+            f"/api/projects/{project_id}", headers=self.manager,
+            json={"name": "Universal PV — etap 2", "structure_type": "tracker mieszany: 1-noga i 2-nogi"},
         )
-        self.assertEqual(rows.status_code, 200, rows.text)
-        row_ids = rows.json()["ids"]
-        self.assertEqual(len(row_ids), 2)
+        self.assertEqual(edited.status_code, 200, edited.text)
+        self.assertIn("2-nogi", edited.json()["structure_type"])
 
-        built = self.client.patch(f"/api/rows/{row_ids[0]}", headers=self.foreman, json={"built": True})
-        self.assertEqual(built.status_code, 200, built.text)
-        forbidden_qc = self.client.patch(f"/api/rows/{row_ids[0]}", headers=self.foreman, json={"qc_checked": True})
-        self.assertEqual(forbidden_qc.status_code, 403)
-        qc = self.client.patch(f"/api/rows/{row_ids[0]}", headers=self.manager, json={"qc_checked": True})
-        self.assertEqual(qc.status_code, 200, qc.text)
-        blocked_archive = self.client.post(f"/api/sections/{section_id}/archive", headers=self.manager)
-        self.assertEqual(blocked_archive.status_code, 409)
+        materials = self.client.get(f"/api/projects/{project_id}/materials", headers=self.manager).json()
+        self.assertEqual(len(materials), 3)
+        initial_stock = self.client.get(f"/api/logistics/stock?project_id={project_id}", headers=self.manager).json()
+        self.assertEqual(len(initial_stock), 3)
+        self.assertTrue(all(item["available"] == 0 for item in initial_stock))
 
-        self.client.patch(f"/api/rows/{row_ids[1]}", headers=self.foreman, json={"built": True})
-        self.client.patch(f"/api/rows/{row_ids[1]}", headers=self.manager, json={"qc_checked": True})
-        archived = self.client.post(f"/api/sections/{section_id}/archive", headers=self.manager)
-        self.assertEqual(archived.status_code, 200, archived.text)
+        demand_payload = {"items": [
+            {"slot_number": 1, "name": "Rury momentowe", "unit": "szt.", "required_quantity": 100},
+            {"slot_number": 2, "name": "Płatwie", "unit": "szt.", "required_quantity": 280},
+            {"slot_number": 3, "name": "Zestawy śrubowe", "unit": "kpl.", "required_quantity": 560},
+        ]}
+        response = self.client.put(f"/api/projects/{project_id}/materials", headers=self.warehouse, json=demand_payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        materials = self.client.get(f"/api/projects/{project_id}/materials", headers=self.manager).json()
 
-        rfi = self.client.post(
-            "/api/rfis",
-            headers=self.foreman,
-            json={"project_id": project_id, "row_id": row_ids[0], "title": "Kolizja", "description": "Test RFI", "priority": "wysoki", "client_id": "test-rfi-1"},
+        template = self.client.post(
+            "/api/material-templates", headers=self.foreman,
+            json={"project_id": project_id, "name": "1x28", "structure_type": "tracker 1-noga", "default_length_m": 38.45, "specification": "Konfiguracja zapisana przez użytkownika", "materials": {"1": 5, "2": 30, "3": 60}},
         )
-        self.assertEqual(rfi.status_code, 200, rfi.text)
-        self.assertEqual(self.client.get(f"/api/rfis?project_id={project_id}", headers=self.manager).json()[0]["status"], "otwarty")
-
-        requirements = self.client.get(f"/api/requirements?project_id={project_id}", headers=self.manager).json()
-        self.assertGreater(len(requirements), 0)
-        delivery = self.client.post(
-            "/api/deliveries",
-            headers=self.warehouse,
-            json={"project_id": project_id, "delivery_date": "2026-10-14", "wz_number": "WZ/1", "supplier": "Test", "client_id": "test-delivery-1", "items": [{"component_id": requirements[0]["component_id"], "quantity_received": requirements[0]["required"], "quantity_damaged": 0}]},
-        )
-        self.assertEqual(delivery.status_code, 200, delivery.text)
-
-        worklog = self.client.post(
-            "/api/worklogs",
-            headers=self.foreman,
-            json={"project_id": project_id, "work_date": "2026-10-14", "team": "Brygada T", "stage": "Montaż konstrukcji", "people": 4, "hours": 8, "rows_completed": 2, "client_id": "test-log-1"},
-        )
-        self.assertEqual(worklog.status_code, 200, worklog.text)
-        dashboard = self.client.get(f"/api/dashboard?project_id={project_id}", headers=self.manager).json()
-        self.assertEqual(dashboard["rows_built"], 2)
-        self.assertEqual(dashboard["rows_qc"], 2)
-        self.assertEqual(dashboard["open_rfi"], 1)
-        self.assertEqual(dashboard["manhours"], 32)
+        self.assertEqual(template.status_code, 200, template.text)
+        template_id = template.json()["id"]
 
         calculated = self.client.post(
-            "/api/calculator", headers=self.manager, json={"row_type_id": row_type_id, "length_m": 50, "row_count": 10}
+            "/api/calculator", headers=self.manager,
+            json={"project_id": project_id, "template_id": template_id, "variant_name": "1x28 po korekcie", "length_m": 123.456, "row_count": 4, "materials": {"1": 7, "2": 31, "3": 65}},
         )
         self.assertEqual(calculated.status_code, 200, calculated.text)
-        self.assertGreater(len(calculated.json()["materials"]), 0)
-        self.assertGreater(len(calculated.json()["tools"]), 0)
+        result = calculated.json()
+        self.assertEqual(len(result["materials"]), 3)
+        self.assertEqual(result["materials"][0]["per_row"], 7)
+        self.assertEqual(result["materials"][0]["total"], 28)
+        self.assertEqual(result["input"]["length_m"], 123.456)
 
-        report = self.client.get(
-            f"/api/reports/daily?project_id={project_id}&report_date=2026-10-14", headers=self.manager
+        zone = self.client.post("/api/zones", headers=self.manager, json={"project_id": project_id, "name": "Strefa użytkownika"})
+        section = self.client.post("/api/sections", headers=self.manager, json={"zone_id": zone.json()["id"], "name": "Sekcja dowolna"})
+        section_id = section.json()["id"]
+        row_one = self.client.post(
+            "/api/rows", headers=self.foreman,
+            json={"section_id": section_id, "code": "R-A01", "template_id": template_id, "variant_name": "1x28", "length_m": 38.45, "specification": "Standard plus korekta ręczna", "material_quantities": {"1": 5, "2": 30, "3": 61}},
         )
+        row_two = self.client.post(
+            "/api/rows", headers=self.foreman,
+            json={"section_id": section_id, "code": "R-A02-X", "template_id": None, "variant_name": "1x42 nietypowy", "length_m": 61.987, "specification": "Układ całkowicie ręczny", "material_quantities": {"1": 9, "2": 44, "3": 93}},
+        )
+        self.assertEqual(row_one.status_code, 200, row_one.text)
+        self.assertEqual(row_two.status_code, 200, row_two.text)
+        row_one_id, row_two_id = row_one.json()["id"], row_two.json()["id"]
+
+        changed_row = self.client.patch(
+            f"/api/rows/{row_two_id}", headers=self.foreman,
+            json={"length_m": 62.111, "variant_name": "układ specjalny po pomiarze", "material_quantities": {"1": 10, "2": 45, "3": 96}},
+        )
+        self.assertEqual(changed_row.status_code, 200, changed_row.text)
+        self.assertEqual(changed_row.json()["length_m"], 62.111)
+        self.assertEqual(changed_row.json()["material_quantities"]["3"], 96)
+
+        self.assertEqual(self.client.patch(f"/api/rows/{row_one_id}", headers=self.foreman, json={"built": True}).status_code, 200)
+        self.assertEqual(self.client.patch(f"/api/rows/{row_one_id}", headers=self.foreman, json={"qc_checked": True}).status_code, 403)
+        self.assertEqual(self.client.patch(f"/api/rows/{row_one_id}", headers=self.manager, json={"qc_checked": True}).status_code, 200)
+        self.assertEqual(self.client.post(f"/api/sections/{section_id}/archive", headers=self.manager).status_code, 409)
+        self.client.patch(f"/api/rows/{row_two_id}", headers=self.foreman, json={"built": True})
+        self.client.patch(f"/api/rows/{row_two_id}", headers=self.manager, json={"qc_checked": True})
+        self.assertEqual(self.client.post(f"/api/sections/{section_id}/archive", headers=self.manager).status_code, 200)
+
+        arbitrary_work = "Nietypowa korekta osi rury i ręczna modyfikacja wspornika według decyzji kierownika"
+        worklog = self.client.post(
+            "/api/worklogs", headers=self.foreman,
+            json={"project_id": project_id, "work_date": "2026-10-14", "team": "Brygada mobilna", "stage": arbitrary_work, "people": 6, "hours": 8, "rows_completed": 2, "qc_notes": "Sprawdzono geometrię. Rząd R-A02-X do ponownej kontroli momentu.", "note": "Meldunek z telefonu", "row_id": row_two_id, "client_id": "universal-log-1"},
+        )
+        self.assertEqual(worklog.status_code, 200, worklog.text)
+        worklog_id = worklog.json()["id"]
+        photo = self.client.post(
+            f"/api/worklog/{worklog_id}/photos", headers=self.foreman,
+            files={"file": ("teren.jpg", b"test-image-content", "image/jpeg")},
+        )
+        self.assertEqual(photo.status_code, 200, photo.text)
+        history = self.client.get(f"/api/worklog/{worklog_id}/photos", headers=self.manager).json()
+        self.assertEqual(len(history), 1)
+        logs = self.client.get(f"/api/worklogs?project_id={project_id}", headers=self.manager).json()
+        self.assertEqual(logs[0]["stage"], arbitrary_work)
+        self.assertIn("geometrię", logs[0]["qc_notes"])
+        self.assertEqual(logs[0]["photos"], 1)
+
+        delivery = self.client.post(
+            "/api/deliveries", headers=self.warehouse,
+            json={"project_id": project_id, "delivery_date": "2026-10-14", "wz_number": "WZ/FIELD/1", "supplier": "Dostawca", "client_id": "field-delivery-1", "items": [{"material_id": materials[0]["id"], "quantity_received": 40, "quantity_damaged": 2}]},
+        )
+        self.assertEqual(delivery.status_code, 200, delivery.text)
+        stock = self.client.get(f"/api/logistics/stock?project_id={project_id}", headers=self.manager).json()
+        self.assertEqual(len(stock), 3)
+        self.assertEqual(stock[0]["available"], 38)
+        self.assertEqual(stock[1]["available"], 0)
+
+        report = self.client.get(f"/api/reports/daily?project_id={project_id}&report_date=2026-10-14", headers=self.manager)
         self.assertEqual(report.status_code, 200, report.text)
         self.assertTrue(report.content.startswith(b"%PDF"))
 
-    def test_excel_bom_import_creates_relations_and_torque(self):
-        path = Path(tempfile.gettempdir()) / "asolar-test-bom.xlsx"
-        workbook = Workbook()
-        sheet = workbook.active
+        archived = self.client.patch(f"/api/projects/{project_id}", headers=self.manager, json={"archived": True})
+        self.assertTrue(archived.json()["archived"])
+        active_projects = self.client.get("/api/projects", headers=self.manager).json()
+        self.assertFalse(any(item["id"] == project_id for item in active_projects))
+        all_projects = self.client.get("/api/projects?include_archived=true", headers=self.manager).json()
+        self.assertTrue(any(item["id"] == project_id for item in all_projects))
+        deleted = self.client.delete(f"/api/projects/{project_id}", headers=self.manager)
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        after_delete = self.client.get("/api/projects?include_archived=true", headers=self.manager).json()
+        self.assertFalse(any(item["id"] == project_id for item in after_delete))
+
+    def test_excel_bom_import_still_works_for_document_analysis(self):
+        path = Path(tempfile.gettempdir()) / "asolar-universal-bom.xlsx"
+        workbook = Workbook(); sheet = workbook.active
         sheet.append(["typ_rzedu", "typ_konstrukcji", "dlugosc_m", "sku", "nazwa", "kategoria", "ilosc", "jednostka", "moment_min", "moment_max"])
-        sheet.append(["TEST-1P", "tracker 1-noga", 61.5, "TEST-M12", "Śruba M12", "Śruby", 84, "szt.", 45, 55])
+        sheet.append(["DOWOLNY", "2-nogi", 51.2, "USR-M12", "Śruba własna M12", "Śruby", 84, "szt.", 45, 55])
         workbook.save(path)
-        with SessionLocal() as db:
-            result = analyze(path, ".xlsx", db)
+        with SessionLocal() as db: result = analyze(path, ".xlsx", db)
         self.assertEqual(result["summary"]["relations"], 1)
-        self.assertEqual(result["summary"]["row_types"], 1)
-        components = self.client.get("/api/components", headers=self.manager).json()
-        imported = next(item for item in components if item["sku"] == "TEST-M12")
-        self.assertEqual(imported["torque_min_nm"], 45)
-        self.assertEqual(imported["torque_max_nm"], 55)
 
 
 if __name__ == "__main__":

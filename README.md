@@ -1,17 +1,17 @@
-# ASOLAR Enterprise Construction & Logistics Manager
+# ASOLAR Universal PV Construction Manager
 
-Responsywna aplikacja PWA do zarządzania montażem mechanicznym konstrukcji na farmach fotowoltaicznych. Łączy strukturę projektu, wykonanie i odbiory QA/QC, dokumentację, RFI, dostawy, czas pracy, kalkulator BOM oraz raporty PDF.
+Responsywna aplikacja PWA do zarządzania budową farm fotowoltaicznych. System nie narzuca wariantów, długości ani zamkniętego słownika prac: projekt, sekcje, każdy rząd, materiały i meldunki można opisać zgodnie ze stanem faktycznym.
 
-Zakres instrukcji montażowych celowo obejmuje konstrukcję mechaniczną. Parser odrzuca sekcje dotyczące elektryki, okablowania, uziemienia i wbijania słupów.
+Zakres instrukcji generowanych z dokumentacji obejmuje konstrukcję mechaniczną. Parser pomija elektrykę, okablowanie, uziemienie i wbijanie słupów.
 
-## Najszybsze uruchomienie na Windows
+## Uruchomienie na Windows
 
 1. Pobierz i rozpakuj pełną paczkę ZIP.
-2. Zainstaluj [Python 3.11 lub nowszy](https://www.python.org/downloads/) i podczas instalacji zaznacz dodanie Pythona do systemu.
+2. Zainstaluj [Python 3.11](https://www.python.org/downloads/release/python-3119/) wraz z programem Python Launcher (`py`).
 3. Uruchom `Uruchom-Windows.bat`.
-4. Skrypt sprawdzi Python 3.11 przez `py -3.11`, a przy pierwszym uruchomieniu pobierze zależności do lokalnego folderu `runtime-packages`. Następnie program otworzy się pod adresem `http://127.0.0.1:8765`.
+4. Skrypt sprawdzi interpreter przez `py -3.11`, a przy pierwszym uruchomieniu pobierze zależności do lokalnego folderu `runtime-packages`.
 
-Dane i wgrane dokumenty są przechowywane w folderze `data`. Nie usuwaj tego folderu, jeśli chcesz zachować historię.
+Program otworzy się automatycznie. Dane i zdjęcia są przechowywane w folderze `data`, dlatego nie należy go usuwać podczas aktualizacji aplikacji.
 
 ## Konta startowe
 
@@ -21,30 +21,80 @@ Dane i wgrane dokumenty są przechowywane w folderze `data`. Nie usuwaj tego fol
 | Brygadzista | `brygadzista` | `Brygada2026!` |
 | Magazynier | `magazynier` | `Magazyn2026!` |
 
-Kierownik może utworzyć indywidualne konta w module **Użytkownicy**. W instalacji dostępnej w sieci ustaw własny `ASOLAR_SECRET` i zmień konta startowe.
+Kierownik może tworzyć indywidualne konta. W instalacji sieciowej należy ustawić własny `ASOLAR_SECRET`.
+
+## Najważniejsze zasady działania
+
+### Projekty i rzędy
+
+- projekty można dodawać, edytować, archiwizować, przywracać i usuwać;
+- projekt przechowuje nazwę, lokalizację, moc oraz dowolny opis typu struktury;
+- użytkownik tworzy własne strefy i sekcje;
+- każdy rząd ma osobne: oznaczenie, wariant, długość, specyfikację i ręczne ilości materiałów;
+- wybór szablonu jedynie uzupełnia formularz — wszystkie wartości można później nadpisać;
+- system nie skaluje ilości automatycznie na podstawie długości.
+
+### Kalkulator
+
+- użytkownik zapisuje własne szablony, np. `1x28`, `1x42` lub dowolny wariant specjalny;
+- konfiguracja zapamiętuje typ konstrukcji, długość informacyjną, specyfikację oraz ilości trzech części na rząd;
+- przed każdym obliczeniem można ręcznie zmienić każdą ilość;
+- wynik mnoży wyłącznie wartości wpisane przez użytkownika przez liczbę rzędów.
+
+### Magazyn i pole
+
+Logistyka używa dokładnie trzech edytowalnych pozycji materiałowych. Dla każdej z nich system przechowuje:
+
+1. całkowite zapotrzebowanie projektu;
+2. fizyczne dostawy z dokumentów WZ;
+3. ilość uszkodzoną;
+4. aktualny stan na polu i bilans do zapotrzebowania.
+
+Nowy projekt zawsze rozpoczyna ze stanem na polu równym `0`. Samo wpisanie zapotrzebowania nie zwiększa stanu. Stan rośnie dopiero po zarejestrowaniu dostawy WZ.
+
+### Meldunki brygadzisty
+
+- dowolny opis wykonanych prac bez zamkniętego słownika;
+- liczba zbudowanych rzędów, ludzi oraz godzin;
+- osobny dziennik QA/QC i pozostałe notatki;
+- opcjonalne przypisanie meldunku do rzędu;
+- zdjęcie bezpośrednio z aparatu telefonu i historia fotografii;
+- edycja oraz usuwanie meldunków zgodnie z rolą użytkownika.
+
+## Pozostałe moduły
+
+- status wykonania rzędu z autorem i czasem;
+- osobny odbiór QA/QC wykonywany przez kierownika;
+- RFI ze zdjęciem, priorytetem i statusem;
+- dokumentacja PDF, DWG, DXF, XLSX/XLSM;
+- lokalny parser instrukcji mechanicznych i BOM Excel;
+- raport dzienny PDF z pracami, KPI oraz dziennikiem QA/QC;
+- synchronizacja WebSocket między urządzeniami;
+- pamięć odczytów i kolejka zapisów offline;
+- responsywny interfejs PWA po polsku.
 
 ## Uruchomienie deweloperskie
 
-Wymagane są Python 3.11+ oraz Node.js 20+.
+Wymagane są Python 3.11+ i Node.js 20+.
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cd frontend
-npm install
+npm ci
 npm run build
 cd ..
 .venv/bin/python server.py
 ```
 
-Aplikacja działa pod adresem `http://127.0.0.1:8765`, a dokumentacja API pod `http://127.0.0.1:8765/docs`.
-
-Do pracy nad frontendem z odświeżaniem na żywo uruchom w dwóch terminalach:
+Do pracy z odświeżaniem frontendu uruchom backend, a w drugim terminalu:
 
 ```bash
-.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8765 --reload
-cd frontend && npm run dev
+cd frontend
+npm run dev
 ```
+
+Dokumentacja OpenAPI jest dostępna pod ścieżką `/docs` działającego serwera.
 
 ## Docker
 
@@ -52,38 +102,13 @@ cd frontend && npm run dev
 ASOLAR_SECRET="długi-losowy-klucz" docker compose up --build
 ```
 
-SQLite jest ustawieniem domyślnym. Warstwa SQLAlchemy obsługuje też relacyjną bazę PostgreSQL po ustawieniu `DATABASE_URL` i doinstalowaniu sterownika PostgreSQL.
-
-## Moduły
-
-- role: Kierownik Budowy, Brygadzista i Magazynier;
-- projekt → dowolna liczba stref → sekcje → rzędy / stoły;
-- zbiorcze tworzenie rzędów i wybór wariantu konstrukcji;
-- status wykonania z autorem i czasem oraz osobny odbiór QA/QC;
-- archiwizacja sekcji dopiero po odebraniu wszystkich rzędów;
-- zdjęcia z aparatu telefonu przypisane do rzędu lub RFI;
-- parser PDF dla mechanicznych kroków montażowych i momentów dokręcania;
-- import BOM z XLSX i relacje typ rzędu → komponent → ilość / moment;
-- przechowywanie plików PDF, DWG, DXF, XLSX/XLSM;
-- kalkulator materiałów, śrub, podkładek i narzędzi według długości oraz liczby rzędów;
-- alerty RFI z priorytetem, zdjęciem i statusem;
-- rejestr WZ, ilości uszkodzone i bilans zapotrzebowania do dostaw;
-- czas pracy, manogodziny, tempo montażu i prognoza zakończenia;
-- raport dzienny PDF dla inwestora;
-- WebSocket do odświeżania wielu urządzeń;
-- PWA, pamięć podręczna odczytów i kolejka zapisów offline z deduplikacją.
+Domyślną bazą jest SQLite. Warstwa SQLAlchemy umożliwia użycie PostgreSQL po ustawieniu `DATABASE_URL` i doinstalowaniu odpowiedniego sterownika.
 
 ## Format BOM Excel
 
-Parser wyszukuje w pierwszych 20 wierszach nagłówki w języku polskim lub angielskim. Najprostszy arkusz zawiera:
+Parser rozpoznaje polskie i angielskie nagłówki, np. `typ_rzedu`, `row_type`, `sku`, `nazwa`, `component`, `ilosc`, `qty`, `jednostka`, `moment_min` i `torque_max`. Importowany BOM pozostaje częścią analizy dokumentacji. Operacyjny magazyn na polu nadal pokazuje wyłącznie trzy pozycje zdefiniowane przez użytkownika.
 
-| typ_rzedu | typ_konstrukcji | dlugosc_m | sku | nazwa | kategoria | ilosc | jednostka | moment_min | moment_max |
-|---|---|---:|---|---|---|---:|---|---:|---:|
-| 1P×42 | tracker 1-noga | 57.946 | M10-NUT | Nakrętka M10 | Śruby | 88 | szt. | 25 | 32 |
-
-Obsługiwane aliasy obejmują m.in. `row_type`, `tracker_type`, `part_no`, `component`, `qty`, `per_row`, `unit`, `torque_min` i `torque_max`.
-
-PDF z tekstem jest analizowany lokalnie. Skan bez warstwy tekstowej wymaga wcześniejszego OCR. Plik DWG jest bezpiecznie przechowywany; aby analizować jego opisy i geometrię, dodaj także eksport PDF lub DXF. BOM materiałowy należy potwierdzić zatwierdzoną rewizją projektu przed wydaniem na budowę.
+PDF musi zawierać warstwę tekstową; skan wymaga wcześniejszego OCR. DWG jest przechowywany, natomiast analizę opisów należy wykonywać na eksporcie PDF/DXF.
 
 ## Testy
 
@@ -92,4 +117,4 @@ PDF z tekstem jest analizowany lokalnie. Skan bez warstwy tekstowej wymaga wcze�
 cd frontend && npm run build
 ```
 
-Test integracyjny przechodzi przez role, strukturę projektu, wykonanie, QA/QC, blokadę archiwizacji, RFI, WZ, kalkulator, KPI i generowanie PDF.
+Test integracyjny sprawdza elastyczne projekty i rzędy, szablony z ręcznymi korektami, trzy materiały, zerowy stan początkowy pola, WZ, dowolny opis pracy, QA/QC, zdjęcia, role, archiwizację i raport PDF.

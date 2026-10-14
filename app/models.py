@@ -22,6 +22,9 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(180))
     location: Mapped[str] = mapped_column(String(180), default="")
     capacity_mw: Mapped[float] = mapped_column(Float, default=0)
+    structure_type: Mapped[str] = mapped_column(String(160), default="tracker")
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     zones: Mapped[list["Zone"]] = relationship(back_populates="project", cascade="all, delete-orphan")
 
@@ -58,8 +61,12 @@ class ConstructionRow(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     section_id: Mapped[int] = mapped_column(ForeignKey("sections.id", ondelete="CASCADE"), index=True)
     row_type_id: Mapped[int | None] = mapped_column(ForeignKey("row_types.id"), nullable=True)
+    template_id: Mapped[int | None] = mapped_column(ForeignKey("material_templates.id", ondelete="SET NULL"), nullable=True)
     code: Mapped[str] = mapped_column(String(80))
+    variant_name: Mapped[str] = mapped_column(String(120), default="")
     length_m: Mapped[float] = mapped_column(Float, default=0)
+    specification: Mapped[str] = mapped_column(Text, default="")
+    material_quantities_json: Mapped[str] = mapped_column(Text, default="{}")
     built: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     built_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     built_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -117,6 +124,8 @@ class WorkLog(Base):
     people: Mapped[int] = mapped_column(Integer)
     hours: Mapped[float] = mapped_column(Float)
     rows_completed: Mapped[float] = mapped_column(Float, default=0)
+    qc_notes: Mapped[str] = mapped_column(Text, default="")
+    row_id: Mapped[int | None] = mapped_column(ForeignKey("construction_rows.id", ondelete="SET NULL"), nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
@@ -158,6 +167,52 @@ class DeliveryItem(Base):
     quantity_damaged: Mapped[float] = mapped_column(Float, default=0)
     delivery: Mapped[Delivery] = relationship(back_populates="items")
     component: Mapped[Component] = relationship()
+
+class ProjectMaterial(Base):
+    __tablename__ = "project_materials"
+    __table_args__ = (UniqueConstraint("project_id", "slot_number", name="uq_project_material_slot"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    slot_number: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(180))
+    unit: Mapped[str] = mapped_column(String(30), default="szt.")
+    required_quantity: Mapped[float] = mapped_column(Float, default=0)
+
+class MaterialTemplate(Base):
+    __tablename__ = "material_templates"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_project_template_name"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    structure_type: Mapped[str] = mapped_column(String(160), default="")
+    default_length_m: Mapped[float] = mapped_column(Float, default=0)
+    specification: Mapped[str] = mapped_column(Text, default="")
+    materials_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+class SiteDelivery(Base):
+    __tablename__ = "site_deliveries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    delivery_date: Mapped[date] = mapped_column(Date, default=date.today)
+    wz_number: Mapped[str] = mapped_column(String(100))
+    supplier: Mapped[str] = mapped_column(String(180), default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    items: Mapped[list["SiteDeliveryItem"]] = relationship(back_populates="delivery", cascade="all, delete-orphan")
+
+class SiteDeliveryItem(Base):
+    __tablename__ = "site_delivery_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    delivery_id: Mapped[int] = mapped_column(ForeignKey("site_deliveries.id", ondelete="CASCADE"))
+    material_id: Mapped[int] = mapped_column(ForeignKey("project_materials.id", ondelete="CASCADE"))
+    quantity_received: Mapped[float] = mapped_column(Float)
+    quantity_damaged: Mapped[float] = mapped_column(Float, default=0)
+    delivery: Mapped[SiteDelivery] = relationship(back_populates="items")
+    material: Mapped[ProjectMaterial] = relationship()
 
 class Attachment(Base):
     __tablename__ = "attachments"

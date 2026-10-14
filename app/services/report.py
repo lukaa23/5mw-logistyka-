@@ -40,6 +40,10 @@ def daily_report(db: Session, project: Project, report_date: date) -> BytesIO:
     work_data=[["Brygada","Etap","Osoby","Godz.","Rzędy","Rbh"]]+[[x.team,x.stage,str(x.people),f"{x.hours:g}",f"{x.rows_completed:g}",f"{x.people*x.hours:g}"] for x in logs]
     if len(work_data)==1: work_data.append(["Brak wpisów","—","—","—","—","—"])
     work=Table(work_data,repeatRows=1,colWidths=[30*mm,55*mm,15*mm,15*mm,17*mm,17*mm]); work.setStyle(TableStyle([("FONTNAME",(0,0),(-1,-1),font),("FONTSIZE",(0,0),(-1,-1),7),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#123e30")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),.25,colors.HexColor("#d5ddd9")),("PADDING",(0,0),(-1,-1),5)])); story.append(work)
+    story.append(Paragraph("Dziennik jakości QA/QC",heading))
+    quality_data=[["Brygada","Notatka QA/QC"]]+[[x.team,Paragraph(x.qc_notes,normal)] for x in logs if x.qc_notes.strip()]
+    if len(quality_data)==1:quality_data.append(["—","Brak wpisów QA/QC"])
+    quality=Table(quality_data,repeatRows=1,colWidths=[35*mm,127*mm]);quality.setStyle(TableStyle([("FONTNAME",(0,0),(-1,-1),font),("FONTSIZE",(0,0),(-1,-1),7),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#123e30")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),.25,colors.HexColor("#d5ddd9")),("PADDING",(0,0),(-1,-1),5),("VALIGN",(0,0),(-1,-1),"TOP")]));story.append(quality)
     story.append(Paragraph("Otwarte RFI / problemy",heading))
     rfi_data=[["ID","Priorytet","Tytuł","Status"]]+[[str(x.id),x.priority,x.title,x.status] for x in rfis]
     if len(rfi_data)==1:rfi_data.append(["—","—","Brak otwartych zgłoszeń","—"])
