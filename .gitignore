@@ -2,3 +2,7 @@ data/
 __pycache__/
 *.pyc
 pypdf/
+.venv/
+frontend/node_modules/
+data/*.db
+data/uploads/

@@ -1,0 +1,11 @@
+{
+  "name": "ASOLAR Enterprise Construction & Logistics Manager",
+  "short_name": "ASOLAR",
+  "description": "Budowa, logistyka i QA/QC farm fotowoltaicznych",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f6f4",
+  "theme_color": "#123e30",
+  "lang": "pl",
+  "icons": [{"src":"/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+}

@@ -1,0 +1,13 @@
+services:
+  asolar:
+    build: .
+    ports:
+      - "8765:8765"
+    environment:
+      ASOLAR_HOST: 0.0.0.0
+      ASOLAR_SECRET: ${ASOLAR_SECRET:-zmien-ten-klucz-przed-wdrozeniem}
+    volumes:
+      - asolar_data:/app/data
+
+volumes:
+  asolar_data:
