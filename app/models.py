@@ -88,6 +88,7 @@ class ConstructionRow(Base):
     auto_generated: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     variant_ordinal: Mapped[int] = mapped_column(Integer, default=0)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
     built: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     built_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     built_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

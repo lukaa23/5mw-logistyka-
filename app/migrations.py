@@ -17,6 +17,7 @@ COLUMNS = {
         "auto_generated": "BOOLEAN NOT NULL DEFAULT 0",
         "active": "BOOLEAN NOT NULL DEFAULT 1",
         "variant_ordinal": "INTEGER NOT NULL DEFAULT 0",
+        "sort_order": "INTEGER NOT NULL DEFAULT 0",
     },
     "work_logs": {
         "qc_notes": "TEXT NOT NULL DEFAULT ''",

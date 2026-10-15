@@ -130,7 +130,7 @@
       "sha256": "94d9883580d0694c3e1c0e32080d50fdbb2c9ade8ebdad9596eac3d2e9799df1",
       "pages": 1,
       "role": "Planimetria projektu RF-GIULIETTA w Momo o mocy 6,4915 MWp; potwierdza użycie wariantów 1x28/42/56/70.",
-      "facts": ["Nazwa: RF-GIULIETTA", "Moc: 6,4915 MWp", "Lokalizacja: Momo (NO)", "Warianty etykiet: 1x28, 1x42, 1x56, 1x70"]
+      "facts": ["Nazwa: RF-GIULIETTA", "Moc: 6,4915 MWp", "Lokalizacja: Momo (NO)", "Warianty podstawowe: 1x28, 1x42, 1x56, 1x70", "Oznaczenia układów łączonych: 1x42+28, 1x56+28 oraz 56-42"]
     },
     {
       "filename": "montaż mechaniczny.pdf",

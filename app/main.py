@@ -16,7 +16,7 @@ from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery
 from .services.report import daily_report
 from .services.source_basis import SOURCE_DIR, build_eset_demand, load_eset_bom, load_source_manifest, sha256_file, source_analysis, source_entry_by_hash
 
-app=FastAPI(title="ASOLAR ESET Tracker Manager",version="4.1.0")
+app=FastAPI(title="ASOLAR ESET Tracker Manager",version="4.2.0")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024
 MAX_PHOTO_SIZE=25*1024*1024
@@ -34,6 +34,7 @@ class NameUpdate(BaseModel): name:str=Field(min_length=1,max_length=180)
 class RowsIn(BaseModel): section_id:int; prefix:str="R"; start_number:int=1; count:int=Field(ge=1,le=2000); template_id:int|None=None; variant_name:str=""; length_m:float=0; specification:str=""; material_quantities:dict[str,float]=Field(default_factory=dict)
 class RowIn(BaseModel): section_id:int; code:str; template_id:int|None=None; variant_name:str=""; length_m:float=0; specification:str=""; material_quantities:dict[str,float]=Field(default_factory=dict)
 class RowUpdate(BaseModel): code:str|None=None; template_id:int|None=None; variant_name:str|None=None; length_m:float|None=None; specification:str|None=None; material_quantities:dict[str,float]|None=None; built:bool|None=None; qc_checked:bool|None=None; note:str|None=None
+class RowMoveIn(BaseModel): direction:str
 class RFIIn(BaseModel): project_id:int; row_id:int|None=None; title:str; description:str; priority:str="normalny"; client_id:str|None=None
 class RFIUpdate(BaseModel): status:str|None=None; assigned_to_id:int|None=None; priority:str|None=None
 class WorkLogIn(BaseModel): project_id:int; work_date:date=Field(default_factory=date.today); team:str; stage:str; people:int=Field(ge=1,le=1000); hours:float=Field(gt=0,le=24,default=8); rows_completed:float=Field(ge=0); qc_notes:str=""; note:str=""; row_id:int|None=None; client_id:str|None=None
@@ -46,7 +47,7 @@ class TemplateIn(BaseModel): project_id:int; name:str=Field(min_length=1,max_len
 class TemplateUpdate(BaseModel): name:str|None=None; structure_type:str|None=None; default_length_m:float|None=None; specification:str|None=None; materials:dict[str,float]|None=None
 class CalculatorIn(BaseModel): project_id:int; template_id:int|None=None; variant_name:str=""; length_m:float=Field(ge=0,le=1000); row_count:int=Field(ge=1,le=5000); materials:dict[str,float]|None=None
 class VariantCountIn(BaseModel): variant_code:str; row_count:int=Field(ge=0,le=5000)
-class VariantConfigurationIn(BaseModel): items:list[VariantCountIn]=Field(min_length=4,max_length=4)
+class VariantConfigurationIn(BaseModel): items:list[VariantCountIn]=Field(min_length=7,max_length=7)
 
 def audit(db,user,action,entity_type,entity_id=None,details=""):
     db.add(AuditEvent(user_id=user.id if user else None,action=action,entity_type=entity_type,entity_id=entity_id,details=details))
@@ -54,7 +55,7 @@ def audit(db,user,action,entity_type,entity_id=None,details=""):
 def user_dict(user): return {"id":user.id,"username":user.username,"full_name":user.full_name,"role":user.role,"active":user.active}
 def project_dict(project): return {"id":project.id,"name":project.name,"location":project.location,"capacity_mw":project.capacity_mw,"structure_type":project.structure_type,"archived":project.archived,"archived_at":project.archived_at}
 def row_dict(row):
-    return {"id":row.id,"code":row.code,"section_id":row.section_id,"template_id":row.template_id,"variant_name":row.variant_name,"variant_ordinal":row.variant_ordinal,"auto_generated":row.auto_generated,"active":row.active,"length_m":row.length_m,"specification":row.specification,"material_quantities":json.loads(row.material_quantities_json or "{}"),"built":row.built,"built_by":row.built_by.full_name if row.built_by else None,"built_at":row.built_at,"qc_checked":row.qc_checked,"qc_by":row.qc_by.full_name if row.qc_by else None,"qc_at":row.qc_at,"note":row.note}
+    return {"id":row.id,"code":row.code,"section_id":row.section_id,"template_id":row.template_id,"variant_name":row.variant_name,"variant_ordinal":row.variant_ordinal,"sort_order":row.sort_order,"auto_generated":row.auto_generated,"active":row.active,"length_m":row.length_m,"specification":row.specification,"material_quantities":json.loads(row.material_quantities_json or "{}"),"built":row.built,"built_by":row.built_by.full_name if row.built_by else None,"built_at":row.built_at,"qc_checked":row.qc_checked,"qc_by":row.qc_by.full_name if row.qc_by else None,"qc_at":row.qc_at,"note":row.note}
 
 class Realtime:
     def __init__(self): self.clients=[]
@@ -94,6 +95,8 @@ def reconcile_zone_rows(db,zone):
     if not section:
         section=Section(zone_id=zone.id,name=AUTO_SECTION_NAME);db.add(section);db.flush()
     existing=db.scalars(select(ConstructionRow).where(ConstructionRow.section_id==section.id,ConstructionRow.auto_generated==True)).all()
+    was_active={row.id:row.active for row in existing}
+    previous_order={row.id:(row.sort_order or (int(row.code) if row.code.isdigit() else 1_000_000+row.id)) for row in existing}
     for row in existing:row.code=f"tmp-{uuid.uuid4().hex[:24]}"
     db.flush()
     selected=[]
@@ -102,14 +105,16 @@ def reconcile_zone_rows(db,zone):
         for ordinal in range(1,counts.get(code,0)+1):
             row=by_key.get((code,ordinal))
             if not row:
-                row=ConstructionRow(section_id=section.id,code=f"tmp-{uuid.uuid4().hex[:24]}",variant_name=code,variant_ordinal=ordinal,auto_generated=True,active=True,specification=f"Tracker ESET {code}",material_quantities_json="{}")
+                row=ConstructionRow(section_id=section.id,code=f"tmp-{uuid.uuid4().hex[:24]}",variant_name=code,variant_ordinal=ordinal,sort_order=0,auto_generated=True,active=True,specification=f"Tracker ESET {code}",material_quantities_json="{}")
                 db.add(row)
             row.active=True;selected.append(row)
     selected_ids={id(row) for row in selected}
     for row in existing:
-        if id(row) not in selected_ids:row.active=False
+        if id(row) not in selected_ids:row.active=False;row.sort_order=0
     db.flush()
-    for index,row in enumerate(selected,1):row.code=str(index)
+    variant_rank={code:index for index,code in enumerate(ESET_VARIANT_CODES)}
+    selected.sort(key=lambda row:(0,previous_order[row.id]) if row.id in was_active and was_active[row.id] else (1,variant_rank.get(row.variant_name,999),row.variant_ordinal,row.id or 0))
+    for index,row in enumerate(selected,1):row.code=str(index);row.sort_order=index
     for row in existing:
         if not row.active:row.code=f"archiwalny-{row.id}"
     db.flush()
@@ -147,8 +152,8 @@ def project_demand(db,project_id):
 
 def validate_variant_configuration(items):
     codes=[item.variant_code for item in items]
-    if len(set(codes))!=4 or set(codes)!=set(ESET_VARIANT_CODES):
-        raise HTTPException(400,"Konfiguracja musi zawierać dokładnie warianty 1x28, 1x42, 1x56 i 1x70")
+    if len(set(codes))!=len(ESET_VARIANT_CODES) or set(codes)!=set(ESET_VARIANT_CODES):
+        raise HTTPException(400,"Konfiguracja musi zawierać dokładnie siedem zatwierdzonych wariantów ESET")
 
 def zone_demand_payload(db,zone):
     demand=build_eset_demand(zone_variant_values(db,zone.id))
@@ -214,7 +219,7 @@ def seed():
 seed()
 
 @app.get("/api/health")
-def health(): return {"status":"ok","version":"4.1.0","time":utc_now()}
+def health(): return {"status":"ok","version":"4.2.0","time":utc_now()}
 
 @app.post("/api/auth/login")
 def login(data:LoginIn,db:Session=Depends(get_db)):
@@ -499,8 +504,25 @@ def operational_rows(project_id:int,zone_id:int|None=None,db:Session=Depends(get
     photo_counts=dict(db.execute(select(Attachment.entity_id,func.count(Attachment.id)).where(Attachment.entity_type=="row",Attachment.entity_id.in_(row_ids or [-1])).group_by(Attachment.entity_id)).all())
     result=[]
     for row,zone in pairs:result.append({**row_dict(row),"zone_id":zone.id,"zone_name":zone.name,"photos":int(photo_counts.get(row.id,0))})
-    result.sort(key=lambda item:(item["zone_id"],int(item["code"]) if item["code"].isdigit() else 999999,item["id"]))
+    result.sort(key=lambda item:(item["zone_id"],item["sort_order"],item["id"]))
     db.commit();return result
+
+@app.post("/api/rows/{row_id}/move")
+async def move_operational_row(row_id:int,data:RowMoveIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    if data.direction not in ("up","down"):raise HTTPException(400,"Dozwolony kierunek: up lub down")
+    row=db.get(ConstructionRow,row_id)
+    if not row or not row.auto_generated or not row.active:raise HTTPException(404,"Brak aktywnego rzędu operacyjnego")
+    section=db.get(Section,row.section_id);zone=db.get(Zone,section.zone_id)
+    rows=db.scalars(select(ConstructionRow).join(Section).where(Section.zone_id==zone.id,ConstructionRow.auto_generated==True,ConstructionRow.active==True).order_by(ConstructionRow.sort_order,ConstructionRow.id)).all()
+    index=next((position for position,item in enumerate(rows) if item.id==row_id),None)
+    if index is None:raise HTTPException(404,"Brak rzędu na liście strefy")
+    target=index-1 if data.direction=="up" else index+1
+    if target<0 or target>=len(rows):return {"ok":True,"moved":False}
+    rows[index],rows[target]=rows[target],rows[index]
+    for item in rows:item.code=f"tmp-{uuid.uuid4().hex[:24]}"
+    db.flush()
+    for position,item in enumerate(rows,1):item.sort_order=position;item.code=str(position)
+    audit(db,user,"move","row",row_id,data.direction);db.commit();await realtime.send("row-order.changed",{"project_id":zone.project_id,"zone_id":zone.id});return {"ok":True,"moved":True}
 
 def document_dict(item):
     analysis=json.loads(item.analysis_json or "{}")

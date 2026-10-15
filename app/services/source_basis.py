@@ -28,12 +28,20 @@ def build_eset_demand(counts: dict[str, int]) -> dict:
     catalogue = bom["components"]
     grand: dict[str, int] = {}
     variants = []
+    def quantities_for(definition: dict) -> dict[str, int]:
+        if "composition" not in definition:
+            return bom["quantities"][definition["code"]]
+        total: dict[str, int] = {}
+        for base_code in definition["composition"]:
+            for key, quantity in bom["quantities"][base_code].items():
+                total[key] = total.get(key, 0) + quantity
+        return total
     for definition in bom["variants"]:
         code = definition["code"]
         row_count = max(0, int(counts.get(code, 0)))
         per_row = []
         totals = []
-        for key, quantity in bom["quantities"][code].items():
+        for key, quantity in quantities_for(definition).items():
             component = {"key": key, **catalogue[key]}
             per_row.append({**component, "quantity_per_row": quantity})
             total = quantity * row_count

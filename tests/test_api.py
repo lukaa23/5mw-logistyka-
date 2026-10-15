@@ -16,6 +16,8 @@ from app.database import SessionLocal
 from app.main import app
 from app.services.parser import analyze
 
+VARIANT_CODES = ("1x28", "1x42", "1x56", "1x70", "1x42+1x28", "1x56+1x28", "1x56+1x42")
+
 
 class UniversalWorkflowTest(unittest.TestCase):
     @classmethod
@@ -174,7 +176,7 @@ class UniversalWorkflowTest(unittest.TestCase):
         initial = self.client.get(f"/api/projects/{project_id}/tracker-config", headers=self.manager)
         self.assertEqual(initial.status_code, 200, initial.text)
         self.assertEqual(initial.json()["total_rows"], 0)
-        self.assertEqual([item["code"] for item in initial.json()["variants"]], ["1x28", "1x42", "1x56", "1x70"])
+        self.assertEqual([item["code"] for item in initial.json()["variants"]], list(VARIANT_CODES))
 
         configured = self.client.put(
             f"/api/projects/{project_id}/tracker-config", headers=self.foreman,
@@ -183,6 +185,9 @@ class UniversalWorkflowTest(unittest.TestCase):
                 {"variant_code": "1x42", "row_count": 0},
                 {"variant_code": "1x56", "row_count": 4},
                 {"variant_code": "1x70", "row_count": 0},
+                {"variant_code": "1x42+1x28", "row_count": 0},
+                {"variant_code": "1x56+1x28", "row_count": 0},
+                {"variant_code": "1x56+1x42", "row_count": 0},
             ]},
         )
         self.assertEqual(configured.status_code, 200, configured.text)
@@ -204,6 +209,9 @@ class UniversalWorkflowTest(unittest.TestCase):
                 {"variant_code": "1x28", "row_count": 1},
                 {"variant_code": "1x42", "row_count": 1},
                 {"variant_code": "1x56", "row_count": 1},
+                {"variant_code": "1x70", "row_count": 1},
+                {"variant_code": "1x42+1x28", "row_count": 1},
+                {"variant_code": "1x56+1x28", "row_count": 1},
                 {"variant_code": "wariant-własny", "row_count": 1},
             ]},
         )
@@ -268,11 +276,11 @@ class UniversalWorkflowTest(unittest.TestCase):
         def config(zone_id, counts, headers=self.foreman):
             return self.client.put(
                 f"/api/tracker-zones/{zone_id}/config", headers=headers,
-                json={"items": [{"variant_code": code, "row_count": counts.get(code, 0)} for code in ("1x28", "1x42", "1x56", "1x70")]},
+                json={"items": [{"variant_code": code, "row_count": counts.get(code, 0)} for code in VARIANT_CODES]},
             )
 
         configured_a = config(zone_a_id, {"1x28": 2, "1x42": 1})
-        configured_b = config(zone_b_id, {"1x70": 1}, self.manager)
+        configured_b = config(zone_b_id, {"1x42+1x28": 1, "1x56+1x28": 1, "1x56+1x42": 1}, self.manager)
         self.assertEqual(configured_a.status_code, 200, configured_a.text)
         self.assertEqual(configured_b.status_code, 200, configured_b.text)
         self.assertEqual(configured_a.json()["demand"]["total_rows"], 3)
@@ -280,13 +288,30 @@ class UniversalWorkflowTest(unittest.TestCase):
         totals_a = {item["key"]: item["quantity_total"] for item in configured_a.json()["demand"]["grand_total"]}
         self.assertEqual(totals_a["LT1-1450-18"], 104)
         self.assertEqual(totals_a["TCU"], 3)
+        variants_b = {item["code"]: item for item in configured_b.json()["demand"]["variants"]}
+        self.assertEqual(configured_b.json()["demand"]["total_rows"], 3)
+        self.assertEqual(configured_b.json()["demand"]["total_modules"], 252)
+        for combined, left, right in (("1x42+1x28", "1x42", "1x28"), ("1x56+1x28", "1x56", "1x28"), ("1x56+1x42", "1x56", "1x42")):
+            combined_items = {item["key"]: item["quantity_per_row"] for item in variants_b[combined]["per_row"]}
+            left_items = {item["key"]: item["quantity_per_row"] for item in variants_b[left]["per_row"]}
+            right_items = {item["key"]: item["quantity_per_row"] for item in variants_b[right]["per_row"]}
+            self.assertEqual(combined_items, {key: left_items.get(key, 0) + right_items.get(key, 0) for key in left_items.keys() | right_items.keys()})
 
         rows = self.client.get(f"/api/projects/{project_id}/operational-rows", headers=self.manager).json()
-        self.assertEqual(len(rows), 4)
+        self.assertEqual(len(rows), 6)
         rows_a = [row for row in rows if row["zone_id"] == zone_a_id]
         self.assertEqual([row["code"] for row in rows_a], ["1", "2", "3"])
         self.assertEqual([row["variant_name"] for row in rows_a], ["1x28", "1x28", "1x42"])
-        first_id, second_id = rows_a[0]["id"], rows_a[1]["id"]
+        first_id, second_id, third_id = rows_a[0]["id"], rows_a[1]["id"], rows_a[2]["id"]
+
+        self.assertEqual(self.client.post(f"/api/rows/{third_id}/move", headers=self.warehouse, json={"direction": "up"}).status_code, 403)
+        moved = self.client.post(f"/api/rows/{third_id}/move", headers=self.foreman, json={"direction": "up"})
+        self.assertEqual(moved.status_code, 200, moved.text)
+        self.assertTrue(moved.json()["moved"])
+        rows_a = self.client.get(f"/api/projects/{project_id}/operational-rows?zone_id={zone_a_id}", headers=self.manager).json()
+        self.assertEqual([row["code"] for row in rows_a], ["1", "2", "3"])
+        self.assertEqual([row["variant_name"] for row in rows_a], ["1x28", "1x42", "1x28"])
+        self.assertEqual([row["id"] for row in rows_a], [first_id, third_id, second_id])
 
         built = self.client.patch(f"/api/rows/{first_id}", headers=self.foreman, json={"built": True, "note": "Kolizja sprawdzona w terenie"})
         self.assertEqual(built.status_code, 200, built.text)
@@ -309,7 +334,8 @@ class UniversalWorkflowTest(unittest.TestCase):
         self.assertEqual(expanded.status_code, 200, expanded.text)
         expanded_rows = self.client.get(f"/api/projects/{project_id}/operational-rows?zone_id={zone_a_id}", headers=self.manager).json()
         self.assertEqual([row["code"] for row in expanded_rows], ["1", "2", "3"])
-        self.assertEqual(expanded_rows[1]["id"], second_id)
+        self.assertEqual([row["variant_name"] for row in expanded_rows], ["1x28", "1x42", "1x28"])
+        self.assertEqual(expanded_rows[2]["id"], second_id)
 
         renamed = self.client.patch(f"/api/tracker-zones/{zone_a_id}", headers=self.foreman, json={"name": "Strefa A — północ"})
         self.assertEqual(renamed.status_code, 200, renamed.text)

@@ -4,7 +4,7 @@ Responsywna aplikacja PWA do konfiguracji trackerów ESET, wyliczania zapotrzebo
 
 ## Konfiguracja i zapotrzebowanie
 
-Projekt korzysta z czterech zatwierdzonych wariantów: `1x28`, `1x42`, `1x56` i `1x70`. Użytkownik tworzy dowolną liczbę nazwanych stref i w każdej wpisuje liczbę rzędów każdego wariantu. System automatycznie generuje osobne, kolejno numerowane rzędy oraz pokazuje:
+Projekt korzysta z siedmiu wariantów. Podstawowe to `1x28`, `1x42`, `1x56` i `1x70`, a łączone to `1x42+1x28`, `1x56+1x28` i `1x56+1x42`. Użytkownik tworzy dowolną liczbę nazwanych stref i w każdej wpisuje liczbę rzędów każdego wariantu. System automatycznie generuje osobne, kolejno numerowane rzędy oraz pokazuje:
 
 - listę elementów potrzebnych na pojedynczy rząd;
 - sumę dla liczby rzędów danego wariantu;
@@ -15,7 +15,9 @@ Projekt korzysta z czterech zatwierdzonych wariantów: `1x28`, `1x42`, `1x56` i 
 - płatwie, elementy amortyzatorów, TCU i odbiornik bezprzewodowy;
 - zestawy M10, M12, M14, M16 i M18 wraz z podkładkami oraz momentami dokręcania.
 
-Widok operacyjny pozwala oznaczać każdy wygenerowany rząd jako zbudowany i odebrany QA/QC, prowadzić indywidualne notatki oraz robić zdjęcia bezpośrednio aparatem telefonu. Zmniejszenie liczby rzędów ukrywa nadmiarowe pozycje bez kasowania ich historii; ponowne zwiększenie przywraca wcześniejsze statusy, notatki i zdjęcia.
+Wariant łączony jest liczony jako dokładna suma dwóch odpowiednich, zatwierdzonych BOM-ów podstawowych. Program nie odejmuje ani nie dodaje części wspólnych, których dokumentacja nie definiuje.
+
+Widok operacyjny pozwala oznaczać każdy wygenerowany rząd jako zbudowany i odebrany QA/QC, prowadzić indywidualne notatki, robić zdjęcia bezpośrednio aparatem telefonu oraz ustawiać rzeczywistą kolejność rzędów przyciskami Góra/Dół. Kolejność jest zapisywana w bazie i synchronizowana między urządzeniami. Zmniejszenie liczby rzędów ukrywa nadmiarowe pozycje bez kasowania ich historii; ponowne zwiększenie przywraca wcześniejsze statusy, notatki i zdjęcia.
 
 Widok „Zapotrzebowanie” przedstawia wyłącznie ilości wymagane przez projekt. Nie korzysta ze stanów magazynowych ani fizycznych dostaw WZ.
 
@@ -97,4 +99,4 @@ Domyślną bazą jest SQLite. Po ustawieniu `DATABASE_URL` i zainstalowaniu ster
 cd frontend && npm run build
 ```
 
-Testy sprawdzają strefy, automatyczną numerację rzędów, zachowanie historii, cztery warianty, sumowanie pełnego BOM, momenty dokręcania, role, meldunki, zdjęcia, QA/QC, raport PDF oraz integralność dziesięciu dokumentów źródłowych.
+Testy sprawdzają strefy, automatyczną numerację i ręczne sortowanie rzędów, zachowanie historii, siedem wariantów, sumowanie BOM-ów łączonych, pełny BOM projektu, momenty dokręcania, role, meldunki, zdjęcia, QA/QC, raport PDF oraz integralność dziesięciu dokumentów źródłowych.
