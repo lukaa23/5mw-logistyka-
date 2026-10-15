@@ -220,10 +220,38 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
 .instruction p, .instruction li { font-size: .69rem; line-height: 1.55; color: #55645c; }
 .instruction p { margin: .8rem 0; }
 .instruction small { font-size: .58rem; }
+.source-hero { display: flex; justify-content: space-between; align-items: center; gap: 2rem; padding: 1.6rem; margin-bottom: 1.2rem; background: linear-gradient(115deg,#fff 45%,var(--green-50)); border-left: 4px solid var(--green-500); }
+.source-hero h2 { font-size: 1.35rem; margin-bottom: .45rem; }
+.source-hero p:not(.eyebrow) { max-width: 830px; color: #52635a; font-size: .76rem; line-height: 1.55; margin-bottom: .55rem; }
+.source-variants { display: grid; grid-template-columns: repeat(2,1fr); gap: .45rem; flex: 0 0 auto; }
+.source-variants span { min-width: 66px; text-align: center; padding: .55rem; border-radius: 9px; color: var(--green-900); background: white; border: 1px solid #cfe0d7; font-weight: 800; font-size: .74rem; }
+.source-grid { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(330px,.85fr); gap: 1.2rem; align-items: start; }
+.source-document small { line-height: 1.35; max-width: 680px; }
+.source-hash { display: block; color: #85948c; font-size: .52rem; font-family: ui-monospace,monospace; }
+.source-summary { height: 100%; }
+.scope-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.scope-columns > div { display: grid; align-content: start; gap: .48rem; }
+.scope-columns strong { font-size: .7rem; color: var(--green-900); margin-bottom: .2rem; }
+.scope-columns span { font-size: .67rem; line-height: 1.35; color: #52635a; }
+.instruction-panel { margin: 1.2rem 0; }
+.source-instruction summary small { margin-left: auto; white-space: nowrap; }
+.source-instruction ol { margin: .8rem 0; padding-left: 1.35rem; }
+.source-instruction li { padding: .16rem 0; }
+.quality-note { margin: .7rem 0; padding: .65rem .75rem; border-radius: 8px; background: var(--amber-bg); color: #6f5317; font-size: .68rem; line-height: 1.5; }
+.source-reference { margin-bottom: 1.2rem; }
+.tool-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .5rem 1.3rem; margin: 0 0 1rem; padding-left: 1.1rem; }
+.tool-list li { font-size: .7rem; line-height: 1.35; color: #506057; }
+.torque-list { display: grid; }
+.torque-list > div { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .62rem 0; border-top: 1px solid #edf1ef; }
+.torque-list span { font-size: .68rem; }
+.torque-list small { display: block; font-size: .5rem; margin-top: .18rem; }
+.torque-list strong { white-space: nowrap; font-size: .72rem; color: var(--green-700); }
+.supplemental-upload { margin: 1.2rem 0; background: linear-gradient(105deg,#394941,#50675c); }
 
 /* Calculator and tables */
 .calculator-layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); align-items: start; gap: 1.2rem; }
 .calculator-form { position: sticky; top: 90px; }
+.source-template-note { margin: -.25rem 0 1rem; padding: .65rem; border-radius: 8px; background: var(--green-50); color: var(--green-700); font-size: .64rem; line-height: 1.45; }
 .calculator-results { display: grid; gap: 1rem; }
 .result-placeholder { min-height: 370px; display: grid; place-items: center; align-content: center; text-align: center; color: var(--muted); }
 .result-placeholder > span { font-size: 4rem; color: #bdd0c6; }
@@ -386,6 +414,7 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
   .row-header, .construction-row { grid-template-columns: minmax(130px,1.2fr) minmax(145px,1fr) minmax(145px,1fr) 105px; padding-inline: .7rem; }
   .upload-card { grid-template-columns: auto 1fr; }
   .upload-card form { grid-column: 1 / -1; }
+  .source-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 900px) {
@@ -461,6 +490,12 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
   .upload-icon { display: none; }
   .upload-card form { grid-column: auto; flex-direction: column; align-items: stretch; }
   .upload-card .primary { width: 100%; }
+  .source-hero { align-items: flex-start; flex-direction: column; gap: 1rem; }
+  .source-variants { width: 100%; grid-template-columns: repeat(4,1fr); }
+  .source-variants span { min-width: 0; }
+  .scope-columns, .tool-list { grid-template-columns: 1fr; }
+  .source-instruction summary { align-items: flex-start; flex-wrap: wrap; }
+  .source-instruction summary small { width: 100%; margin-left: 42px; }
   .calculator-layout { gap: .8rem; }
   .table-card { overflow-x: auto; }
   .tool-grid { grid-template-columns: 1fr; }

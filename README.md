@@ -4,6 +4,20 @@ Responsywna aplikacja PWA do zarządzania budową farm fotowoltaicznych. System 
 
 Zakres instrukcji generowanych z dokumentacji obejmuje konstrukcję mechaniczną. Parser pomija elektrykę, okablowanie, uziemienie i wbijanie słupów.
 
+## Zatwierdzona baza źródłowa
+
+Program zawiera w folderze `project_sources` dokładnie pięć dokumentów dostarczonych dla projektu RF-GIULIETTA:
+
+1. `łaczenia rur.pdf` — rysunki warsztatowe słupów QZ1–QZ4, FZ1–FZ2 i NZ1;
+2. `planimetria.pdf` — rysunki wariantów 1PX28/42/56/70 i tabele BOM;
+3. `planimetria 6,5mw.pdf` — planimetria RF-GIULIETTA, Momo, 6,4915 MWp;
+4. `montaż mechaniczny.pdf` — instrukcje mechaniczne, narzędzia, momenty i tabele wariantów;
+5. `manual v.2.pdf` — pełny manual producenta ESET Solar.
+
+Manifest [source-manifest.json](project_sources/source-manifest.json) zapisuje sumy SHA-256, strony źródłowe, zakres oraz dane używane przez aplikację. Przy pierwszym uruchomieniu pięć plików jest automatycznie rejestrowanych w projekcie. Inny wgrany plik pozostaje dokumentem pomocniczym i nie zmienia instrukcji ani kalkulatora.
+
+Instrukcje obejmują wyłącznie montaż podstaw przekładni i łożysk, przekładni, obudów łożysk, rur momentowych, płatwi, amortyzatorów i zaślepek. Wyłączone są: wbijanie i montaż słupów, TCU, odbiornik bezprzewodowy, moduły PV, okablowanie, uziemienie i uruchomienie elektryczne.
+
 ## Uruchomienie na Windows
 
 1. Pobierz i rozpakuj pełną paczkę ZIP.
@@ -36,7 +50,10 @@ Kierownik może tworzyć indywidualne konta. W instalacji sieciowej należy usta
 
 ### Kalkulator
 
-- użytkownik zapisuje własne szablony, np. `1x28`, `1x42` lub dowolny wariant specjalny;
+- program startuje z potwierdzonymi wariantami `1x28`, `1x42`, `1x56` i `1x70`;
+- ilości startowe z tabel wynoszą odpowiednio: 5/8/10/13 rur S156 oraz 30/44/58/73 płatwie i komplety mocowania;
+- komplet mocowania oznacza: U-bolt UM10×166×188×30, BP095, dwie podkładki BP069 i dwie nakrętki M10, moment 25–32 N·m;
+- użytkownik może także zapisać własny wariant specjalny;
 - konfiguracja zapamiętuje typ konstrukcji, długość informacyjną, specyfikację oraz ilości trzech części na rząd;
 - przed każdym obliczeniem można ręcznie zmienić każdą ilość;
 - wynik mnoży wyłącznie wartości wpisane przez użytkownika przez liczbę rzędów.
@@ -66,8 +83,8 @@ Nowy projekt zawsze rozpoczyna ze stanem na polu równym `0`. Samo wpisanie zapo
 - status wykonania rzędu z autorem i czasem;
 - osobny odbiór QA/QC wykonywany przez kierownika;
 - RFI ze zdjęciem, priorytetem i statusem;
-- dokumentacja PDF, DWG, DXF, XLSX/XLSM;
-- lokalny parser instrukcji mechanicznych i BOM Excel;
+- pięć wbudowanych dokumentów źródłowych oraz pliki pomocnicze PDF, DWG, DXF, XLSX/XLSM;
+- instrukcje krok po kroku po polsku ze wskazaniem dokumentu, strony i punktu kontroli;
 - raport dzienny PDF z pracami, KPI oraz dziennikiem QA/QC;
 - synchronizacja WebSocket między urządzeniami;
 - pamięć odczytów i kolejka zapisów offline;
@@ -104,11 +121,9 @@ ASOLAR_SECRET="długi-losowy-klucz" docker compose up --build
 
 Domyślną bazą jest SQLite. Warstwa SQLAlchemy umożliwia użycie PostgreSQL po ustawieniu `DATABASE_URL` i doinstalowaniu odpowiedniego sterownika.
 
-## Format BOM Excel
+## Dodatkowe pliki
 
-Parser rozpoznaje polskie i angielskie nagłówki, np. `typ_rzedu`, `row_type`, `sku`, `nazwa`, `component`, `ilosc`, `qty`, `jednostka`, `moment_min` i `torque_max`. Importowany BOM pozostaje częścią analizy dokumentacji. Operacyjny magazyn na polu nadal pokazuje wyłącznie trzy pozycje zdefiniowane przez użytkownika.
-
-PDF musi zawierać warstwę tekstową; skan wymaga wcześniejszego OCR. DWG jest przechowywany, natomiast analizę opisów należy wykonywać na eksporcie PDF/DXF.
+Interfejs przyjmuje PDF, DWG, DXF oraz XLSX/XLSM, aby przechować je przy projekcie. Zgodnie z polityką źródeł nie są one używane do generowania instrukcji, ilości ani momentów dokręcania. Oryginalne pięć plików można zawsze pobrać z modułu „Dokumenty”.
 
 ## Testy
 

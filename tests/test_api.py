@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+import hashlib
 from pathlib import Path
 
 TEST_DB = Path(tempfile.gettempdir()) / "asolar-universal-test.db"
@@ -161,6 +162,44 @@ class UniversalWorkflowTest(unittest.TestCase):
         workbook.save(path)
         with SessionLocal() as db: result = analyze(path, ".xlsx", db)
         self.assertEqual(result["summary"]["relations"], 1)
+
+    def test_only_five_approved_files_drive_sources_and_templates(self):
+        projects = self.client.get("/api/projects", headers=self.manager).json()
+        source_project = next(item for item in projects if item["name"] == "RF-GIULIETTA")
+        project_id = source_project["id"]
+        self.assertEqual(source_project["capacity_mw"], 6.4915)
+
+        basis = self.client.get(f"/api/source-basis?project_id={project_id}", headers=self.manager)
+        self.assertEqual(basis.status_code, 200, basis.text)
+        basis = basis.json()
+        self.assertEqual(basis["registered_sources"], 5)
+        self.assertEqual([item["name"] for item in basis["templates"]], ["1x28", "1x42", "1x56", "1x70"])
+
+        documents = self.client.get(f"/api/documents?project_id={project_id}", headers=self.manager).json()
+        approved = [item for item in documents if item["approved_source"]]
+        self.assertEqual(len(approved), 5)
+        expected_names = {"łaczenia rur.pdf", "planimetria.pdf", "planimetria 6,5mw.pdf", "montaż mechaniczny.pdf", "manual v.2.pdf"}
+        self.assertEqual({item["filename"] for item in approved}, expected_names)
+        for item in approved:
+            downloaded = self.client.get(f"/api/documents/{item['id']}/file", headers=self.manager)
+            self.assertEqual(hashlib.sha256(downloaded.content).hexdigest(), item["sha256"])
+
+        templates = self.client.get(f"/api/material-templates?project_id={project_id}", headers=self.manager).json()
+        source_templates = {item["name"]: item for item in templates if item["source_based"]}
+        self.assertEqual(source_templates["1x28"]["materials"], {"1": 5, "2": 30, "3": 30})
+        self.assertEqual(source_templates["1x70"]["materials"], {"1": 13, "2": 73, "3": 73})
+
+        before = self.client.get(f"/api/instructions?project_id={project_id}", headers=self.manager).json()
+        self.assertEqual(len(before), 9)
+        self.assertTrue(all(item["source"] == "montaż mechaniczny.pdf" for item in before))
+        supplemental = self.client.post(
+            "/api/documents", headers=self.manager,
+            data={"project_id": str(project_id)}, files={"file": ("obcy.pdf", b"not-an-approved-source", "application/pdf")},
+        )
+        self.assertEqual(supplemental.status_code, 200, supplemental.text)
+        self.assertFalse(supplemental.json()["analysis"]["approved_source"])
+        after = self.client.get(f"/api/instructions?project_id={project_id}", headers=self.manager).json()
+        self.assertEqual(after, before)
 
 
 if __name__ == "__main__":

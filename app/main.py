@@ -13,10 +13,10 @@ from .auth import create_token, current_user, decode_token, hash_password, roles
 from .database import Base, SessionLocal, UPLOAD_DIR, engine, get_db
 from .migrations import ensure_schema_columns
 from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, MaterialTemplate, Project, ProjectMaterial, RFI, RowType, RowTypeComponent, Section, SiteDelivery, SiteDeliveryItem, User, WorkLog, Zone
-from .services.parser import analyze
 from .services.report import daily_report
+from .services.source_basis import SOURCE_DIR, load_source_manifest, sha256_file, source_analysis, source_entry_by_hash
 
-app=FastAPI(title="ASOLAR Universal PV Construction Manager",version="3.0.0")
+app=FastAPI(title="ASOLAR Universal PV Construction Manager",version="3.1.0")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024
 MAX_PHOTO_SIZE=25*1024*1024
@@ -65,12 +65,41 @@ class Realtime:
             except Exception:self.disconnect(ws)
 realtime=Realtime()
 
-DEFAULT_MATERIALS=((1,"Rury / profile konstrukcyjne","szt."),(2,"Płatwie","szt."),(3,"Śruby i łączenia","szt."))
+SOURCE_MANIFEST=load_source_manifest()
+DEFAULT_MATERIALS=tuple((item["slot_number"],item["name"],item["unit"]) for item in SOURCE_MANIFEST["materials"])
 
 def ensure_materials(db,project_id):
-    existing={item.slot_number for item in db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==project_id))}
+    rows=db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==project_id)).all()
+    existing={item.slot_number for item in rows}
+    previous_defaults={"Rury / profile konstrukcyjne","Płatwie","Śruby i łączenia"}
+    configured={slot:(name,unit) for slot,name,unit in DEFAULT_MATERIALS}
+    for item in rows:
+        if item.name in previous_defaults:
+            item.name,item.unit=configured[item.slot_number]
     for slot,name,unit in DEFAULT_MATERIALS:
         if slot not in existing:db.add(ProjectMaterial(project_id=project_id,slot_number=slot,name=name,unit=unit,required_quantity=0))
+
+def seed_source_templates(db,project_id):
+    for source in SOURCE_MANIFEST["templates"]:
+        item=db.scalar(select(MaterialTemplate).where(MaterialTemplate.project_id==project_id,MaterialTemplate.name==source["name"]))
+        if item:continue
+        specification=f'{source["specification"]}\nŹródło: {source["source"]}'
+        db.add(MaterialTemplate(project_id=project_id,name=source["name"],structure_type=source["structure_type"],default_length_m=source["default_length_m"],specification=specification,materials_json=json.dumps(source["materials"],ensure_ascii=False)))
+
+def seed_source_documents(db,project_id,user_id):
+    current=db.scalars(select(Document).where(Document.project_id==project_id)).all()
+    approved={json.loads(item.analysis_json or "{}").get("sha256"):item for item in current}
+    for entry in SOURCE_MANIFEST["documents"]:
+        source_path=SOURCE_DIR/entry["filename"]
+        if not source_path.exists() or sha256_file(source_path)!=entry["sha256"]:continue
+        stored=f'source-{entry["sha256"][:20]}.pdf';target=UPLOAD_DIR/stored
+        if not target.exists():shutil.copy2(source_path,target)
+        analysis=source_analysis(entry)
+        item=approved.get(entry["sha256"])
+        if item:
+            item.status="zatwierdzone źródło";item.analysis_json=json.dumps(analysis,ensure_ascii=False);item.stored_name=stored;item.size=target.stat().st_size
+        else:
+            db.add(Document(project_id=project_id,filename=entry["filename"],stored_name=stored,kind="PDF",size=target.stat().st_size,status="zatwierdzone źródło",extracted_text="",analysis_json=json.dumps(analysis,ensure_ascii=False),uploaded_by_id=user_id))
 
 def seed():
     Base.metadata.create_all(engine)
@@ -81,16 +110,22 @@ def seed():
                 User(username="kierownik",full_name="Kierownik Budowy",role="kierownik",password_hash=hash_password("Asolar2026!")),
                 User(username="brygadzista",full_name="Brygadzista",role="brygadzista",password_hash=hash_password("Brygada2026!")),
                 User(username="magazynier",full_name="Magazynier",role="magazynier",password_hash=hash_password("Magazyn2026!"))])
+        db.flush();manager=db.scalar(select(User).where(User.username=="kierownik"))
         project=db.scalar(select(Project).limit(1))
         if not project:
-            project=Project(name="Farma PV 6,5 MW",location="Projekt budowy",capacity_mw=6.5,structure_type="tracker"); db.add(project); db.flush()
-            zone=Zone(project_id=project.id,name="Strefa A"); db.add(zone); db.flush(); db.add(Section(zone_id=zone.id,name="Sekcja A1"))
+            details=SOURCE_MANIFEST["project"]
+            project=Project(name=details["name"],location=details["location"],capacity_mw=details["capacity_mw"],structure_type=details["structure_type"]); db.add(project); db.flush()
+            zone=Zone(project_id=project.id,name="Strefa do uzupełnienia"); db.add(zone); db.flush(); db.add(Section(zone_id=zone.id,name="Sekcja do uzupełnienia"))
+        elif project.name=="Farma PV 6,5 MW" and project.location=="Projekt budowy":
+            details=SOURCE_MANIFEST["project"];project.name=details["name"];project.location=details["location"];project.capacity_mw=details["capacity_mw"];project.structure_type=details["structure_type"]
         for item in db.scalars(select(Project)).all():ensure_materials(db,item.id)
+        seed_source_templates(db,project.id)
+        seed_source_documents(db,project.id,manager.id)
         db.commit()
 seed()
 
 @app.get("/api/health")
-def health(): return {"status":"ok","version":"3.0.0","time":utc_now()}
+def health(): return {"status":"ok","version":"3.1.0","time":utc_now()}
 
 @app.post("/api/auth/login")
 def login(data:LoginIn,db:Session=Depends(get_db)):
@@ -248,7 +283,7 @@ def components(db:Session=Depends(get_db),user=Depends(current_user)):
     return [{"id":x.id,"sku":x.sku,"name":x.name,"category":x.category,"unit":x.unit,"torque_min_nm":x.torque_min_nm,"torque_max_nm":x.torque_max_nm} for x in db.scalars(select(Component).order_by(Component.category,Component.name))]
 
 def template_dict(item):
-    return {"id":item.id,"project_id":item.project_id,"name":item.name,"structure_type":item.structure_type,"default_length_m":item.default_length_m,"specification":item.specification,"materials":json.loads(item.materials_json or "{}"),"updated_at":item.updated_at}
+    return {"id":item.id,"project_id":item.project_id,"name":item.name,"structure_type":item.structure_type,"default_length_m":item.default_length_m,"specification":item.specification,"materials":json.loads(item.materials_json or "{}"),"source_based":"Źródło:" in (item.specification or ""),"updated_at":item.updated_at}
 
 def clean_three_materials(values):
     return {str(slot):max(0,float((values or {}).get(str(slot),(values or {}).get(slot,0)) or 0)) for slot in range(1,4)}
@@ -292,11 +327,25 @@ def calculate_equipment(data:CalculatorIn,db:Session=Depends(get_db),user=Depend
     materials=[{"material_id":slot.id,"slot_number":slot.slot_number,"name":slot.name,"unit":slot.unit,"per_row":quantities[str(slot.slot_number)],"total":quantities[str(slot.slot_number)]*data.row_count} for slot in slots]
     return {"template":template_dict(template) if template else None,"variant_name":data.variant_name or (template.name if template else "Konfiguracja własna"),"input":{"length_m":data.length_m,"row_count":data.row_count},"materials":materials,"assumption":"Ilości nie są automatycznie skalowane długością. Użytkownik może ręcznie zmienić każdą z trzech pozycji przed obliczeniem lub zapisaniem szablonu."}
 
+@app.get("/api/source-basis")
+def source_basis(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    payload=json.loads(json.dumps(SOURCE_MANIFEST,ensure_ascii=False))
+    rows=db.scalars(select(Document).where(Document.project_id==project_id)).all()
+    registered={json.loads(item.analysis_json or "{}").get("sha256") for item in rows}
+    payload["registered_sources"]=sum(item["sha256"] in registered for item in payload["documents"])
+    payload["expected_sources"]=len(payload["documents"])
+    return payload
+
+def document_dict(item):
+    analysis=json.loads(item.analysis_json or "{}")
+    return {"id":item.id,"filename":item.filename,"kind":item.kind,"size":item.size,"status":item.status,"approved_source":bool(analysis.get("approved_source")),"sha256":analysis.get("sha256"),"role":analysis.get("role"),"analysis":analysis,"uploaded_at":item.uploaded_at}
+
 @app.get("/api/documents")
 def documents(project_id:int|None=None,db:Session=Depends(get_db),user=Depends(current_user)):
     q=select(Document).order_by(Document.uploaded_at.desc())
     if project_id:q=q.where(Document.project_id==project_id)
-    return [{"id":x.id,"filename":x.filename,"kind":x.kind,"size":x.size,"status":x.status,"analysis":json.loads(x.analysis_json or "{}"),"uploaded_at":x.uploaded_at} for x in db.scalars(q)]
+    return [document_dict(x) for x in db.scalars(q)]
 
 @app.post("/api/documents")
 async def upload_document(project_id:int=Form(...),file:UploadFile=File(...),db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista","magazynier"))):
@@ -308,10 +357,15 @@ async def upload_document(project_id:int=Form(...),file:UploadFile=File(...),db:
     with path.open("wb") as target: shutil.copyfileobj(file.file,target)
     if path.stat().st_size>MAX_DOCUMENT_SIZE:
         path.unlink(missing_ok=True);raise HTTPException(413,"Plik przekracza limit rozmiaru")
-    try: result=analyze(path,extension,db);status="przeanalizowany"
-    except Exception as exc: result={"error":str(exc)};status="wymaga sprawdzenia"
-    extracted=result.pop("text","")
-    item=Document(project_id=project_id,filename=Path(file.filename or "dokument").name,stored_name=stored,kind=extension[1:].upper(),size=path.stat().st_size,status=status,extracted_text=extracted,analysis_json=json.dumps(result,ensure_ascii=False),uploaded_by_id=user.id)
+    digest=sha256_file(path);source=source_entry_by_hash(digest)
+    if source:
+        existing=next((item for item in db.scalars(select(Document).where(Document.project_id==project_id)).all() if json.loads(item.analysis_json or "{}").get("sha256")==digest),None)
+        if existing:
+            path.unlink(missing_ok=True);return {"id":existing.id,"status":existing.status,"analysis":json.loads(existing.analysis_json or "{}"),"deduplicated":True}
+        result=source_analysis(source);status="zatwierdzone źródło";filename=source["filename"]
+    else:
+        result={"approved_source":False,"sha256":digest,"summary":{"source_policy":"plik pomocniczy"},"warnings":["Plik zapisano, ale nie należy do pięciu zatwierdzonych źródeł. Nie zmienia instrukcji ani kalkulatora."]};status="pomocniczy — poza bazą źródłową";filename=Path(file.filename or "dokument").name
+    item=Document(project_id=project_id,filename=filename,stored_name=stored,kind=extension[1:].upper(),size=path.stat().st_size,status=status,extracted_text="",analysis_json=json.dumps(result,ensure_ascii=False),uploaded_by_id=user.id)
     db.add(item);db.flush();audit(db,user,"upload","document",item.id,item.filename);db.commit();await realtime.send("document.changed",{"id":item.id});return {"id":item.id,"status":status,"analysis":result}
 
 @app.get("/api/documents/{document_id}/file")
@@ -325,6 +379,7 @@ def instructions(project_id:int,db:Session=Depends(get_db),user=Depends(current_
     docs=db.scalars(select(Document).where(Document.project_id==project_id).order_by(Document.uploaded_at.desc())).all();result=[]
     for doc in docs:
         analysis=json.loads(doc.analysis_json or "{}")
+        if not analysis.get("approved_source"):continue
         for value in analysis.get("instructions",[]): result.append({**value,"document_id":doc.id,"source":doc.filename})
     return result
 

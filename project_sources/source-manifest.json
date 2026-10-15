@@ -1,0 +1,204 @@
+{
+  "version": 1,
+  "policy": "Dane techniczne, instrukcje i szablony startowe aplikacji pochodzą wyłącznie z pięciu dokumentów wymienionych w tym manifeście. Inne pliki mogą być przechowywane jako pomocnicze, ale nie zmieniają instrukcji ani kalkulatora.",
+  "project": {
+    "name": "RF-GIULIETTA",
+    "location": "Strada Vicinale Vernino, 28015 Momo (NO), Włochy",
+    "capacity_mw": 6.4915,
+    "structure_type": "Tracker jednoosiowy ESET Solar, układ 1P",
+    "source": "planimetria 6,5mw.pdf, strona 1"
+  },
+  "scope": {
+    "included": [
+      "podstawy przekładni i łożysk",
+      "przekładnia mechaniczna",
+      "obudowy łożysk",
+      "rury momentowe i ich połączenia",
+      "płatwie i ich mocowania",
+      "amortyzatory",
+      "zaślepki rur momentowych"
+    ],
+    "excluded": [
+      "wbijanie i montaż słupów",
+      "TCU i odbiornik bezprzewodowy",
+      "moduły PV",
+      "okablowanie i uziemienie",
+      "uruchomienie elektryczne"
+    ]
+  },
+  "materials": [
+    {"slot_number": 1, "name": "Rury momentowe S156 (wg wariantu)", "unit": "szt."},
+    {"slot_number": 2, "name": "Płatwie J60x30 (LT1-1450)", "unit": "szt."},
+    {"slot_number": 3, "name": "Kpl. mocowania płatwi UM10/BP095/BP069/M10", "unit": "kpl."}
+  ],
+  "templates": [
+    {
+      "name": "1x28",
+      "structure_type": "Tracker ESET Solar 1P Exterior",
+      "default_length_m": 0,
+      "materials": {"1": 5, "2": 30, "3": 30},
+      "specification": "Rury S156: 5 szt. (A1, A2, B1, C1, C2). Płatwie J60x30x1,8: 30 szt. Każdy komplet mocowania płatwi: 1× U-bolt UM10×166×188×30, 1× BP095, 2× BP069 -3×22×35, 2× nakrętka kołnierzowa M10; moment 25–32 N·m.",
+      "source": "montaż mechaniczny.pdf, strony 45 i 52–53; planimetria.pdf, strony 3 i 7"
+    },
+    {
+      "name": "1x42",
+      "structure_type": "Tracker ESET Solar 1P Exterior",
+      "default_length_m": 0,
+      "materials": {"1": 8, "2": 44, "3": 44},
+      "specification": "Rury S156: 8 szt. (A5×2, B6×4, C5×2). Płatwie J60x30x1,8: 44 szt. Każdy komplet mocowania płatwi: 1× U-bolt UM10×166×188×30, 1× BP095, 2× BP069 -3×22×35, 2× nakrętka kołnierzowa M10; moment 25–32 N·m.",
+      "source": "montaż mechaniczny.pdf, strony 45 i 53; planimetria.pdf, strony 4 i 8"
+    },
+    {
+      "name": "1x56",
+      "structure_type": "Tracker ESET Solar 1P Exterior",
+      "default_length_m": 0,
+      "materials": {"1": 10, "2": 58, "3": 58},
+      "specification": "Rury S156: 10 szt. (A3×2, B2×2, B3×4, C3×2). Płatwie J60x30x1,8: 58 szt. Każdy komplet mocowania płatwi: 1× U-bolt UM10×166×188×30, 1× BP095, 2× BP069 -3×22×35, 2× nakrętka kołnierzowa M10; moment 25–32 N·m.",
+      "source": "montaż mechaniczny.pdf, strony 45–46 i 53; planimetria.pdf, strony 5 i 9"
+    },
+    {
+      "name": "1x70",
+      "structure_type": "Tracker ESET Solar 1P Exterior",
+      "default_length_m": 0,
+      "materials": {"1": 13, "2": 73, "3": 73},
+      "specification": "Rury S156: 13 szt. (A2×2, A4×2, B1×2, B4×2, B5×1, C4×2, D1×1, D2×1). Płatwie J60x30x1,6: 73 szt. Każdy komplet mocowania płatwi: 1× U-bolt UM10×166×188×30, 1× BP095, 2× BP069 -3×22×35, 2× nakrętka kołnierzowa M10; moment 25–32 N·m.",
+      "source": "montaż mechaniczny.pdf, strony 46 i 53; planimetria.pdf, strony 6 i 10"
+    }
+  ],
+  "tools": {
+    "source": "montaż mechaniczny.pdf, strona 1, tabela 2",
+    "items": [
+      "Klucz elektryczny do M5/M8/M10/M12/M14/M16/M18",
+      "Mały śrubokręt",
+      "Poziomica 1 m",
+      "Klucz imbusowy 6 mm do M8",
+      "Klucze płaskie 8/13/16/18/21/24/27 mm",
+      "Młotek gumowy, średni",
+      "Taśma miernicza 10 m",
+      "Sznur traserski 100 m",
+      "Kątomierz ±90°",
+      "Klucz dynamometryczny 0–450 N·m",
+      "Szczypce długie 4 cale"
+    ]
+  },
+  "torques": [
+    {"item": "Nakrętka kołnierzowa M10, klasa 6.8", "min_nm": 25, "max_nm": 32, "source": "montaż mechaniczny.pdf, strony 26 i 53"},
+    {"item": "Śruba podsadzana MC10×31×29, klasa 8.8", "min_nm": 33, "max_nm": 45, "source": "montaż mechaniczny.pdf, strona 22"},
+    {"item": "U-bolt UM12×168×195×35, klasa 6.8", "min_nm": 45, "max_nm": 55, "source": "montaż mechaniczny.pdf, strona 31"},
+    {"item": "Śruba M12, klasa 8.8", "min_nm": 58, "max_nm": 78, "source": "montaż mechaniczny.pdf, strony 31 i 41"},
+    {"item": "Śruba M14, klasa 8.8", "min_nm": 93, "max_nm": 124, "source": "montaż mechaniczny.pdf, strony 12 i 41"},
+    {"item": "Śruba M16, klasa 8.8", "min_nm": 145, "max_nm": 193, "source": "montaż mechaniczny.pdf, strony 11, 15, 17 i 41"},
+    {"item": "Śruba M18, klasa 8.8", "min_nm": 199, "max_nm": 264, "source": "montaż mechaniczny.pdf, strona 41"}
+  ],
+  "documents": [
+    {
+      "filename": "łaczenia rur.pdf",
+      "sha256": "e39f87077fb8744f57eddea2befa42d63c3a635614d6ba5b9be962b3a7c4a93c",
+      "pages": 7,
+      "role": "Rysunki warsztatowe siedmiu typów słupów: QZ1–QZ4, FZ1–FZ2 i NZ1. Plik, mimo nazwy, nie zawiera instrukcji łączenia rur.",
+      "facts": ["Materiał słupów: S355JR", "Typy: driving post, non-driving post i damper post"]
+    },
+    {
+      "filename": "planimetria.pdf",
+      "sha256": "974fb17e7676b66a42cf8b5d9cd0019f118dfc15acbe9ef6bac5e69b8d2f8a93",
+      "pages": 14,
+      "role": "Rysunki układu, rysunki ogólne wariantów 1PX28/42/56/70 oraz zeskanowane tabele BOM.",
+      "facts": ["Warianty rysunkowe: 1PX28, 1PX42, 1PX56, 1PX70", "BOM znajduje się na stronach 7–14"]
+    },
+    {
+      "filename": "planimetria 6,5mw.pdf",
+      "sha256": "94d9883580d0694c3e1c0e32080d50fdbb2c9ade8ebdad9596eac3d2e9799df1",
+      "pages": 1,
+      "role": "Planimetria projektu RF-GIULIETTA w Momo o mocy 6,4915 MWp; potwierdza użycie wariantów 1x28/42/56/70.",
+      "facts": ["Nazwa: RF-GIULIETTA", "Moc: 6,4915 MWp", "Lokalizacja: Momo (NO)", "Warianty etykiet: 1x28, 1x42, 1x56, 1x70"]
+    },
+    {
+      "filename": "montaż mechaniczny.pdf",
+      "sha256": "03ba0379ae4100b9b975f498f7c3e10229c96b2a5faa03818ffd28c9b9f71598",
+      "pages": 54,
+      "role": "Wyciąg instrukcji mechanicznej: narzędzia, montaż konstrukcji, momenty, warianty rur i płatwi.",
+      "facts": ["Warianty rur: 1P×28, 1P×42, 1P×56, 1P×70", "Tabele płatwi: 30, 44, 58 i 73 szt."]
+    },
+    {
+      "filename": "manual v.2.pdf",
+      "sha256": "10b1406d363001c361e4b3f3f988d77c215c157ac4dbf651aab869da27b510b8",
+      "pages": 88,
+      "role": "Pełny manual producenta ESET Solar używany jako dokument odniesienia i kontekst dla wyciągu mechanicznego.",
+      "facts": ["Producent: Jiangsu Evershine Energy Technology Co.", "Instrukcje techniczne i montażowe trackera"]
+    }
+  ],
+  "instructions": [
+    {
+      "section": "2",
+      "title": "Przygotuj narzędzia",
+      "source_file": "montaż mechaniczny.pdf",
+      "pages": "1",
+      "steps": ["Sprawdź komplet narzędzi z tabeli 2.", "Przygotuj klucz dynamometryczny o zakresie 0–450 N·m.", "Dobierz klucze do rozmiarów elementów wskazanych w kolejnych krokach."],
+      "quality": "Przed pracą potwierdź sprawność i aktualną kontrolę klucza dynamometrycznego."
+    },
+    {
+      "section": "5.3",
+      "title": "Podstawy przekładni i łożysk",
+      "source_file": "montaż mechaniczny.pdf",
+      "pages": "11–13",
+      "steps": ["Sprawdź typ i liczbę elementów według BOM i rysunków.", "Przygotuj po dwa klucze 21 i 24 mm oraz poziomicę.", "Ustaw górną płaszczyznę podstawy przekładni równolegle do płaszczyzny odniesienia słupa niedrive.", "Zmierz poziom obu końców wału; tolerancja skręcenia wynosi maksymalnie 0,5°.", "Podkładki samohamowne podwójne montuj po stronie nakrętki."],
+      "quality": "Jeśli kąta nie można ustawić w tolerancji ≤0,5°, zgłoś problem. Zakres regulacji podstawy łożyska wynosi ±25 mm."
+    },
+    {
+      "section": "5.4",
+      "title": "Przekładnia obrotowa",
+      "source_file": "montaż mechaniczny.pdf",
+      "pages": "14",
+      "steps": ["Sprawdź elementy według BOM i rysunków; przygotuj dwa klucze 27 mm i poziomicę.", "Umieść przekładnię na podstawie z silnikiem skierowanym na wschód.", "Załóż śruby i dokręć je najpierw ręcznie.", "Wypoziomuj przekładnię w obu kierunkach, następnie dokręć do wymaganego momentu."],
+      "quality": "Kierunek silnika i wypoziomowanie sprawdź przed końcowym dokręceniem."
+    },
+    {
+      "section": "5.5",
+      "title": "Obudowy łożysk",
+      "source_file": "montaż mechaniczny.pdf",
+      "pages": "15–16",
+      "steps": ["Sprawdź wymiary i liczbę części; przygotuj klucze 16 i 24 mm.", "Zamontuj obudowę na podstawie i otwórz górną pokrywę.", "Po montażu rury nasuń łożysko, osadź je w obudowie i zamknij pokrywę.", "Dobierz kierunek obudowy i jej rozmiar do typu słupa według rysunków 5.5-2 i 5.5-4."],
+      "quality": "M16×45×30 z dużą podkładką płaską, podwójną podkładką samohamowną i nakrętką: 145–193 N·m."
+    },
+    {
+      "section": "5.6.1",
+      "title": "Rury momentowe przy przekładni",
+      "source_file": "montaż mechaniczny.pdf",
+      "pages": "17–20",
+      "steps": ["Sprawdź części i przygotuj klucz 24 mm, poziomicę, gumowy młotek oraz kątomierz.", "Koniec rury z ośmioma otworami Ø18 skieruj do przekładni.", "Spoinę rury ustaw od dołu w rowku wału przekładni.", "Połącz rurę z przekładnią i dokręć śruby w kolejności z rysunku 5.6.1-3.", "Ustaw rury po obu stronach przekładni w jednej płaszczyźnie."],
+      "quality": "Równoległość po obu stronach przekładni ≤0,5°. M16×30×30 z podwójną podkładką samohamowną: 145–193 N·m. Po 3 miesiącach pracy ponownie skontroluj połączenia."
+    },
+    {
+      "section": "5.6.2",
+      "title": "Połączenia kolejnych rur momentowych",
+      "source_file": "montaż mechaniczny.pdf",
+      "pages": "21–25",
+      "steps": ["Sprawdź rury, śruby podsadzane i podkładki prowadzące; przygotuj nasadkę 16 mm, poziomicę, gumowy młotek, taśmę i kątomierz.", "Wstępnie złóż śrubę MC10 z podwójną podkładką samohamowną i nakrętką, następnie osadź ją w podkładce prowadzącej.", "Wsuń łeb T w prostokątny otwór połączenia, obróć zgodnie z ruchem wskazówek i zablokuj w kwadratowym otworze.", "Dokręcaj każde połączenie w dwóch przejściach i według sekwencji z rysunku 5.6.2-6.", "Dla 1x70 zastosuj obejmę S156, dystanse, M12×50×40 oraz MC12×35×30 zgodnie z tabelą 5.6.2-6."],
+      "quality": "MC10×31×29: 33–45 N·m. Równoległość sąsiednich rur ≤0,5°, skumulowany błąd skręcenia całego rzędu ±2°."
+    },
+    {
+      "section": "5.7",
+      "title": "Płatwie i ich mocowania",
+      "source_file": "montaż mechaniczny.pdf",
+      "pages": "26–29 i 52–53",
+      "steps": ["Sprawdź części; przygotuj dwa klucze 16 mm, poziomicę, gumowy młotek i taśmę.", "Rozpocznij montaż płatwi od środka rzędu i pracuj kolejno w obie strony.", "Ustaw długość płatwi prostopadle do osi rury momentowej.", "Nakrętki U-bolta dokręcaj naprzemiennie i stopniowo po obu stronach.", "Po regulacji pozostaw na obu nakrętkach więcej niż dwa widoczne zwoje gwintu."],
+      "quality": "M10: 25–32 N·m. Rysunek 5.7-12 nie określa rzeczywistej liczby płatwi; używaj tabel: 30/44/58/73 dla wariantów 1x28/42/56/70."
+    },
+    {
+      "section": "5.8",
+      "title": "Amortyzatory",
+      "source_file": "montaż mechaniczny.pdf",
+      "pages": "30–34",
+      "steps": ["Sprawdź części; przygotuj po dwa klucze 18 i 21 mm, poziomicę i szczypce długie.", "Zamontuj dolny uchwyt na słupie amortyzatora i obejmę na rurze momentowej.", "Osadź amortyzator między obejmą i dolnym uchwytem; większą średnicę ustaw u góry.", "Montuj amortyzatory symetrycznie.", "Włóż zawleczkę w otwór śruby i rozchyl ją pod kątem większym niż 180°."],
+      "quality": "U-bolt UM12: 45–55 N·m; M12×40×25: 58–78 N·m. Krawędź uchwytu ma ściśle przylegać do krawędzi śruby podsadzanej."
+    },
+    {
+      "section": "5.13",
+      "title": "Zaślepki rur momentowych",
+      "source_file": "montaż mechaniczny.pdf",
+      "pages": "40",
+      "steps": ["Sprawdź liczbę zaślepek BP098 według BOM.", "Po zakończeniu montażu rur załóż zaślepki na obu końcach rzędu zgodnie z rysunkiem 5.13-2."],
+      "quality": "Potwierdź osadzenie obu zaślepek po zakończeniu montażu rzędu."
+    }
+  ]
+}
