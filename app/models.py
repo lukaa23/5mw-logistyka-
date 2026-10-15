@@ -45,6 +45,15 @@ class Zone(Base):
     project: Mapped[Project] = relationship(back_populates="zones")
     sections: Mapped[list["Section"]] = relationship(back_populates="zone", cascade="all, delete-orphan")
 
+class ZoneVariantConfig(Base):
+    __tablename__ = "zone_variant_configs"
+    __table_args__ = (UniqueConstraint("zone_id", "variant_code", name="uq_zone_variant_code"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    zone_id: Mapped[int] = mapped_column(ForeignKey("zones.id", ondelete="CASCADE"), index=True)
+    variant_code: Mapped[str] = mapped_column(String(20))
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
 class Section(Base):
     __tablename__ = "sections"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -76,6 +85,9 @@ class ConstructionRow(Base):
     length_m: Mapped[float] = mapped_column(Float, default=0)
     specification: Mapped[str] = mapped_column(Text, default="")
     material_quantities_json: Mapped[str] = mapped_column(Text, default="{}")
+    auto_generated: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    variant_ordinal: Mapped[int] = mapped_column(Integer, default=0)
     built: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     built_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     built_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

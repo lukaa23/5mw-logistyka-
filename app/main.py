@@ -12,11 +12,11 @@ from sqlalchemy.orm import Session, selectinload
 from .auth import create_token, current_user, decode_token, hash_password, roles, verify_password
 from .database import Base, SessionLocal, UPLOAD_DIR, engine, get_db
 from .migrations import ensure_schema_columns
-from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, MaterialTemplate, Project, ProjectMaterial, ProjectVariantConfig, RFI, RowType, RowTypeComponent, Section, SiteDelivery, SiteDeliveryItem, User, WorkLog, Zone
+from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, MaterialTemplate, Project, ProjectMaterial, ProjectVariantConfig, RFI, RowType, RowTypeComponent, Section, SiteDelivery, SiteDeliveryItem, User, WorkLog, Zone, ZoneVariantConfig
 from .services.report import daily_report
 from .services.source_basis import SOURCE_DIR, build_eset_demand, load_eset_bom, load_source_manifest, sha256_file, source_analysis, source_entry_by_hash
 
-app=FastAPI(title="ASOLAR ESET Tracker Manager",version="4.0.0")
+app=FastAPI(title="ASOLAR ESET Tracker Manager",version="4.1.0")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024
 MAX_PHOTO_SIZE=25*1024*1024
@@ -54,7 +54,7 @@ def audit(db,user,action,entity_type,entity_id=None,details=""):
 def user_dict(user): return {"id":user.id,"username":user.username,"full_name":user.full_name,"role":user.role,"active":user.active}
 def project_dict(project): return {"id":project.id,"name":project.name,"location":project.location,"capacity_mw":project.capacity_mw,"structure_type":project.structure_type,"archived":project.archived,"archived_at":project.archived_at}
 def row_dict(row):
-    return {"id":row.id,"code":row.code,"section_id":row.section_id,"template_id":row.template_id,"variant_name":row.variant_name,"length_m":row.length_m,"specification":row.specification,"material_quantities":json.loads(row.material_quantities_json or "{}"),"built":row.built,"built_by":row.built_by.full_name if row.built_by else None,"built_at":row.built_at,"qc_checked":row.qc_checked,"qc_by":row.qc_by.full_name if row.qc_by else None,"qc_at":row.qc_at,"note":row.note}
+    return {"id":row.id,"code":row.code,"section_id":row.section_id,"template_id":row.template_id,"variant_name":row.variant_name,"variant_ordinal":row.variant_ordinal,"auto_generated":row.auto_generated,"active":row.active,"length_m":row.length_m,"specification":row.specification,"material_quantities":json.loads(row.material_quantities_json or "{}"),"built":row.built,"built_by":row.built_by.full_name if row.built_by else None,"built_at":row.built_at,"qc_checked":row.qc_checked,"qc_by":row.qc_by.full_name if row.qc_by else None,"qc_at":row.qc_at,"note":row.note}
 
 class Realtime:
     def __init__(self): self.clients=[]
@@ -70,16 +70,90 @@ realtime=Realtime()
 SOURCE_MANIFEST=load_source_manifest()
 ESET_VARIANT_CODES=tuple(item["code"] for item in load_eset_bom()["variants"])
 DEFAULT_MATERIALS=tuple((item["slot_number"],item["name"],item["unit"]) for item in SOURCE_MANIFEST["materials"])
+AUTO_SECTION_NAME="Rzędy ESET — automatyczne"
 
 def ensure_variant_config(db,project_id):
     current={item.variant_code for item in db.scalars(select(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id))}
     for code in ESET_VARIANT_CODES:
         if code not in current:db.add(ProjectVariantConfig(project_id=project_id,variant_code=code,row_count=0))
 
-def project_demand(db,project_id):
+def ensure_zone_variant_config(db,zone_id):
+    current={item.variant_code for item in db.scalars(select(ZoneVariantConfig).where(ZoneVariantConfig.zone_id==zone_id))}
+    for code in ESET_VARIANT_CODES:
+        if code not in current:db.add(ZoneVariantConfig(zone_id=zone_id,variant_code=code,row_count=0))
+
+def zone_variant_values(db,zone_id):
+    ensure_zone_variant_config(db,zone_id);db.flush()
+    return {item.variant_code:item.row_count for item in db.scalars(select(ZoneVariantConfig).where(ZoneVariantConfig.zone_id==zone_id))}
+
+def reconcile_zone_rows(db,zone):
+    counts=zone_variant_values(db,zone.id)
+    desired_total=sum(counts.values())
+    section=db.scalar(select(Section).where(Section.zone_id==zone.id,Section.name==AUTO_SECTION_NAME))
+    if not section and not desired_total:return
+    if not section:
+        section=Section(zone_id=zone.id,name=AUTO_SECTION_NAME);db.add(section);db.flush()
+    existing=db.scalars(select(ConstructionRow).where(ConstructionRow.section_id==section.id,ConstructionRow.auto_generated==True)).all()
+    for row in existing:row.code=f"tmp-{uuid.uuid4().hex[:24]}"
+    db.flush()
+    selected=[]
+    by_key={(row.variant_name,row.variant_ordinal):row for row in existing}
+    for code in ESET_VARIANT_CODES:
+        for ordinal in range(1,counts.get(code,0)+1):
+            row=by_key.get((code,ordinal))
+            if not row:
+                row=ConstructionRow(section_id=section.id,code=f"tmp-{uuid.uuid4().hex[:24]}",variant_name=code,variant_ordinal=ordinal,auto_generated=True,active=True,specification=f"Tracker ESET {code}",material_quantities_json="{}")
+                db.add(row)
+            row.active=True;selected.append(row)
+    selected_ids={id(row) for row in selected}
+    for row in existing:
+        if id(row) not in selected_ids:row.active=False
+    db.flush()
+    for index,row in enumerate(selected,1):row.code=str(index)
+    for row in existing:
+        if not row.active:row.code=f"archiwalny-{row.id}"
+    db.flush()
+
+def sync_project_variant_totals(db,project_id):
     ensure_variant_config(db,project_id);db.flush()
-    values={item.variant_code:item.row_count for item in db.scalars(select(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id))}
+    totals={code:0 for code in ESET_VARIANT_CODES}
+    for code,count in db.execute(select(ZoneVariantConfig.variant_code,func.sum(ZoneVariantConfig.row_count)).join(Zone).where(Zone.project_id==project_id).group_by(ZoneVariantConfig.variant_code)):
+        totals[code]=int(count or 0)
+    current={item.variant_code:item for item in db.scalars(select(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id))}
+    for code,value in totals.items():current[code].row_count=value
+
+def ensure_project_zone_configs(db,project_id):
+    zones=db.scalars(select(Zone).where(Zone.project_id==project_id).order_by(Zone.id)).all()
+    had_zone_config=bool(db.scalar(select(func.count(ZoneVariantConfig.id)).join(Zone).where(Zone.project_id==project_id)))
+    legacy={item.variant_code:item.row_count for item in db.scalars(select(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id))}
+    for zone in zones:ensure_zone_variant_config(db,zone.id)
+    db.flush()
+    if zones and not had_zone_config and any(legacy.values()):
+        first={item.variant_code:item for item in db.scalars(select(ZoneVariantConfig).where(ZoneVariantConfig.zone_id==zones[0].id))}
+        for code,value in legacy.items():
+            if code in first:first[code].row_count=value
+    for zone in zones:reconcile_zone_rows(db,zone)
+    if zones:sync_project_variant_totals(db,project_id)
+    return zones
+
+def project_demand(db,project_id):
+    zones=ensure_project_zone_configs(db,project_id)
+    if zones:
+        values={code:0 for code in ESET_VARIANT_CODES}
+        for code,count in db.execute(select(ZoneVariantConfig.variant_code,func.sum(ZoneVariantConfig.row_count)).join(Zone).where(Zone.project_id==project_id).group_by(ZoneVariantConfig.variant_code)):values[code]=int(count or 0)
+    else:
+        ensure_variant_config(db,project_id);db.flush();values={item.variant_code:item.row_count for item in db.scalars(select(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id))}
     return build_eset_demand(values)
+
+def validate_variant_configuration(items):
+    codes=[item.variant_code for item in items]
+    if len(set(codes))!=4 or set(codes)!=set(ESET_VARIANT_CODES):
+        raise HTTPException(400,"Konfiguracja musi zawierać dokładnie warianty 1x28, 1x42, 1x56 i 1x70")
+
+def zone_demand_payload(db,zone):
+    demand=build_eset_demand(zone_variant_values(db,zone.id))
+    total,built,qc=db.execute(select(func.count(ConstructionRow.id),func.sum(func.cast(ConstructionRow.built,Integer)),func.sum(func.cast(ConstructionRow.qc_checked,Integer))).join(Section).where(Section.zone_id==zone.id,ConstructionRow.auto_generated==True,ConstructionRow.active==True)).one()
+    return {"id":zone.id,"project_id":zone.project_id,"name":zone.name,"stats":{"total":int(total or 0),"built":int(built or 0),"qc":int(qc or 0)},"demand":demand}
 
 def ensure_materials(db,project_id):
     rows=db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==project_id)).all()
@@ -128,17 +202,19 @@ def seed():
         if not project:
             details=SOURCE_MANIFEST["project"]
             project=Project(name=details["name"],location=details["location"],capacity_mw=details["capacity_mw"],structure_type=details["structure_type"]); db.add(project); db.flush()
-            zone=Zone(project_id=project.id,name="Strefa do uzupełnienia"); db.add(zone); db.flush(); db.add(Section(zone_id=zone.id,name="Sekcja do uzupełnienia"))
+            zone=Zone(project_id=project.id,name="Strefa A"); db.add(zone); db.flush()
         elif project.name=="Farma PV 6,5 MW" and project.location=="Projekt budowy":
             details=SOURCE_MANIFEST["project"];project.name=details["name"];project.location=details["location"];project.capacity_mw=details["capacity_mw"];project.structure_type=details["structure_type"]
-        for item in db.scalars(select(Project)).all():ensure_materials(db,item.id);ensure_variant_config(db,item.id)
+        placeholder=db.scalar(select(Zone).where(Zone.name=="Strefa do uzupełnienia"))
+        if placeholder:placeholder.name="Strefa A"
+        for item in db.scalars(select(Project)).all():ensure_materials(db,item.id);ensure_variant_config(db,item.id);ensure_project_zone_configs(db,item.id)
         seed_source_templates(db,project.id)
         seed_source_documents(db,project.id,manager.id)
         db.commit()
 seed()
 
 @app.get("/api/health")
-def health(): return {"status":"ok","version":"4.0.0","time":utc_now()}
+def health(): return {"status":"ok","version":"4.1.0","time":utc_now()}
 
 @app.post("/api/auth/login")
 def login(data:LoginIn,db:Session=Depends(get_db)):
@@ -194,7 +270,7 @@ async def delete_project(project_id:int,db:Session=Depends(get_db),user=Depends(
 def project_tree(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
     project=db.scalar(select(Project).where(Project.id==project_id).options(selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.row_type),selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.built_by),selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.qc_by)))
     if not project: raise HTTPException(404,"Brak projektu")
-    return {**project_dict(project),"zones":[{"id":z.id,"name":z.name,"sections":[{"id":s.id,"name":s.name,"archived":s.archived,"rows":[row_dict(r) for r in s.rows]} for s in z.sections]} for z in project.zones]}
+    return {**project_dict(project),"zones":[{"id":z.id,"name":z.name,"sections":[{"id":s.id,"name":s.name,"archived":s.archived,"rows":[row_dict(r) for r in s.rows if r.active]} for s in z.sections]} for z in project.zones]}
 
 @app.post("/api/zones")
 async def create_zone(data:ZoneIn,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
@@ -358,14 +434,73 @@ def tracker_config(project_id:int,db:Session=Depends(get_db),user=Depends(curren
 @app.put("/api/projects/{project_id}/tracker-config")
 async def update_tracker_config(project_id:int,data:VariantConfigurationIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
     if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
-    codes=[item.variant_code for item in data.items]
-    if len(set(codes))!=4 or set(codes)!=set(ESET_VARIANT_CODES):
-        raise HTTPException(400,"Konfiguracja musi zawierać dokładnie warianty 1x28, 1x42, 1x56 i 1x70")
-    ensure_variant_config(db,project_id);db.flush()
-    current={item.variant_code:item for item in db.scalars(select(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id))}
-    for value in data.items:current[value.variant_code].row_count=value.row_count
+    validate_variant_configuration(data.items)
+    zones=ensure_project_zone_configs(db,project_id)
+    if not zones:
+        zone=Zone(project_id=project_id,name="Strefa A");db.add(zone);db.flush();ensure_zone_variant_config(db,zone.id);db.flush();zones=[zone]
+    for zone in zones:
+        current={item.variant_code:item for item in db.scalars(select(ZoneVariantConfig).where(ZoneVariantConfig.zone_id==zone.id))}
+        for value in data.items:current[value.variant_code].row_count=value.row_count if zone.id==zones[0].id else 0
+        reconcile_zone_rows(db,zone)
+    sync_project_variant_totals(db,project_id)
     audit(db,user,"update","tracker_config",project_id,json.dumps({x.variant_code:x.row_count for x in data.items},ensure_ascii=False))
-    db.commit();await realtime.send("tracker-config.changed",{"project_id":project_id});return project_demand(db,project_id)
+    result=project_demand(db,project_id);db.commit();await realtime.send("tracker-config.changed",{"project_id":project_id});return result
+
+@app.get("/api/projects/{project_id}/tracker-zones")
+def tracker_zones(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    zones=ensure_project_zone_configs(db,project_id)
+    result=[zone_demand_payload(db,zone) for zone in zones]
+    db.commit();return result
+
+@app.post("/api/tracker-zones")
+async def create_tracker_zone(data:ZoneIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    if not db.get(Project,data.project_id):raise HTTPException(404,"Brak projektu")
+    name=data.name.strip()
+    if not name:raise HTTPException(400,"Nazwa strefy jest wymagana")
+    item=Zone(project_id=data.project_id,name=name);db.add(item);db.flush();ensure_zone_variant_config(db,item.id);db.flush()
+    audit(db,user,"create","tracker_zone",item.id,item.name);result=zone_demand_payload(db,item);db.commit();await realtime.send("tracker-zone.changed",{"project_id":data.project_id});return result
+
+@app.patch("/api/tracker-zones/{zone_id}")
+async def update_tracker_zone(zone_id:int,data:NameUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    item=db.get(Zone,zone_id)
+    if not item:raise HTTPException(404,"Brak strefy")
+    item.name=data.name.strip();audit(db,user,"update","tracker_zone",item.id,item.name);result=zone_demand_payload(db,item);db.commit();await realtime.send("tracker-zone.changed",{"project_id":item.project_id});return result
+
+@app.put("/api/tracker-zones/{zone_id}/config")
+async def update_tracker_zone_config(zone_id:int,data:VariantConfigurationIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    zone=db.get(Zone,zone_id)
+    if not zone:raise HTTPException(404,"Brak strefy")
+    validate_variant_configuration(data.items);ensure_zone_variant_config(db,zone_id);db.flush()
+    current={item.variant_code:item for item in db.scalars(select(ZoneVariantConfig).where(ZoneVariantConfig.zone_id==zone_id))}
+    for value in data.items:current[value.variant_code].row_count=value.row_count
+    reconcile_zone_rows(db,zone);sync_project_variant_totals(db,zone.project_id)
+    audit(db,user,"update","tracker_zone_config",zone.id,json.dumps({x.variant_code:x.row_count for x in data.items},ensure_ascii=False));result=zone_demand_payload(db,zone);db.commit();await realtime.send("tracker-zone.changed",{"project_id":zone.project_id,"zone_id":zone.id});return result
+
+@app.delete("/api/tracker-zones/{zone_id}")
+async def delete_tracker_zone(zone_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    zone=db.get(Zone,zone_id)
+    if not zone:raise HTTPException(404,"Brak strefy")
+    project_id=zone.project_id
+    row_ids=list(db.scalars(select(ConstructionRow.id).join(Section).where(Section.zone_id==zone_id)))
+    for rfi in db.scalars(select(RFI).where(RFI.row_id.in_(row_ids or [-1]))):rfi.row_id=None
+    for log in db.scalars(select(WorkLog).where(WorkLog.row_id.in_(row_ids or [-1]))):log.row_id=None
+    for photo in db.scalars(select(Attachment).where(Attachment.entity_type=="row",Attachment.entity_id.in_(row_ids or [-1]))).all():(UPLOAD_DIR/photo.stored_name).unlink(missing_ok=True);db.delete(photo)
+    db.execute(delete(ZoneVariantConfig).where(ZoneVariantConfig.zone_id==zone_id));db.delete(zone);db.flush();sync_project_variant_totals(db,project_id)
+    audit(db,user,"delete","tracker_zone",zone_id,zone.name);db.commit();await realtime.send("tracker-zone.changed",{"project_id":project_id});return {"ok":True}
+
+@app.get("/api/projects/{project_id}/operational-rows")
+def operational_rows(project_id:int,zone_id:int|None=None,db:Session=Depends(get_db),user=Depends(current_user)):
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    ensure_project_zone_configs(db,project_id)
+    statement=select(ConstructionRow,Zone).join(Section,Section.id==ConstructionRow.section_id).join(Zone,Zone.id==Section.zone_id).where(Zone.project_id==project_id,ConstructionRow.auto_generated==True,ConstructionRow.active==True).options(selectinload(ConstructionRow.built_by),selectinload(ConstructionRow.qc_by))
+    if zone_id is not None:statement=statement.where(Zone.id==zone_id)
+    pairs=db.execute(statement).all();row_ids=[row.id for row,_ in pairs]
+    photo_counts=dict(db.execute(select(Attachment.entity_id,func.count(Attachment.id)).where(Attachment.entity_type=="row",Attachment.entity_id.in_(row_ids or [-1])).group_by(Attachment.entity_id)).all())
+    result=[]
+    for row,zone in pairs:result.append({**row_dict(row),"zone_id":zone.id,"zone_name":zone.name,"photos":int(photo_counts.get(row.id,0))})
+    result.sort(key=lambda item:(item["zone_id"],int(item["code"]) if item["code"].isdigit() else 999999,item["id"]))
+    db.commit();return result
 
 def document_dict(item):
     analysis=json.loads(item.analysis_json or "{}")
@@ -394,7 +529,7 @@ async def upload_document(project_id:int=Form(...),file:UploadFile=File(...),db:
             path.unlink(missing_ok=True);return {"id":existing.id,"status":existing.status,"analysis":json.loads(existing.analysis_json or "{}"),"deduplicated":True}
         result=source_analysis(source);status="zatwierdzone źródło";filename=source["filename"]
     else:
-        result={"approved_source":False,"sha256":digest,"summary":{"source_policy":"plik pomocniczy"},"warnings":["Plik zapisano, ale nie należy do dziewięciu zatwierdzonych źródeł. Nie zmienia instrukcji ani bazy BOM."]};status="pomocniczy — poza bazą źródłową";filename=Path(file.filename or "dokument").name
+        result={"approved_source":False,"sha256":digest,"summary":{"source_policy":"plik pomocniczy"},"warnings":["Plik zapisano, ale nie należy do dziesięciu zatwierdzonych źródeł. Nie zmienia instrukcji ani bazy BOM."]};status="pomocniczy — poza bazą źródłową";filename=Path(file.filename or "dokument").name
     item=Document(project_id=project_id,filename=filename,stored_name=stored,kind=extension[1:].upper(),size=path.stat().st_size,status=status,extracted_text="",analysis_json=json.dumps(result,ensure_ascii=False),uploaded_by_id=user.id)
     db.add(item);db.flush();audit(db,user,"upload","document",item.id,item.filename);db.commit();await realtime.send("document.changed",{"id":item.id});return {"id":item.id,"status":status,"analysis":result}
 
@@ -539,12 +674,12 @@ def stock(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
 
 @app.get("/api/dashboard")
 def dashboard(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
-    legacy_total,built,qc=db.execute(select(func.count(ConstructionRow.id),func.sum(func.cast(ConstructionRow.built,Integer)),func.sum(func.cast(ConstructionRow.qc_checked,Integer))).join(Section).join(Zone).where(Zone.project_id==project_id)).one();legacy_total=legacy_total or 0;built=built or 0;qc=qc or 0
+    legacy_total,built,qc=db.execute(select(func.count(ConstructionRow.id),func.sum(func.cast(ConstructionRow.built,Integer)),func.sum(func.cast(ConstructionRow.qc_checked,Integer))).join(Section).join(Zone).where(Zone.project_id==project_id,ConstructionRow.active==True)).one();legacy_total=legacy_total or 0;built=built or 0;qc=qc or 0
     open_rfi=db.scalar(select(func.count(RFI.id)).where(RFI.project_id==project_id,RFI.status!="zamknięty")) or 0
     rows_done,manhours,days=db.execute(select(func.sum(WorkLog.rows_completed),func.sum(WorkLog.people*WorkLog.hours),func.count(func.distinct(WorkLog.work_date))).where(WorkLog.project_id==project_id)).one();rows_done=rows_done or 0;manhours=manhours or 0;days=days or 0
-    configured_total=sum(item.row_count for item in db.scalars(select(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id)));total=configured_total or legacy_total;built=min(total,max(float(built),float(rows_done))) if total else float(built)
+    configured_total=project_demand(db,project_id)["total_rows"];total=configured_total or legacy_total;built=min(total,max(float(built),float(rows_done))) if total else float(built)
     productivity=rows_done/manhours if manhours else 0;daily=rows_done/days if days else 0;forecast=max(0,total-built)/daily if daily else None
-    return {"rows_total":total,"rows_built":built,"rows_remaining":total-built,"rows_qc":qc,"completion_pct":round(100*built/total,1) if total else 0,"qc_pct":round(100*qc/total,1) if total else 0,"open_rfi":open_rfi,"manhours":round(manhours,1),"productivity":round(productivity,4),"forecast_days":round(forecast,1) if forecast is not None else None,"offline_supported":True}
+    db.commit();return {"rows_total":total,"rows_built":built,"rows_remaining":total-built,"rows_qc":qc,"completion_pct":round(100*built/total,1) if total else 0,"qc_pct":round(100*qc/total,1) if total else 0,"open_rfi":open_rfi,"manhours":round(manhours,1),"productivity":round(productivity,4),"forecast_days":round(forecast,1) if forecast is not None else None,"offline_supported":True}
 
 @app.get("/api/reports/daily")
 def report(project_id:int,report_date:date|None=None,db:Session=Depends(get_db),user=Depends(current_user)):

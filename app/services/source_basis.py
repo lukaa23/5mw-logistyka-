@@ -60,10 +60,15 @@ def build_eset_demand(counts: dict[str, int]) -> dict:
         variant["per_row"].sort(key=sorter)
         variant["totals"].sort(key=sorter)
     grand_total.sort(key=sorter)
+    module = load_source_manifest().get("module", {})
+    total_modules = sum(item["total_modules"] for item in variants)
     return {
         "policy": bom["policy"],
         "total_rows": sum(item["row_count"] for item in variants),
-        "total_modules": sum(item["total_modules"] for item in variants),
+        "total_modules": total_modules,
+        "module": module,
+        "estimated_power_min_mw": round(total_modules * module.get("power_min_w", 0) / 1_000_000, 4),
+        "estimated_power_max_mw": round(total_modules * module.get("power_max_w", 0) / 1_000_000, 4),
         "variants": variants,
         "grand_total": grand_total,
     }
@@ -106,5 +111,7 @@ def source_analysis(entry: dict) -> dict:
         result["tools"] = manifest["tools"]
         result["torques"] = manifest["torques"]
         result["variants"] = manifest["templates"]
+    if filename == "JKM710-735N-66HL5-BDV-Z3-EN.pdf":
+        result["module"] = manifest["module"]
     return result
 

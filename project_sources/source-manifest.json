@@ -1,12 +1,23 @@
 {
-  "version": 3,
-  "policy": "Dane techniczne, instrukcje oraz zapotrzebowanie aplikacji pochodzą wyłącznie z dziewięciu dokumentów wymienionych w tym manifeście. Inne pliki mogą być przechowywane jako pomocnicze, ale nie zmieniają instrukcji ani bazy BOM.",
+  "version": 4,
+  "policy": "Dane techniczne, instrukcje oraz zapotrzebowanie aplikacji pochodzą wyłącznie z dziesięciu dokumentów wymienionych w tym manifeście. Inne pliki mogą być przechowywane jako pomocnicze, ale nie zmieniają instrukcji ani bazy BOM.",
   "project": {
     "name": "RF-GIULIETTA",
     "location": "Strada Vicinale Vernino, 28015 Momo (NO), Włochy",
     "capacity_mw": 6.4915,
     "structure_type": "Tracker jednoosiowy ESET Solar, układ 1P",
     "source": "planimetria 6,5mw.pdf, strona 1"
+  },
+  "module": {
+    "model": "JKM710-735N-66HL5-BDV",
+    "manufacturer": "Jinko Solar",
+    "power_min_w": 710,
+    "power_max_w": 735,
+    "cells": 132,
+    "dimensions_mm": "2384×1303×33",
+    "weight_kg": 37.5,
+    "packing": "33 szt./paleta; 594 szt./kontener 40' HQ",
+    "source": "JKM710-735N-66HL5-BDV-Z3-EN.pdf, strona 2"
   },
   "scope": {
     "included": [
@@ -18,11 +29,12 @@
       "amortyzatory",
       "zaślepki rur momentowych",
       "słupy wymagane w BOM",
-      "TCU i odbiornik bezprzewodowy"
+      "TCU i odbiornik bezprzewodowy",
+      "parametry referencyjnego modułu Jinko JKM710–735N-66HL5-BDV"
     ],
     "excluded": [
       "operacja wbijania słupów",
-      "moduły PV",
+      "montaż modułów PV",
       "okablowanie i uziemienie",
       "uruchomienie elektryczne"
     ]
@@ -154,6 +166,13 @@
       "pages": 1,
       "role": "Strona katalogowa ESET przedstawiająca trzy rodzaje rur torsyjnych oraz słupy napędowe, nienapędowe i amortyzatorów.",
       "facts": ["Wyciąg ze strony 13 manuala ESET", "Rozróżnia driving post, non-driving post i damper post"]
+    },
+    {
+      "filename": "JKM710-735N-66HL5-BDV-Z3-EN.pdf",
+      "sha256": "632e9bbe6c81374368a1244f98e4b8194019964037d6f7b45494093c14e49430",
+      "pages": 2,
+      "role": "Karta katalogowa referencyjnego modułu Jinko Solar JKM710–735N-66HL5-BDV. Służy do prezentacji parametrów i przeliczenia liczby modułów; nie zmienia mechanicznego BOM trackera ESET.",
+      "facts": ["Moc znamionowa: 710–735 W", "132 ogniwa (66×2)", "Wymiary: 2384×1303×33 mm", "Masa: 37,5 kg", "Pakowanie: 33 szt./paleta i 594 szt./kontener 40' HQ"]
     }
   ],
   "instructions": [

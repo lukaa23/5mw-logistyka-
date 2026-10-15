@@ -14,6 +14,9 @@ COLUMNS = {
         "variant_name": "VARCHAR(120) NOT NULL DEFAULT ''",
         "specification": "TEXT NOT NULL DEFAULT ''",
         "material_quantities_json": "TEXT NOT NULL DEFAULT '{}'",
+        "auto_generated": "BOOLEAN NOT NULL DEFAULT 0",
+        "active": "BOOLEAN NOT NULL DEFAULT 1",
+        "variant_ordinal": "INTEGER NOT NULL DEFAULT 0",
     },
     "work_logs": {
         "qc_notes": "TEXT NOT NULL DEFAULT ''",

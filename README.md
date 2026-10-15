@@ -4,7 +4,7 @@ Responsywna aplikacja PWA do konfiguracji trackerów ESET, wyliczania zapotrzebo
 
 ## Konfiguracja i zapotrzebowanie
 
-Projekt korzysta z czterech zatwierdzonych wariantów: `1x28`, `1x42`, `1x56` i `1x70`. Użytkownik wpisuje liczbę rzędów każdego wariantu. System automatycznie pokazuje:
+Projekt korzysta z czterech zatwierdzonych wariantów: `1x28`, `1x42`, `1x56` i `1x70`. Użytkownik tworzy dowolną liczbę nazwanych stref i w każdej wpisuje liczbę rzędów każdego wariantu. System automatycznie generuje osobne, kolejno numerowane rzędy oraz pokazuje:
 
 - listę elementów potrzebnych na pojedynczy rząd;
 - sumę dla liczby rzędów danego wariantu;
@@ -15,11 +15,13 @@ Projekt korzysta z czterech zatwierdzonych wariantów: `1x28`, `1x42`, `1x56` i 
 - płatwie, elementy amortyzatorów, TCU i odbiornik bezprzewodowy;
 - zestawy M10, M12, M14, M16 i M18 wraz z podkładkami oraz momentami dokręcania.
 
+Widok operacyjny pozwala oznaczać każdy wygenerowany rząd jako zbudowany i odebrany QA/QC, prowadzić indywidualne notatki oraz robić zdjęcia bezpośrednio aparatem telefonu. Zmniejszenie liczby rzędów ukrywa nadmiarowe pozycje bez kasowania ich historii; ponowne zwiększenie przywraca wcześniejsze statusy, notatki i zdjęcia.
+
 Widok „Zapotrzebowanie” przedstawia wyłącznie ilości wymagane przez projekt. Nie korzysta ze stanów magazynowych ani fizycznych dostaw WZ.
 
 ## Zatwierdzona baza źródłowa
 
-Program bazuje na dziewięciu dokumentach w folderze `project_sources`:
+Program bazuje na dziesięciu dokumentach w folderze `project_sources`:
 
 1. `łaczenia rur.pdf` — rysunki słupów QZ1–QZ4, FZ1–FZ2 i NZ1;
 2. `planimetria.pdf` — rysunki wariantów 1PX28/42/56/70 i tabele BOM;
@@ -30,10 +32,11 @@ Program bazuje na dziewięciu dokumentach w folderze `project_sources`:
 7. `montaż mechaniczny 3.pdf` — katalog głównych komponentów ESET;
 8. `montaż mechaniczny 4.pdf` — katalog rur, płatwi i zestawów M12–M18;
 9. `montaż mechaniczny 5.pdf` — typy rur i słupów trackera.
+10. `JKM710-735N-66HL5-BDV-Z3-EN.pdf` — karta modułu Jinko 710–735 W, 132 ogniwa, 2384×1303×33 mm i 37,5 kg.
 
 [source-manifest.json](project_sources/source-manifest.json) przechowuje sumy SHA-256, zakres i dane źródłowe. [eset-bom.json](project_sources/eset-bom.json) zawiera znormalizowane relacje wariant–komponent i ilości z tabel BOM. Inny wgrany plik pozostaje dokumentem pomocniczym i nie zmienia zapotrzebowania ani instrukcji.
 
-Zapotrzebowanie obejmuje komponenty systemowe, w tym słupy, TCU i odbiornik. Zakres prac montażowych nadal wyłącza operację wbijania słupów, montaż modułów PV, okablowanie, uziemienie i uruchomienie elektryczne.
+Zapotrzebowanie obejmuje komponenty systemowe, w tym słupy, TCU i odbiornik. Liczba i parametry modułów Jinko są prezentowane osobno i nie zmieniają mechanicznego BOM ESET. Zakres prac montażowych nadal wyłącza operację wbijania słupów, montaż modułów PV, okablowanie, uziemienie i uruchomienie elektryczne.
 
 ## Pozostałe funkcje
 
@@ -94,4 +97,4 @@ Domyślną bazą jest SQLite. Po ustawieniu `DATABASE_URL` i zainstalowaniu ster
 cd frontend && npm run build
 ```
 
-Testy sprawdzają cztery warianty, sumowanie pełnego BOM, momenty dokręcania, role, meldunki, zdjęcia, QA/QC, raport PDF oraz integralność dziewięciu dokumentów źródłowych.
+Testy sprawdzają strefy, automatyczną numerację rzędów, zachowanie historii, cztery warianty, sumowanie pełnego BOM, momenty dokręcania, role, meldunki, zdjęcia, QA/QC, raport PDF oraz integralność dziesięciu dokumentów źródłowych.

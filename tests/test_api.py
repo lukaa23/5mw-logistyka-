@@ -210,7 +210,7 @@ class UniversalWorkflowTest(unittest.TestCase):
         self.assertEqual(invalid.status_code, 400)
         self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
 
-    def test_only_nine_approved_files_drive_sources_and_templates(self):
+    def test_only_ten_approved_files_drive_sources_templates_and_module_data(self):
         projects = self.client.get("/api/projects", headers=self.manager).json()
         source_project = next(item for item in projects if item["name"] == "RF-GIULIETTA")
         project_id = source_project["id"]
@@ -219,13 +219,15 @@ class UniversalWorkflowTest(unittest.TestCase):
         basis = self.client.get(f"/api/source-basis?project_id={project_id}", headers=self.manager)
         self.assertEqual(basis.status_code, 200, basis.text)
         basis = basis.json()
-        self.assertEqual(basis["registered_sources"], 9)
+        self.assertEqual(basis["registered_sources"], 10)
+        self.assertEqual(basis["module"]["model"], "JKM710-735N-66HL5-BDV")
+        self.assertEqual(basis["module"]["dimensions_mm"], "2384×1303×33")
         self.assertEqual([item["name"] for item in basis["templates"]], ["1x28", "1x42", "1x56", "1x70"])
 
         documents = self.client.get(f"/api/documents?project_id={project_id}", headers=self.manager).json()
         approved = [item for item in documents if item["approved_source"]]
-        self.assertEqual(len(approved), 9)
-        expected_names = {"łaczenia rur.pdf", "planimetria.pdf", "planimetria - warianty i BOM.pdf", "planimetria 6,5mw.pdf", "montaż mechaniczny.pdf", "manual v.2.pdf", "montaż mechaniczny 3.pdf", "montaż mechaniczny 4.pdf", "montaż mechaniczny 5.pdf"}
+        self.assertEqual(len(approved), 10)
+        expected_names = {"łaczenia rur.pdf", "planimetria.pdf", "planimetria - warianty i BOM.pdf", "planimetria 6,5mw.pdf", "montaż mechaniczny.pdf", "manual v.2.pdf", "montaż mechaniczny 3.pdf", "montaż mechaniczny 4.pdf", "montaż mechaniczny 5.pdf", "JKM710-735N-66HL5-BDV-Z3-EN.pdf"}
         self.assertEqual({item["filename"] for item in approved}, expected_names)
         for item in approved:
             downloaded = self.client.get(f"/api/documents/{item['id']}/file", headers=self.manager)
@@ -247,6 +249,80 @@ class UniversalWorkflowTest(unittest.TestCase):
         self.assertFalse(supplemental.json()["analysis"]["approved_source"])
         after = self.client.get(f"/api/instructions?project_id={project_id}", headers=self.manager).json()
         self.assertEqual(after, before)
+
+    def test_zones_generate_sequential_operational_rows_and_preserve_field_history(self):
+        created = self.client.post(
+            "/api/projects", headers=self.manager,
+            json={"name": "ESET strefy", "location": "Momo", "capacity_mw": 2.0, "structure_type": "Tracker ESET 1P"},
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        project_id = created.json()["id"]
+        self.assertEqual(self.client.get(f"/api/projects/{project_id}/tracker-zones", headers=self.manager).json(), [])
+
+        zone_a = self.client.post("/api/tracker-zones", headers=self.foreman, json={"project_id": project_id, "name": "Strefa A"})
+        zone_b = self.client.post("/api/tracker-zones", headers=self.manager, json={"project_id": project_id, "name": "Strefa B"})
+        self.assertEqual(zone_a.status_code, 200, zone_a.text)
+        self.assertEqual(zone_b.status_code, 200, zone_b.text)
+        zone_a_id, zone_b_id = zone_a.json()["id"], zone_b.json()["id"]
+
+        def config(zone_id, counts, headers=self.foreman):
+            return self.client.put(
+                f"/api/tracker-zones/{zone_id}/config", headers=headers,
+                json={"items": [{"variant_code": code, "row_count": counts.get(code, 0)} for code in ("1x28", "1x42", "1x56", "1x70")]},
+            )
+
+        configured_a = config(zone_a_id, {"1x28": 2, "1x42": 1})
+        configured_b = config(zone_b_id, {"1x70": 1}, self.manager)
+        self.assertEqual(configured_a.status_code, 200, configured_a.text)
+        self.assertEqual(configured_b.status_code, 200, configured_b.text)
+        self.assertEqual(configured_a.json()["demand"]["total_rows"], 3)
+        self.assertEqual(configured_a.json()["demand"]["total_modules"], 98)
+        totals_a = {item["key"]: item["quantity_total"] for item in configured_a.json()["demand"]["grand_total"]}
+        self.assertEqual(totals_a["LT1-1450-18"], 104)
+        self.assertEqual(totals_a["TCU"], 3)
+
+        rows = self.client.get(f"/api/projects/{project_id}/operational-rows", headers=self.manager).json()
+        self.assertEqual(len(rows), 4)
+        rows_a = [row for row in rows if row["zone_id"] == zone_a_id]
+        self.assertEqual([row["code"] for row in rows_a], ["1", "2", "3"])
+        self.assertEqual([row["variant_name"] for row in rows_a], ["1x28", "1x28", "1x42"])
+        first_id, second_id = rows_a[0]["id"], rows_a[1]["id"]
+
+        built = self.client.patch(f"/api/rows/{first_id}", headers=self.foreman, json={"built": True, "note": "Kolizja sprawdzona w terenie"})
+        self.assertEqual(built.status_code, 200, built.text)
+        self.assertEqual(self.client.patch(f"/api/rows/{first_id}", headers=self.foreman, json={"qc_checked": True}).status_code, 403)
+        self.assertEqual(self.client.patch(f"/api/rows/{first_id}", headers=self.manager, json={"qc_checked": True}).status_code, 200)
+        photo = self.client.post(f"/api/row/{first_id}/photos", headers=self.foreman, files={"file": ("rzad.jpg", b"zone-row-photo", "image/jpeg")})
+        self.assertEqual(photo.status_code, 200, photo.text)
+
+        reduced = config(zone_a_id, {"1x28": 1, "1x42": 1})
+        self.assertEqual(reduced.status_code, 200, reduced.text)
+        reduced_rows = self.client.get(f"/api/projects/{project_id}/operational-rows?zone_id={zone_a_id}", headers=self.manager).json()
+        self.assertEqual([row["code"] for row in reduced_rows], ["1", "2"])
+        self.assertEqual(reduced_rows[0]["id"], first_id)
+        self.assertTrue(reduced_rows[0]["built"])
+        self.assertTrue(reduced_rows[0]["qc_checked"])
+        self.assertEqual(reduced_rows[0]["note"], "Kolizja sprawdzona w terenie")
+        self.assertEqual(reduced_rows[0]["photos"], 1)
+
+        expanded = config(zone_a_id, {"1x28": 2, "1x42": 1})
+        self.assertEqual(expanded.status_code, 200, expanded.text)
+        expanded_rows = self.client.get(f"/api/projects/{project_id}/operational-rows?zone_id={zone_a_id}", headers=self.manager).json()
+        self.assertEqual([row["code"] for row in expanded_rows], ["1", "2", "3"])
+        self.assertEqual(expanded_rows[1]["id"], second_id)
+
+        renamed = self.client.patch(f"/api/tracker-zones/{zone_a_id}", headers=self.foreman, json={"name": "Strefa A — północ"})
+        self.assertEqual(renamed.status_code, 200, renamed.text)
+        self.assertEqual(renamed.json()["name"], "Strefa A — północ")
+        zones = self.client.get(f"/api/projects/{project_id}/tracker-zones", headers=self.manager).json()
+        zone_a_after = next(zone for zone in zones if zone["id"] == zone_a_id)
+        self.assertEqual(zone_a_after["stats"], {"total": 3, "built": 1, "qc": 1})
+
+        self.assertEqual(self.client.delete(f"/api/tracker-zones/{zone_b_id}", headers=self.manager).status_code, 200)
+        aggregate = self.client.get(f"/api/projects/{project_id}/tracker-config", headers=self.manager).json()
+        self.assertEqual(aggregate["total_rows"], 3)
+        self.assertEqual(aggregate["total_modules"], 98)
+        self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
 
 
 if __name__ == "__main__":
