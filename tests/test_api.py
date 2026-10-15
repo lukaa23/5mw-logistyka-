@@ -350,6 +350,78 @@ class UniversalWorkflowTest(unittest.TestCase):
         self.assertEqual(aggregate["total_modules"], 98)
         self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
 
+    def test_zone_demand_scope_and_full_bom_deliveries_are_independent(self):
+        created = self.client.post(
+            "/api/projects", headers=self.manager,
+            json={"name": "ESET dostawy", "location": "Momo", "capacity_mw": 1.0, "structure_type": "Tracker ESET 1P"},
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        project_id = created.json()["id"]
+        zone_a = self.client.post("/api/tracker-zones", headers=self.foreman, json={"project_id": project_id, "name": "Strefa A"}).json()
+        zone_b = self.client.post("/api/tracker-zones", headers=self.manager, json={"project_id": project_id, "name": "Strefa B"}).json()
+
+        def configure(zone_id, selected):
+            response = self.client.put(
+                f"/api/tracker-zones/{zone_id}/config", headers=self.foreman,
+                json={"items": [{"variant_code": code, "row_count": selected.get(code, 0)} for code in VARIANT_CODES]},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+
+        configure(zone_a["id"], {"1x28": 1})
+        configure(zone_b["id"], {"1x42+1x28": 1})
+        zones = self.client.get(f"/api/projects/{project_id}/tracker-zones", headers=self.manager).json()
+        self.assertEqual({zone["name"]: zone["demand"]["total_modules"] for zone in zones}, {"Strefa A": 28, "Strefa B": 70})
+        overall_before = self.client.get(f"/api/projects/{project_id}/tracker-config", headers=self.manager).json()
+        self.assertEqual(overall_before["total_rows"], 2)
+        self.assertEqual(overall_before["total_modules"], 98)
+
+        initial = self.client.get(f"/api/projects/{project_id}/bom-delivery-status", headers=self.manager)
+        self.assertEqual(initial.status_code, 200, initial.text)
+        initial = initial.json()
+        self.assertEqual(initial["summary"]["catalogue_items"], 68)
+        self.assertEqual(initial["summary"]["deliveries_count"], 0)
+        self.assertTrue(all(item["delivered"] == 0 and item["available"] == 0 for item in initial["items"]))
+        catalogue = {item["key"]: item for item in initial["items"]}
+        self.assertEqual(catalogue["TCU"]["required"], 3)
+        self.assertEqual(catalogue["MODULE-JINKO-JKM710-735"]["required"], 98)
+        self.assertIn("B-M16-75", catalogue)
+        self.assertIn("QZ1-3050", catalogue)
+        self.assertIn("LT1-1450-18", catalogue)
+
+        payload = {
+            "project_id": project_id, "delivery_date": "2026-10-15", "wz_number": "WZ/BOM/001",
+            "supplier": "ESET / Jinko", "note": "Pierwszy transport", "client_id": "bom-delivery-001",
+            "items": [
+                {"component_id": catalogue["TCU"]["component_id"], "quantity_received": 2, "quantity_damaged": 0},
+                {"component_id": catalogue["MODULE-JINKO-JKM710-735"]["component_id"], "quantity_received": 40, "quantity_damaged": 1},
+            ],
+        }
+        self.assertEqual(self.client.post("/api/bom-deliveries", headers=self.foreman, json=payload).status_code, 403)
+        delivery = self.client.post("/api/bom-deliveries", headers=self.warehouse, json=payload)
+        self.assertEqual(delivery.status_code, 200, delivery.text)
+        duplicate = self.client.post("/api/bom-deliveries", headers=self.warehouse, json=payload)
+        self.assertTrue(duplicate.json()["deduplicated"])
+
+        after = self.client.get(f"/api/projects/{project_id}/bom-delivery-status", headers=self.manager).json()
+        delivered = {item["key"]: item for item in after["items"]}
+        self.assertEqual(delivered["TCU"]["delivered"], 2)
+        self.assertEqual(delivered["TCU"]["balance"], -1)
+        self.assertEqual(delivered["MODULE-JINKO-JKM710-735"]["delivered"], 40)
+        self.assertEqual(delivered["MODULE-JINKO-JKM710-735"]["damaged"], 1)
+        self.assertEqual(delivered["MODULE-JINKO-JKM710-735"]["available"], 39)
+        self.assertEqual(after["summary"]["deliveries_count"], 1)
+        history = self.client.get(f"/api/bom-deliveries?project_id={project_id}", headers=self.manager).json()
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["wz_number"], "WZ/BOM/001")
+
+        overall_after = self.client.get(f"/api/projects/{project_id}/tracker-config", headers=self.manager).json()
+        self.assertEqual(overall_after["grand_total"], overall_before["grand_total"])
+        self.assertEqual(self.client.delete(f"/api/bom-deliveries/{delivery.json()['id']}", headers=self.warehouse).status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/bom-deliveries/{delivery.json()['id']}", headers=self.manager).status_code, 200)
+        cleared = self.client.get(f"/api/projects/{project_id}/bom-delivery-status", headers=self.manager).json()
+        self.assertTrue(all(item["delivered"] == 0 for item in cleared["items"]))
+        self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

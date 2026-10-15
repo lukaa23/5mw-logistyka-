@@ -16,7 +16,7 @@ from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery
 from .services.report import daily_report
 from .services.source_basis import SOURCE_DIR, build_eset_demand, load_eset_bom, load_source_manifest, sha256_file, source_analysis, source_entry_by_hash
 
-app=FastAPI(title="ASOLAR ESET Tracker Manager",version="4.2.0")
+app=FastAPI(title="ASOLAR ESET Tracker Manager",version="4.3.0")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024
 MAX_PHOTO_SIZE=25*1024*1024
@@ -41,6 +41,8 @@ class WorkLogIn(BaseModel): project_id:int; work_date:date=Field(default_factory
 class WorkLogUpdate(BaseModel): work_date:date|None=None; team:str|None=None; stage:str|None=None; people:int|None=Field(default=None,ge=1,le=1000); hours:float|None=Field(default=None,gt=0,le=24); rows_completed:float|None=Field(default=None,ge=0); qc_notes:str|None=None; note:str|None=None; row_id:int|None=None
 class DeliveryItemIn(BaseModel): material_id:int; quantity_received:float=Field(gt=0); quantity_damaged:float=Field(ge=0,default=0)
 class DeliveryIn(BaseModel): project_id:int; delivery_date:date=Field(default_factory=date.today); wz_number:str; supplier:str=""; note:str=""; client_id:str|None=None; items:list[DeliveryItemIn]
+class BomDeliveryItemIn(BaseModel): component_id:int; quantity_received:float=Field(gt=0); quantity_damaged:float=Field(ge=0,default=0)
+class BomDeliveryIn(BaseModel): project_id:int; delivery_date:date=Field(default_factory=date.today); wz_number:str=Field(min_length=1,max_length=100); supplier:str=""; note:str=""; client_id:str|None=None; items:list[BomDeliveryItemIn]=Field(min_length=1)
 class MaterialIn(BaseModel): slot_number:int=Field(ge=1,le=3); name:str=Field(min_length=1,max_length=180); unit:str="szt."; required_quantity:float=Field(ge=0)
 class MaterialListIn(BaseModel): items:list[MaterialIn]=Field(min_length=3,max_length=3)
 class TemplateIn(BaseModel): project_id:int; name:str=Field(min_length=1,max_length=120); structure_type:str=""; default_length_m:float=Field(ge=0,le=1000); specification:str=""; materials:dict[str,float]=Field(default_factory=dict)
@@ -72,6 +74,29 @@ SOURCE_MANIFEST=load_source_manifest()
 ESET_VARIANT_CODES=tuple(item["code"] for item in load_eset_bom()["variants"])
 DEFAULT_MATERIALS=tuple((item["slot_number"],item["name"],item["unit"]) for item in SOURCE_MANIFEST["materials"])
 AUTO_SECTION_NAME="Rzędy ESET — automatyczne"
+MODULE_COMPONENT_SKU="MODULE-JINKO-JKM710-735"
+
+def ensure_bom_components(db):
+    """Synchronize the approved ESET/Jinko delivery catalogue with stable database ids."""
+    catalogue=load_eset_bom()["components"]
+    for sku,definition in catalogue.items():
+        item=db.scalar(select(Component).where(Component.sku==sku))
+        values={"name":definition["name"],"category":definition["category"],"unit":definition["unit"],"torque_min_nm":definition.get("torque_min_nm"),"torque_max_nm":definition.get("torque_max_nm")}
+        if item:
+            for key,value in values.items():setattr(item,key,value)
+        else:db.add(Component(sku=sku,**values))
+    module=SOURCE_MANIFEST["module"]
+    item=db.scalar(select(Component).where(Component.sku==MODULE_COMPONENT_SKU))
+    values={"name":f'Moduł PV {module["model"]}',"category":"Moduły PV","unit":"szt.","torque_min_nm":None,"torque_max_nm":None}
+    if item:
+        for key,value in values.items():setattr(item,key,value)
+    else:db.add(Component(sku=MODULE_COMPONENT_SKU,**values))
+
+def bom_catalogue():
+    catalogue={key:{"key":key,**value} for key,value in load_eset_bom()["components"].items()}
+    module=SOURCE_MANIFEST["module"]
+    catalogue[MODULE_COMPONENT_SKU]={"key":MODULE_COMPONENT_SKU,"name":f'Moduł PV {module["model"]}',"category":"Moduły PV","unit":"szt.","spec":f'{module["dimensions_mm"]}; {module["power_min_w"]}–{module["power_max_w"]} W; {module["weight_kg"]} kg',"source":module["source"],"torque_min_nm":None,"torque_max_nm":None}
+    return catalogue
 
 def ensure_variant_config(db,project_id):
     current={item.variant_code for item in db.scalars(select(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id))}
@@ -213,13 +238,14 @@ def seed():
         placeholder=db.scalar(select(Zone).where(Zone.name=="Strefa do uzupełnienia"))
         if placeholder:placeholder.name="Strefa A"
         for item in db.scalars(select(Project)).all():ensure_materials(db,item.id);ensure_variant_config(db,item.id);ensure_project_zone_configs(db,item.id)
+        ensure_bom_components(db)
         seed_source_templates(db,project.id)
         seed_source_documents(db,project.id,manager.id)
         db.commit()
 seed()
 
 @app.get("/api/health")
-def health(): return {"status":"ok","version":"4.2.0","time":utc_now()}
+def health(): return {"status":"ok","version":"4.3.0","time":utc_now()}
 
 @app.post("/api/auth/login")
 def login(data:LoginIn,db:Session=Depends(get_db)):
@@ -693,6 +719,58 @@ def stock(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
     ensure_materials(db,project_id);db.commit();slots=db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==project_id).order_by(ProjectMaterial.slot_number)).all()
     received=dict(db.execute(select(SiteDeliveryItem.material_id,func.sum(SiteDeliveryItem.quantity_received-SiteDeliveryItem.quantity_damaged)).join(SiteDelivery).where(SiteDelivery.project_id==project_id).group_by(SiteDeliveryItem.material_id)).all())
     return [{"material_id":item.id,"slot_number":item.slot_number,"name":item.name,"unit":item.unit,"required":float(item.required_quantity or 0),"available":float(received.get(item.id,0) or 0),"balance":float(received.get(item.id,0) or 0)-float(item.required_quantity or 0),"status":"komplet" if float(received.get(item.id,0) or 0)>=float(item.required_quantity or 0) else "brak"} for item in slots]
+
+def bom_delivery_status_payload(db,project_id):
+    demand=project_demand(db,project_id)
+    ensure_bom_components(db);db.flush()
+    definitions=bom_catalogue()
+    required={item["key"]:float(item["quantity_total"]) for item in demand["grand_total"]}
+    required[MODULE_COMPONENT_SKU]=float(demand["total_modules"])
+    components=db.scalars(select(Component).where(Component.sku.in_(list(definitions)))).all()
+    totals={component_id:(float(received or 0),float(damaged or 0)) for component_id,received,damaged in db.execute(select(DeliveryItem.component_id,func.sum(DeliveryItem.quantity_received),func.sum(DeliveryItem.quantity_damaged)).join(Delivery).where(Delivery.project_id==project_id).group_by(DeliveryItem.component_id)).all()}
+    category_order={name:index for index,name in enumerate(["Moduły PV","Słupy","Napęd i łożyska","Rury torsyjne","Płatwie","Amortyzatory","Sterowanie","Śruby i zestawy"])}
+    items=[]
+    for component in components:
+        definition=definitions[component.sku];received,damaged=totals.get(component.id,(0.0,0.0));available=received-damaged;needed=required.get(component.sku,0.0)
+        items.append({**definition,"component_id":component.id,"required":needed,"delivered":received,"damaged":damaged,"available":available,"balance":available-needed,"completion_pct":round(min(100,available/needed*100),1) if needed>0 else (100 if available>0 else 0),"status":"komplet" if needed>0 and available>=needed else "brak" if needed>0 else "poza zapotrzebowaniem"})
+    items.sort(key=lambda item:(category_order.get(item["category"],99),item["name"],item["key"]))
+    required_items=[item for item in items if item["required"]>0]
+    deliveries_count=db.scalar(select(func.count(Delivery.id)).where(Delivery.project_id==project_id)) or 0
+    return {"project_id":project_id,"demand":{"total_rows":demand["total_rows"],"total_modules":demand["total_modules"]},"summary":{"catalogue_items":len(items),"required_items":len(required_items),"complete_items":sum(item["available"]>=item["required"] for item in required_items),"missing_items":sum(item["available"]<item["required"] for item in required_items),"deliveries_count":int(deliveries_count)},"items":items}
+
+@app.get("/api/projects/{project_id}/bom-delivery-status")
+def bom_delivery_status(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    result=bom_delivery_status_payload(db,project_id);db.commit();return result
+
+@app.post("/api/bom-deliveries")
+async def create_bom_delivery(data:BomDeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","magazynier"))):
+    if not db.get(Project,data.project_id):raise HTTPException(404,"Brak projektu")
+    if not data.wz_number.strip():raise HTTPException(400,"Numer WZ jest wymagany")
+    if data.client_id:
+        existing=db.scalar(select(Delivery).where(Delivery.client_id==data.client_id))
+        if existing:return {"id":existing.id,"deduplicated":True}
+    if len({line.component_id for line in data.items})!=len(data.items):raise HTTPException(400,"Każdy element BOM może wystąpić tylko raz w jednym WZ")
+    if any(line.quantity_damaged>line.quantity_received for line in data.items):raise HTTPException(400,"Ilość uszkodzona nie może przekraczać ilości dostarczonej")
+    ensure_bom_components(db);db.flush();approved={item.id for item in db.scalars(select(Component).where(Component.sku.in_(list(bom_catalogue()))))}
+    if any(line.component_id not in approved for line in data.items):raise HTTPException(400,"Pozycja nie należy do zatwierdzonej listy BOM")
+    payload=data.model_dump(exclude={"items"});payload["wz_number"]=payload["wz_number"].strip()
+    item=Delivery(**payload,created_by_id=user.id);db.add(item);db.flush()
+    for line in data.items:db.add(DeliveryItem(delivery_id=item.id,**line.model_dump()))
+    audit(db,user,"create","bom_delivery",item.id,item.wz_number);db.commit();await realtime.send("bom-delivery.changed",{"project_id":data.project_id});return {"id":item.id}
+
+@app.get("/api/bom-deliveries")
+def bom_deliveries(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    items=db.scalars(select(Delivery).where(Delivery.project_id==project_id).options(selectinload(Delivery.items).selectinload(DeliveryItem.component)).order_by(Delivery.delivery_date.desc(),Delivery.created_at.desc())).all()
+    users={item.id:item.full_name for item in db.scalars(select(User)).all()}
+    return [{"id":item.id,"delivery_date":item.delivery_date,"wz_number":item.wz_number,"supplier":item.supplier,"note":item.note,"created_at":item.created_at,"created_by":users.get(item.created_by_id,"—"),"items":[{"component_id":line.component_id,"key":line.component.sku,"name":line.component.name,"unit":line.component.unit,"quantity_received":line.quantity_received,"quantity_damaged":line.quantity_damaged} for line in item.items]} for item in items]
+
+@app.delete("/api/bom-deliveries/{delivery_id}")
+async def delete_bom_delivery(delivery_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    item=db.get(Delivery,delivery_id)
+    if not item:raise HTTPException(404,"Brak dostawy")
+    project_id=item.project_id;audit(db,user,"delete","bom_delivery",item.id,item.wz_number);db.delete(item);db.commit();await realtime.send("bom-delivery.changed",{"project_id":project_id});return {"ok":True}
 
 @app.get("/api/dashboard")
 def dashboard(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):

@@ -8,7 +8,7 @@ Projekt korzysta z siedmiu wariantów. Podstawowe to `1x28`, `1x42`, `1x56` i `1
 
 - listę elementów potrzebnych na pojedynczy rząd;
 - sumę dla liczby rzędów danego wariantu;
-- sumę dla całego projektu;
+- sumę dla całego projektu oraz osobny, przełączany widok każdej strefy;
 - słupy napędowe, nienapędowe i amortyzatorów;
 - podstawy, obudowy łożysk, łożyska polimerowe i reduktory obrotowe;
 - rury torsyjne z rozróżnieniem typu, długości i grubości;
@@ -19,7 +19,9 @@ Wariant łączony jest liczony jako dokładna suma dwóch odpowiednich, zatwierd
 
 Widok operacyjny pozwala oznaczać każdy wygenerowany rząd jako zbudowany i odebrany QA/QC, prowadzić indywidualne notatki, robić zdjęcia bezpośrednio aparatem telefonu oraz ustawiać rzeczywistą kolejność rzędów przyciskami Góra/Dół. Kolejność jest zapisywana w bazie i synchronizowana między urządzeniami. Zmniejszenie liczby rzędów ukrywa nadmiarowe pozycje bez kasowania ich historii; ponowne zwiększenie przywraca wcześniejsze statusy, notatki i zdjęcia.
 
-Widok „Zapotrzebowanie” przedstawia wyłącznie ilości wymagane przez projekt. Nie korzysta ze stanów magazynowych ani fizycznych dostaw WZ.
+Widok „Zapotrzebowanie” przedstawia wyłącznie ilości wymagane przez projekt. Przełącznik „Cała farma / strefa” pozwala porównać ogólny BOM z zapotrzebowaniem wybranej strefy. Obliczenia nie korzystają ze stanów magazynowych ani fizycznych dostaw WZ.
+
+Osobna zakładka „Dostawy na budowę” prowadzi fizyczny rejestr WZ dla pełnego katalogu BOM ESET oraz modułu Jinko. Stan każdej pozycji zaczyna się od zera. Użytkownik może dodać wielopozycyjny dokument WZ, podać ilości dostarczone i uszkodzone, a system pokazuje zestawienie „dostarczone / na polu / wymagane / bilans”. Dostawy nie zmieniają zapotrzebowania projektowego.
 
 ## Zatwierdzona baza źródłowa
 
@@ -99,4 +101,4 @@ Domyślną bazą jest SQLite. Po ustawieniu `DATABASE_URL` i zainstalowaniu ster
 cd frontend && npm run build
 ```
 
-Testy sprawdzają strefy, automatyczną numerację i ręczne sortowanie rzędów, zachowanie historii, siedem wariantów, sumowanie BOM-ów łączonych, pełny BOM projektu, momenty dokręcania, role, meldunki, zdjęcia, QA/QC, raport PDF oraz integralność dziesięciu dokumentów źródłowych.
+Testy sprawdzają strefy, zapotrzebowanie ogólne i strefowe, zerowy stan i sumowanie pełnych dostaw BOM, niezależność dostaw od obliczeń projektowych, automatyczną numerację i ręczne sortowanie rzędów, zachowanie historii, siedem wariantów, sumowanie BOM-ów łączonych, momenty dokręcania, role, meldunki, zdjęcia, QA/QC, raport PDF oraz integralność dziesięciu dokumentów źródłowych.
