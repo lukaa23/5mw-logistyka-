@@ -1,6 +1,6 @@
 {
-  "version": 2,
-  "policy": "Dane techniczne, instrukcje oraz zapotrzebowanie aplikacji pochodzą wyłącznie z ośmiu dokumentów wymienionych w tym manifeście. Inne pliki mogą być przechowywane jako pomocnicze, ale nie zmieniają instrukcji ani bazy BOM.",
+  "version": 3,
+  "policy": "Dane techniczne, instrukcje oraz zapotrzebowanie aplikacji pochodzą wyłącznie z dziewięciu dokumentów wymienionych w tym manifeście. Inne pliki mogą być przechowywane jako pomocnicze, ale nie zmieniają instrukcji ani bazy BOM.",
   "project": {
     "name": "RF-GIULIETTA",
     "location": "Strada Vicinale Vernino, 28015 Momo (NO), Włochy",
@@ -39,7 +39,7 @@
       "default_length_m": 0,
       "materials": {"1": 5, "2": 30, "3": 30},
       "specification": "Rury S156: 5 szt. (A1, A2, B1, C1, C2). Płatwie J60x30x1,8: 30 szt. Każdy komplet mocowania płatwi: 1× U-bolt UM10×166×188×30, 1× BP095, 2× BP069 -3×22×35, 2× nakrętka kołnierzowa M10; moment 25–32 N·m.",
-      "source": "montaż mechaniczny.pdf, strony 45 i 52–53; planimetria.pdf, strony 3 i 7"
+      "source": "montaż mechaniczny.pdf, strony 45 i 52–53; planimetria.pdf, strony 3 i 7; planimetria - warianty i BOM.pdf, strony 1 i 5"
     },
     {
       "name": "1x42",
@@ -47,7 +47,7 @@
       "default_length_m": 0,
       "materials": {"1": 8, "2": 44, "3": 44},
       "specification": "Rury S156: 8 szt. (A5×2, B6×4, C5×2). Płatwie J60x30x1,8: 44 szt. Każdy komplet mocowania płatwi: 1× U-bolt UM10×166×188×30, 1× BP095, 2× BP069 -3×22×35, 2× nakrętka kołnierzowa M10; moment 25–32 N·m.",
-      "source": "montaż mechaniczny.pdf, strony 45 i 53; planimetria.pdf, strony 4 i 8"
+      "source": "montaż mechaniczny.pdf, strony 45 i 53; planimetria.pdf, strony 4 i 8; planimetria - warianty i BOM.pdf, strony 2 i 6"
     },
     {
       "name": "1x56",
@@ -55,7 +55,7 @@
       "default_length_m": 0,
       "materials": {"1": 10, "2": 58, "3": 58},
       "specification": "Rury S156: 10 szt. (A3×2, B2×2, B3×4, C3×2). Płatwie J60x30x1,8: 58 szt. Każdy komplet mocowania płatwi: 1× U-bolt UM10×166×188×30, 1× BP095, 2× BP069 -3×22×35, 2× nakrętka kołnierzowa M10; moment 25–32 N·m.",
-      "source": "montaż mechaniczny.pdf, strony 45–46 i 53; planimetria.pdf, strony 5 i 9"
+      "source": "montaż mechaniczny.pdf, strony 45–46 i 53; planimetria.pdf, strony 5 i 9; planimetria - warianty i BOM.pdf, strony 3 i 7"
     },
     {
       "name": "1x70",
@@ -63,7 +63,7 @@
       "default_length_m": 0,
       "materials": {"1": 13, "2": 73, "3": 73},
       "specification": "Rury S156: 13 szt. (A2×2, A4×2, B1×2, B4×2, B5×1, C4×2, D1×1, D2×1). Płatwie J60x30x1,6: 73 szt. Każdy komplet mocowania płatwi: 1× U-bolt UM10×166×188×30, 1× BP095, 2× BP069 -3×22×35, 2× nakrętka kołnierzowa M10; moment 25–32 N·m.",
-      "source": "montaż mechaniczny.pdf, strony 46 i 53; planimetria.pdf, strony 6 i 10"
+      "source": "montaż mechaniczny.pdf, strony 46 i 53; planimetria.pdf, strony 6 i 10; planimetria - warianty i BOM.pdf, strony 4 i 8"
     }
   ],
   "tools": {
@@ -105,6 +105,13 @@
       "pages": 14,
       "role": "Rysunki układu, rysunki ogólne wariantów 1PX28/42/56/70 oraz zeskanowane tabele BOM.",
       "facts": ["Warianty rysunkowe: 1PX28, 1PX42, 1PX56, 1PX70", "BOM znajduje się na stronach 7–14"]
+    },
+    {
+      "filename": "planimetria - warianty i BOM.pdf",
+      "sha256": "c4be1e6bc1e1b2a48ff2f4c6c400612affd4f3d6d4042ce98eecb8ff33109165",
+      "pages": 12,
+      "role": "Dostarczona osobno wersja planimetrii zawierająca rysunki wariantów 1PX28/42/56/70 oraz komplet tabel BOM. Jej strony 1–12 odpowiadają wizualnie stronom 3–14 pełnej planimetrii.",
+      "facts": ["Rysunki wariantów znajdują się na stronach 1–4", "BOM znajduje się na stronach 5–12", "Ilości potwierdzają dane przyjęte dla wariantów 1x28/42/56/70"]
     },
     {
       "filename": "planimetria 6,5mw.pdf",

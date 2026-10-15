@@ -210,7 +210,7 @@ class UniversalWorkflowTest(unittest.TestCase):
         self.assertEqual(invalid.status_code, 400)
         self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
 
-    def test_only_eight_approved_files_drive_sources_and_templates(self):
+    def test_only_nine_approved_files_drive_sources_and_templates(self):
         projects = self.client.get("/api/projects", headers=self.manager).json()
         source_project = next(item for item in projects if item["name"] == "RF-GIULIETTA")
         project_id = source_project["id"]
@@ -219,13 +219,13 @@ class UniversalWorkflowTest(unittest.TestCase):
         basis = self.client.get(f"/api/source-basis?project_id={project_id}", headers=self.manager)
         self.assertEqual(basis.status_code, 200, basis.text)
         basis = basis.json()
-        self.assertEqual(basis["registered_sources"], 8)
+        self.assertEqual(basis["registered_sources"], 9)
         self.assertEqual([item["name"] for item in basis["templates"]], ["1x28", "1x42", "1x56", "1x70"])
 
         documents = self.client.get(f"/api/documents?project_id={project_id}", headers=self.manager).json()
         approved = [item for item in documents if item["approved_source"]]
-        self.assertEqual(len(approved), 8)
-        expected_names = {"łaczenia rur.pdf", "planimetria.pdf", "planimetria 6,5mw.pdf", "montaż mechaniczny.pdf", "manual v.2.pdf", "montaż mechaniczny 3.pdf", "montaż mechaniczny 4.pdf", "montaż mechaniczny 5.pdf"}
+        self.assertEqual(len(approved), 9)
+        expected_names = {"łaczenia rur.pdf", "planimetria.pdf", "planimetria - warianty i BOM.pdf", "planimetria 6,5mw.pdf", "montaż mechaniczny.pdf", "manual v.2.pdf", "montaż mechaniczny 3.pdf", "montaż mechaniczny 4.pdf", "montaż mechaniczny 5.pdf"}
         self.assertEqual({item["filename"] for item in approved}, expected_names)
         for item in approved:
             downloaded = self.client.get(f"/api/documents/{item['id']}/file", headers=self.manager)

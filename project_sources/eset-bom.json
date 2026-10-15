@@ -1,12 +1,12 @@
 {
   "version": 1,
   "title": "ESET Tracker — źródłowa baza zapotrzebowania mechanicznego",
-  "policy": "Ilości na rząd pochodzą z tabel BOM wariantów 1P×28/42/56/70 oraz załączników montażowych ESET. Pozycje elektrycznego uziemienia i śruby mocujące moduły PV M8 są wyłączone. TCU i odbiornik bezprzewodowy pozostają ujęte, ponieważ zostały wskazane jako komponenty systemowe.",
+  "policy": "Ilości na rząd pochodzą z tabel BOM wariantów 1P×28/42/56/70 w obu dostarczonych wersjach planimetrii oraz z załączników montażowych ESET. Pozycje elektrycznego uziemienia i śruby mocujące moduły PV M8 są wyłączone. TCU i odbiornik bezprzewodowy pozostają ujęte, ponieważ zostały wskazane jako komponenty systemowe.",
   "variants": [
-    {"code": "1x28", "modules": 28, "source": "planimetria.pdf, strona 11 (arkusz 82); montaż mechaniczny.pdf, strony 45 i 52–53"},
-    {"code": "1x42", "modules": 42, "source": "planimetria.pdf, strona 12 (arkusz 83); montaż mechaniczny.pdf, strony 45 i 53"},
-    {"code": "1x56", "modules": 56, "source": "planimetria.pdf, strona 13 (arkusz 84); montaż mechaniczny.pdf, strony 45–46 i 53"},
-    {"code": "1x70", "modules": 70, "source": "planimetria.pdf, strona 14 (arkusz 85); montaż mechaniczny.pdf, strony 46 i 53"}
+    {"code": "1x28", "modules": 28, "source": "planimetria.pdf, strona 11; planimetria - warianty i BOM.pdf, strona 9 (arkusz 82); montaż mechaniczny.pdf, strony 45 i 52–53"},
+    {"code": "1x42", "modules": 42, "source": "planimetria.pdf, strona 12; planimetria - warianty i BOM.pdf, strona 10 (arkusz 83); montaż mechaniczny.pdf, strony 45 i 53"},
+    {"code": "1x56", "modules": 56, "source": "planimetria.pdf, strona 13; planimetria - warianty i BOM.pdf, strona 11 (arkusz 84); montaż mechaniczny.pdf, strony 45–46 i 53"},
+    {"code": "1x70", "modules": 70, "source": "planimetria.pdf, strona 14; planimetria - warianty i BOM.pdf, strona 12 (arkusz 85); montaż mechaniczny.pdf, strony 46 i 53"}
   ],
   "components": {
     "QZ1-3050": {"category": "Słupy", "name": "Słup napędowy 1", "spec": "W8×10, L=3050, S355JR", "unit": "szt.", "source": "łaczenia rur.pdf, strona 1; planimetria.pdf, strona 11"},

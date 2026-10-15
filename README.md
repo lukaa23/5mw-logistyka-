@@ -19,16 +19,17 @@ Widok „Zapotrzebowanie” przedstawia wyłącznie ilości wymagane przez proje
 
 ## Zatwierdzona baza źródłowa
 
-Program bazuje na ośmiu dokumentach w folderze `project_sources`:
+Program bazuje na dziewięciu dokumentach w folderze `project_sources`:
 
 1. `łaczenia rur.pdf` — rysunki słupów QZ1–QZ4, FZ1–FZ2 i NZ1;
 2. `planimetria.pdf` — rysunki wariantów 1PX28/42/56/70 i tabele BOM;
-3. `planimetria 6,5mw.pdf` — planimetria RF-GIULIETTA, Momo, 6,4915 MWp;
-4. `montaż mechaniczny.pdf` — instrukcje, narzędzia, momenty oraz tabele rur i płatwi;
-5. `manual v.2.pdf` — pełny manual producenta ESET Solar;
-6. `montaż mechaniczny 3.pdf` — katalog głównych komponentów ESET;
-7. `montaż mechaniczny 4.pdf` — katalog rur, płatwi i zestawów M12–M18;
-8. `montaż mechaniczny 5.pdf` — typy rur i słupów trackera.
+3. `planimetria - warianty i BOM.pdf` — dostarczona osobno 12-stronicowa wersja rysunków i tabel BOM;
+4. `planimetria 6,5mw.pdf` — planimetria RF-GIULIETTA, Momo, 6,4915 MWp;
+5. `montaż mechaniczny.pdf` — instrukcje, narzędzia, momenty oraz tabele rur i płatwi;
+6. `manual v.2.pdf` — pełny manual producenta ESET Solar;
+7. `montaż mechaniczny 3.pdf` — katalog głównych komponentów ESET;
+8. `montaż mechaniczny 4.pdf` — katalog rur, płatwi i zestawów M12–M18;
+9. `montaż mechaniczny 5.pdf` — typy rur i słupów trackera.
 
 [source-manifest.json](project_sources/source-manifest.json) przechowuje sumy SHA-256, zakres i dane źródłowe. [eset-bom.json](project_sources/eset-bom.json) zawiera znormalizowane relacje wariant–komponent i ilości z tabel BOM. Inny wgrany plik pozostaje dokumentem pomocniczym i nie zmienia zapotrzebowania ani instrukcji.
 
@@ -93,4 +94,4 @@ Domyślną bazą jest SQLite. Po ustawieniu `DATABASE_URL` i zainstalowaniu ster
 cd frontend && npm run build
 ```
 
-Testy sprawdzają cztery warianty, sumowanie pełnego BOM, momenty dokręcania, role, meldunki, zdjęcia, QA/QC, raport PDF oraz integralność ośmiu dokumentów źródłowych.
+Testy sprawdzają cztery warianty, sumowanie pełnego BOM, momenty dokręcania, role, meldunki, zdjęcia, QA/QC, raport PDF oraz integralność dziewięciu dokumentów źródłowych.
