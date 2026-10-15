@@ -12,11 +12,11 @@ from sqlalchemy.orm import Session, selectinload
 from .auth import create_token, current_user, decode_token, hash_password, roles, verify_password
 from .database import Base, SessionLocal, UPLOAD_DIR, engine, get_db
 from .migrations import ensure_schema_columns
-from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, MaterialTemplate, Project, ProjectMaterial, RFI, RowType, RowTypeComponent, Section, SiteDelivery, SiteDeliveryItem, User, WorkLog, Zone
+from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, MaterialTemplate, Project, ProjectMaterial, ProjectVariantConfig, RFI, RowType, RowTypeComponent, Section, SiteDelivery, SiteDeliveryItem, User, WorkLog, Zone
 from .services.report import daily_report
-from .services.source_basis import SOURCE_DIR, load_source_manifest, sha256_file, source_analysis, source_entry_by_hash
+from .services.source_basis import SOURCE_DIR, build_eset_demand, load_eset_bom, load_source_manifest, sha256_file, source_analysis, source_entry_by_hash
 
-app=FastAPI(title="ASOLAR Universal PV Construction Manager",version="3.1.0")
+app=FastAPI(title="ASOLAR ESET Tracker Manager",version="4.0.0")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024
 MAX_PHOTO_SIZE=25*1024*1024
@@ -45,6 +45,8 @@ class MaterialListIn(BaseModel): items:list[MaterialIn]=Field(min_length=3,max_l
 class TemplateIn(BaseModel): project_id:int; name:str=Field(min_length=1,max_length=120); structure_type:str=""; default_length_m:float=Field(ge=0,le=1000); specification:str=""; materials:dict[str,float]=Field(default_factory=dict)
 class TemplateUpdate(BaseModel): name:str|None=None; structure_type:str|None=None; default_length_m:float|None=None; specification:str|None=None; materials:dict[str,float]|None=None
 class CalculatorIn(BaseModel): project_id:int; template_id:int|None=None; variant_name:str=""; length_m:float=Field(ge=0,le=1000); row_count:int=Field(ge=1,le=5000); materials:dict[str,float]|None=None
+class VariantCountIn(BaseModel): variant_code:str; row_count:int=Field(ge=0,le=5000)
+class VariantConfigurationIn(BaseModel): items:list[VariantCountIn]=Field(min_length=4,max_length=4)
 
 def audit(db,user,action,entity_type,entity_id=None,details=""):
     db.add(AuditEvent(user_id=user.id if user else None,action=action,entity_type=entity_type,entity_id=entity_id,details=details))
@@ -66,7 +68,18 @@ class Realtime:
 realtime=Realtime()
 
 SOURCE_MANIFEST=load_source_manifest()
+ESET_VARIANT_CODES=tuple(item["code"] for item in load_eset_bom()["variants"])
 DEFAULT_MATERIALS=tuple((item["slot_number"],item["name"],item["unit"]) for item in SOURCE_MANIFEST["materials"])
+
+def ensure_variant_config(db,project_id):
+    current={item.variant_code for item in db.scalars(select(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id))}
+    for code in ESET_VARIANT_CODES:
+        if code not in current:db.add(ProjectVariantConfig(project_id=project_id,variant_code=code,row_count=0))
+
+def project_demand(db,project_id):
+    ensure_variant_config(db,project_id);db.flush()
+    values={item.variant_code:item.row_count for item in db.scalars(select(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id))}
+    return build_eset_demand(values)
 
 def ensure_materials(db,project_id):
     rows=db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==project_id)).all()
@@ -118,14 +131,14 @@ def seed():
             zone=Zone(project_id=project.id,name="Strefa do uzupełnienia"); db.add(zone); db.flush(); db.add(Section(zone_id=zone.id,name="Sekcja do uzupełnienia"))
         elif project.name=="Farma PV 6,5 MW" and project.location=="Projekt budowy":
             details=SOURCE_MANIFEST["project"];project.name=details["name"];project.location=details["location"];project.capacity_mw=details["capacity_mw"];project.structure_type=details["structure_type"]
-        for item in db.scalars(select(Project)).all():ensure_materials(db,item.id)
+        for item in db.scalars(select(Project)).all():ensure_materials(db,item.id);ensure_variant_config(db,item.id)
         seed_source_templates(db,project.id)
         seed_source_documents(db,project.id,manager.id)
         db.commit()
 seed()
 
 @app.get("/api/health")
-def health(): return {"status":"ok","version":"3.1.0","time":utc_now()}
+def health(): return {"status":"ok","version":"4.0.0","time":utc_now()}
 
 @app.post("/api/auth/login")
 def login(data:LoginIn,db:Session=Depends(get_db)):
@@ -153,7 +166,7 @@ def projects(include_archived:bool=False,db:Session=Depends(get_db),user=Depends
 
 @app.post("/api/projects")
 async def create_project(data:ProjectIn,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
-    item=Project(**data.model_dump());db.add(item);db.flush();ensure_materials(db,item.id);audit(db,user,"create","project",item.id,item.name);db.commit();await realtime.send("project.changed",{"id":item.id});return project_dict(item)
+    item=Project(**data.model_dump());db.add(item);db.flush();ensure_materials(db,item.id);ensure_variant_config(db,item.id);audit(db,user,"create","project",item.id,item.name);db.commit();await realtime.send("project.changed",{"id":item.id});return project_dict(item)
 
 @app.patch("/api/projects/{project_id}")
 async def update_project(project_id:int,data:ProjectUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
@@ -174,7 +187,7 @@ async def delete_project(project_id:int,db:Session=Depends(get_db),user=Depends(
     attachments=db.scalars(select(Attachment).where((Attachment.entity_type=="row") & (Attachment.entity_id.in_(row_ids or [-1])) | (Attachment.entity_type=="rfi") & (Attachment.entity_id.in_(rfi_ids or [-1])) | (Attachment.entity_type=="worklog") & (Attachment.entity_id.in_(log_ids or [-1])))).all()
     for photo in attachments:(UPLOAD_DIR/photo.stored_name).unlink(missing_ok=True);db.delete(photo)
     for document in db.scalars(select(Document).where(Document.project_id==project_id)).all():(UPLOAD_DIR/document.stored_name).unlink(missing_ok=True);db.delete(document)
-    db.execute(delete(RFI).where(RFI.project_id==project_id));db.execute(delete(WorkLog).where(WorkLog.project_id==project_id));db.execute(delete(Delivery).where(Delivery.project_id==project_id));db.execute(delete(SiteDelivery).where(SiteDelivery.project_id==project_id))
+    db.execute(delete(RFI).where(RFI.project_id==project_id));db.execute(delete(WorkLog).where(WorkLog.project_id==project_id));db.execute(delete(Delivery).where(Delivery.project_id==project_id));db.execute(delete(SiteDelivery).where(SiteDelivery.project_id==project_id));db.execute(delete(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id))
     db.delete(item);db.commit();await realtime.send("project.deleted",{"id":project_id});return {"ok":True}
 
 @app.get("/api/projects/{project_id}/tree")
@@ -337,6 +350,23 @@ def source_basis(project_id:int,db:Session=Depends(get_db),user=Depends(current_
     payload["expected_sources"]=len(payload["documents"])
     return payload
 
+@app.get("/api/projects/{project_id}/tracker-config")
+def tracker_config(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    result=project_demand(db,project_id);db.commit();return result
+
+@app.put("/api/projects/{project_id}/tracker-config")
+async def update_tracker_config(project_id:int,data:VariantConfigurationIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    codes=[item.variant_code for item in data.items]
+    if len(set(codes))!=4 or set(codes)!=set(ESET_VARIANT_CODES):
+        raise HTTPException(400,"Konfiguracja musi zawierać dokładnie warianty 1x28, 1x42, 1x56 i 1x70")
+    ensure_variant_config(db,project_id);db.flush()
+    current={item.variant_code:item for item in db.scalars(select(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id))}
+    for value in data.items:current[value.variant_code].row_count=value.row_count
+    audit(db,user,"update","tracker_config",project_id,json.dumps({x.variant_code:x.row_count for x in data.items},ensure_ascii=False))
+    db.commit();await realtime.send("tracker-config.changed",{"project_id":project_id});return project_demand(db,project_id)
+
 def document_dict(item):
     analysis=json.loads(item.analysis_json or "{}")
     return {"id":item.id,"filename":item.filename,"kind":item.kind,"size":item.size,"status":item.status,"approved_source":bool(analysis.get("approved_source")),"sha256":analysis.get("sha256"),"role":analysis.get("role"),"analysis":analysis,"uploaded_at":item.uploaded_at}
@@ -364,7 +394,7 @@ async def upload_document(project_id:int=Form(...),file:UploadFile=File(...),db:
             path.unlink(missing_ok=True);return {"id":existing.id,"status":existing.status,"analysis":json.loads(existing.analysis_json or "{}"),"deduplicated":True}
         result=source_analysis(source);status="zatwierdzone źródło";filename=source["filename"]
     else:
-        result={"approved_source":False,"sha256":digest,"summary":{"source_policy":"plik pomocniczy"},"warnings":["Plik zapisano, ale nie należy do pięciu zatwierdzonych źródeł. Nie zmienia instrukcji ani kalkulatora."]};status="pomocniczy — poza bazą źródłową";filename=Path(file.filename or "dokument").name
+        result={"approved_source":False,"sha256":digest,"summary":{"source_policy":"plik pomocniczy"},"warnings":["Plik zapisano, ale nie należy do ośmiu zatwierdzonych źródeł. Nie zmienia instrukcji ani bazy BOM."]};status="pomocniczy — poza bazą źródłową";filename=Path(file.filename or "dokument").name
     item=Document(project_id=project_id,filename=filename,stored_name=stored,kind=extension[1:].upper(),size=path.stat().st_size,status=status,extracted_text="",analysis_json=json.dumps(result,ensure_ascii=False),uploaded_by_id=user.id)
     db.add(item);db.flush();audit(db,user,"upload","document",item.id,item.filename);db.commit();await realtime.send("document.changed",{"id":item.id});return {"id":item.id,"status":status,"analysis":result}
 
@@ -509,10 +539,11 @@ def stock(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
 
 @app.get("/api/dashboard")
 def dashboard(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
-    total,built,qc=db.execute(select(func.count(ConstructionRow.id),func.sum(func.cast(ConstructionRow.built,Integer)),func.sum(func.cast(ConstructionRow.qc_checked,Integer))).join(Section).join(Zone).where(Zone.project_id==project_id)).one();total=total or 0;built=built or 0;qc=qc or 0
+    legacy_total,built,qc=db.execute(select(func.count(ConstructionRow.id),func.sum(func.cast(ConstructionRow.built,Integer)),func.sum(func.cast(ConstructionRow.qc_checked,Integer))).join(Section).join(Zone).where(Zone.project_id==project_id)).one();legacy_total=legacy_total or 0;built=built or 0;qc=qc or 0
     open_rfi=db.scalar(select(func.count(RFI.id)).where(RFI.project_id==project_id,RFI.status!="zamknięty")) or 0
     rows_done,manhours,days=db.execute(select(func.sum(WorkLog.rows_completed),func.sum(WorkLog.people*WorkLog.hours),func.count(func.distinct(WorkLog.work_date))).where(WorkLog.project_id==project_id)).one();rows_done=rows_done or 0;manhours=manhours or 0;days=days or 0
-    productivity=rows_done/manhours if manhours else 0;daily=rows_done/days if days else 0;forecast=(total-built)/daily if daily else None
+    configured_total=sum(item.row_count for item in db.scalars(select(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id)));total=configured_total or legacy_total;built=min(total,max(float(built),float(rows_done))) if total else float(built)
+    productivity=rows_done/manhours if manhours else 0;daily=rows_done/days if days else 0;forecast=max(0,total-built)/daily if daily else None
     return {"rows_total":total,"rows_built":built,"rows_remaining":total-built,"rows_qc":qc,"completion_pct":round(100*built/total,1) if total else 0,"qc_pct":round(100*qc/total,1) if total else 0,"open_rfi":open_rfi,"manhours":round(manhours,1),"productivity":round(productivity,4),"forecast_days":round(forecast,1) if forecast is not None else None,"offline_supported":True}
 
 @app.get("/api/reports/daily")

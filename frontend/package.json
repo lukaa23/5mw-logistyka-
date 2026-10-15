@@ -1,7 +1,7 @@
 {
-  "name": "asolar-universal-frontend",
+  "name": "asolar-eset-tracker-frontend",
   "private": true,
-  "version": "3.1.0",
+  "version": "4.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",

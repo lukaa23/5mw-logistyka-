@@ -28,6 +28,15 @@ class Project(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     zones: Mapped[list["Zone"]] = relationship(back_populates="project", cascade="all, delete-orphan")
 
+class ProjectVariantConfig(Base):
+    __tablename__ = "project_variant_configs"
+    __table_args__ = (UniqueConstraint("project_id", "variant_code", name="uq_project_variant_code"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    variant_code: Mapped[str] = mapped_column(String(20))
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
 class Zone(Base):
     __tablename__ = "zones"
     id: Mapped[int] = mapped_column(primary_key=True)

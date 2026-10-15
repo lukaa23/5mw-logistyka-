@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "policy": "Dane techniczne, instrukcje i szablony startowe aplikacji pochodzą wyłącznie z pięciu dokumentów wymienionych w tym manifeście. Inne pliki mogą być przechowywane jako pomocnicze, ale nie zmieniają instrukcji ani kalkulatora.",
+  "version": 2,
+  "policy": "Dane techniczne, instrukcje oraz zapotrzebowanie aplikacji pochodzą wyłącznie z ośmiu dokumentów wymienionych w tym manifeście. Inne pliki mogą być przechowywane jako pomocnicze, ale nie zmieniają instrukcji ani bazy BOM.",
   "project": {
     "name": "RF-GIULIETTA",
     "location": "Strada Vicinale Vernino, 28015 Momo (NO), Włochy",
@@ -16,11 +16,12 @@
       "rury momentowe i ich połączenia",
       "płatwie i ich mocowania",
       "amortyzatory",
-      "zaślepki rur momentowych"
+      "zaślepki rur momentowych",
+      "słupy wymagane w BOM",
+      "TCU i odbiornik bezprzewodowy"
     ],
     "excluded": [
-      "wbijanie i montaż słupów",
-      "TCU i odbiornik bezprzewodowy",
+      "operacja wbijania słupów",
       "moduły PV",
       "okablowanie i uziemienie",
       "uruchomienie elektryczne"
@@ -125,6 +126,27 @@
       "pages": 88,
       "role": "Pełny manual producenta ESET Solar używany jako dokument odniesienia i kontekst dla wyciągu mechanicznego.",
       "facts": ["Producent: Jiangsu Evershine Energy Technology Co.", "Instrukcje techniczne i montażowe trackera"]
+    },
+    {
+      "filename": "montaż mechaniczny 3.pdf",
+      "sha256": "020cead589b8255bf4f1d9de8b5f9d49272561b77aa7d14ca6d001c0661df66e",
+      "pages": 1,
+      "role": "Strona katalogowa ESET identyfikująca główne komponenty trackera: słupy, łożyska, amortyzatory, TCU, reduktor i odbiornik bezprzewodowy.",
+      "facts": ["Wyciąg ze strony 11 manuala ESET", "Potwierdza nazwy i klasyfikację głównych komponentów"]
+    },
+    {
+      "filename": "montaż mechaniczny 4.pdf",
+      "sha256": "f571daaf078a924076137b426e8e605af4cb2585944e02ef5affa2ac154ddb38",
+      "pages": 1,
+      "role": "Strona katalogowa ESET identyfikująca podstawę reduktora, rury torsyjne, płatwie oraz zestawy śrub M12, M14, M16 i M18.",
+      "facts": ["Wyciąg ze strony 12 manuala ESET", "Momenty dokręcania wskazano w załączniku 1 manuala"]
+    },
+    {
+      "filename": "montaż mechaniczny 5.pdf",
+      "sha256": "de00cccba10885776f56eaedd5727c1af95aea5a6069b3746a9c42b6ba833471",
+      "pages": 1,
+      "role": "Strona katalogowa ESET przedstawiająca trzy rodzaje rur torsyjnych oraz słupy napędowe, nienapędowe i amortyzatorów.",
+      "facts": ["Wyciąg ze strony 13 manuala ESET", "Rozróżnia driving post, non-driving post i damper post"]
     }
   ],
   "instructions": [

@@ -26,7 +26,7 @@ if not exist "runtime-packages\.asolar-deps-v3" (
 )
 
 if not exist "frontend\dist\index.html" (
-  echo Brak zbudowanego interfejsu. Pobierz pelna paczke ASOLAR Enterprise.
+  echo Brak zbudowanego interfejsu. Pobierz pelna paczke ASOLAR ESET Tracker Manager.
   pause
   exit /b 1
 )

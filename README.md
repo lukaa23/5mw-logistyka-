@@ -1,31 +1,56 @@
-# ASOLAR Universal PV Construction Manager
+# ASOLAR ESET Tracker Manager
 
-Responsywna aplikacja PWA do zarządzania budową farm fotowoltaicznych. System nie narzuca wariantów, długości ani zamkniętego słownika prac: projekt, sekcje, każdy rząd, materiały i meldunki można opisać zgodnie ze stanem faktycznym.
+Responsywna aplikacja PWA do konfiguracji trackerów ESET, wyliczania zapotrzebowania projektowego, prowadzenia meldunków brygadzisty i kontroli QA/QC na farmie PV.
 
-Zakres instrukcji generowanych z dokumentacji obejmuje konstrukcję mechaniczną. Parser pomija elektrykę, okablowanie, uziemienie i wbijanie słupów.
+## Konfiguracja i zapotrzebowanie
+
+Projekt korzysta z czterech zatwierdzonych wariantów: `1x28`, `1x42`, `1x56` i `1x70`. Użytkownik wpisuje liczbę rzędów każdego wariantu. System automatycznie pokazuje:
+
+- listę elementów potrzebnych na pojedynczy rząd;
+- sumę dla liczby rzędów danego wariantu;
+- sumę dla całego projektu;
+- słupy napędowe, nienapędowe i amortyzatorów;
+- podstawy, obudowy łożysk, łożyska polimerowe i reduktory obrotowe;
+- rury torsyjne z rozróżnieniem typu, długości i grubości;
+- płatwie, elementy amortyzatorów, TCU i odbiornik bezprzewodowy;
+- zestawy M10, M12, M14, M16 i M18 wraz z podkładkami oraz momentami dokręcania.
+
+Widok „Zapotrzebowanie” przedstawia wyłącznie ilości wymagane przez projekt. Nie korzysta ze stanów magazynowych ani fizycznych dostaw WZ.
 
 ## Zatwierdzona baza źródłowa
 
-Program zawiera w folderze `project_sources` dokładnie pięć dokumentów dostarczonych dla projektu RF-GIULIETTA:
+Program bazuje na ośmiu dokumentach w folderze `project_sources`:
 
-1. `łaczenia rur.pdf` — rysunki warsztatowe słupów QZ1–QZ4, FZ1–FZ2 i NZ1;
+1. `łaczenia rur.pdf` — rysunki słupów QZ1–QZ4, FZ1–FZ2 i NZ1;
 2. `planimetria.pdf` — rysunki wariantów 1PX28/42/56/70 i tabele BOM;
 3. `planimetria 6,5mw.pdf` — planimetria RF-GIULIETTA, Momo, 6,4915 MWp;
-4. `montaż mechaniczny.pdf` — instrukcje mechaniczne, narzędzia, momenty i tabele wariantów;
-5. `manual v.2.pdf` — pełny manual producenta ESET Solar.
+4. `montaż mechaniczny.pdf` — instrukcje, narzędzia, momenty oraz tabele rur i płatwi;
+5. `manual v.2.pdf` — pełny manual producenta ESET Solar;
+6. `montaż mechaniczny 3.pdf` — katalog głównych komponentów ESET;
+7. `montaż mechaniczny 4.pdf` — katalog rur, płatwi i zestawów M12–M18;
+8. `montaż mechaniczny 5.pdf` — typy rur i słupów trackera.
 
-Manifest [source-manifest.json](project_sources/source-manifest.json) zapisuje sumy SHA-256, strony źródłowe, zakres oraz dane używane przez aplikację. Przy pierwszym uruchomieniu pięć plików jest automatycznie rejestrowanych w projekcie. Inny wgrany plik pozostaje dokumentem pomocniczym i nie zmienia instrukcji ani kalkulatora.
+[source-manifest.json](project_sources/source-manifest.json) przechowuje sumy SHA-256, zakres i dane źródłowe. [eset-bom.json](project_sources/eset-bom.json) zawiera znormalizowane relacje wariant–komponent i ilości z tabel BOM. Inny wgrany plik pozostaje dokumentem pomocniczym i nie zmienia zapotrzebowania ani instrukcji.
 
-Instrukcje obejmują wyłącznie montaż podstaw przekładni i łożysk, przekładni, obudów łożysk, rur momentowych, płatwi, amortyzatorów i zaślepek. Wyłączone są: wbijanie i montaż słupów, TCU, odbiornik bezprzewodowy, moduły PV, okablowanie, uziemienie i uruchomienie elektryczne.
+Zapotrzebowanie obejmuje komponenty systemowe, w tym słupy, TCU i odbiornik. Zakres prac montażowych nadal wyłącza operację wbijania słupów, montaż modułów PV, okablowanie, uziemienie i uruchomienie elektryczne.
+
+## Pozostałe funkcje
+
+- projekty można dodawać, edytować, archiwizować, przywracać i usuwać;
+- meldunek zawiera liczbę zbudowanych rzędów, liczbę osób, godziny, dowolny opis prac, notatki i dziennik QA/QC;
+- zdjęcia można dodawać bezpośrednio z aparatu telefonu i przeglądać w historii meldunku;
+- moduł RFI rejestruje problem, priorytet, opis i zdjęcie;
+- raport dzienny PDF zawiera prace, KPI i dziennik QA/QC;
+- WebSocket synchronizuje urządzenia, a PWA buforuje odczyty i kolejkuje zapisy offline;
+- interfejs działa po polsku na telefonie, tablecie i komputerze.
 
 ## Uruchomienie na Windows
 
 1. Pobierz i rozpakuj pełną paczkę ZIP.
-2. Zainstaluj [Python 3.11](https://www.python.org/downloads/release/python-3119/) wraz z programem Python Launcher (`py`).
+2. Zainstaluj Python 3.11 razem z programem Python Launcher (`py`).
 3. Uruchom `Uruchom-Windows.bat`.
-4. Skrypt sprawdzi interpreter przez `py -3.11`, a przy pierwszym uruchomieniu pobierze zależności do lokalnego folderu `runtime-packages`.
 
-Program otworzy się automatycznie. Dane i zdjęcia są przechowywane w folderze `data`, dlatego nie należy go usuwać podczas aktualizacji aplikacji.
+Skrypt używa polecenia `py -3.11`. Przy pierwszym uruchomieniu instaluje zależności w lokalnym folderze `runtime-packages`, a następnie otwiera aplikację. Dane i zdjęcia są przechowywane w folderze `data`.
 
 ## Konta startowe
 
@@ -35,60 +60,7 @@ Program otworzy się automatycznie. Dane i zdjęcia są przechowywane w folderze
 | Brygadzista | `brygadzista` | `Brygada2026!` |
 | Magazynier | `magazynier` | `Magazyn2026!` |
 
-Kierownik może tworzyć indywidualne konta. W instalacji sieciowej należy ustawić własny `ASOLAR_SECRET`.
-
-## Najważniejsze zasady działania
-
-### Projekty i rzędy
-
-- projekty można dodawać, edytować, archiwizować, przywracać i usuwać;
-- projekt przechowuje nazwę, lokalizację, moc oraz dowolny opis typu struktury;
-- użytkownik tworzy własne strefy i sekcje;
-- każdy rząd ma osobne: oznaczenie, wariant, długość, specyfikację i ręczne ilości materiałów;
-- wybór szablonu jedynie uzupełnia formularz — wszystkie wartości można później nadpisać;
-- system nie skaluje ilości automatycznie na podstawie długości.
-
-### Kalkulator
-
-- program startuje z potwierdzonymi wariantami `1x28`, `1x42`, `1x56` i `1x70`;
-- ilości startowe z tabel wynoszą odpowiednio: 5/8/10/13 rur S156 oraz 30/44/58/73 płatwie i komplety mocowania;
-- komplet mocowania oznacza: U-bolt UM10×166×188×30, BP095, dwie podkładki BP069 i dwie nakrętki M10, moment 25–32 N·m;
-- użytkownik może także zapisać własny wariant specjalny;
-- konfiguracja zapamiętuje typ konstrukcji, długość informacyjną, specyfikację oraz ilości trzech części na rząd;
-- przed każdym obliczeniem można ręcznie zmienić każdą ilość;
-- wynik mnoży wyłącznie wartości wpisane przez użytkownika przez liczbę rzędów.
-
-### Magazyn i pole
-
-Logistyka używa dokładnie trzech edytowalnych pozycji materiałowych. Dla każdej z nich system przechowuje:
-
-1. całkowite zapotrzebowanie projektu;
-2. fizyczne dostawy z dokumentów WZ;
-3. ilość uszkodzoną;
-4. aktualny stan na polu i bilans do zapotrzebowania.
-
-Nowy projekt zawsze rozpoczyna ze stanem na polu równym `0`. Samo wpisanie zapotrzebowania nie zwiększa stanu. Stan rośnie dopiero po zarejestrowaniu dostawy WZ.
-
-### Meldunki brygadzisty
-
-- dowolny opis wykonanych prac bez zamkniętego słownika;
-- liczba zbudowanych rzędów, ludzi oraz godzin;
-- osobny dziennik QA/QC i pozostałe notatki;
-- opcjonalne przypisanie meldunku do rzędu;
-- zdjęcie bezpośrednio z aparatu telefonu i historia fotografii;
-- edycja oraz usuwanie meldunków zgodnie z rolą użytkownika.
-
-## Pozostałe moduły
-
-- status wykonania rzędu z autorem i czasem;
-- osobny odbiór QA/QC wykonywany przez kierownika;
-- RFI ze zdjęciem, priorytetem i statusem;
-- pięć wbudowanych dokumentów źródłowych oraz pliki pomocnicze PDF, DWG, DXF, XLSX/XLSM;
-- instrukcje krok po kroku po polsku ze wskazaniem dokumentu, strony i punktu kontroli;
-- raport dzienny PDF z pracami, KPI oraz dziennikiem QA/QC;
-- synchronizacja WebSocket między urządzeniami;
-- pamięć odczytów i kolejka zapisów offline;
-- responsywny interfejs PWA po polsku.
+Kierownik może tworzyć kolejne konta. W instalacji sieciowej należy ustawić własny `ASOLAR_SECRET`.
 
 ## Uruchomienie deweloperskie
 
@@ -104,14 +76,7 @@ cd ..
 .venv/bin/python server.py
 ```
 
-Do pracy z odświeżaniem frontendu uruchom backend, a w drugim terminalu:
-
-```bash
-cd frontend
-npm run dev
-```
-
-Dokumentacja OpenAPI jest dostępna pod ścieżką `/docs` działającego serwera.
+Dokumentacja OpenAPI jest dostępna pod `/docs`.
 
 ## Docker
 
@@ -119,11 +84,7 @@ Dokumentacja OpenAPI jest dostępna pod ścieżką `/docs` działającego serwer
 ASOLAR_SECRET="długi-losowy-klucz" docker compose up --build
 ```
 
-Domyślną bazą jest SQLite. Warstwa SQLAlchemy umożliwia użycie PostgreSQL po ustawieniu `DATABASE_URL` i doinstalowaniu odpowiedniego sterownika.
-
-## Dodatkowe pliki
-
-Interfejs przyjmuje PDF, DWG, DXF oraz XLSX/XLSM, aby przechować je przy projekcie. Zgodnie z polityką źródeł nie są one używane do generowania instrukcji, ilości ani momentów dokręcania. Oryginalne pięć plików można zawsze pobrać z modułu „Dokumenty”.
+Domyślną bazą jest SQLite. Po ustawieniu `DATABASE_URL` i zainstalowaniu sterownika można użyć PostgreSQL.
 
 ## Testy
 
@@ -132,4 +93,4 @@ Interfejs przyjmuje PDF, DWG, DXF oraz XLSX/XLSM, aby przechować je przy projek
 cd frontend && npm run build
 ```
 
-Test integracyjny sprawdza elastyczne projekty i rzędy, szablony z ręcznymi korektami, trzy materiały, zerowy stan początkowy pola, WZ, dowolny opis pracy, QA/QC, zdjęcia, role, archiwizację i raport PDF.
+Testy sprawdzają cztery warianty, sumowanie pełnego BOM, momenty dokręcania, role, meldunki, zdjęcia, QA/QC, raport PDF oraz integralność ośmiu dokumentów źródłowych.

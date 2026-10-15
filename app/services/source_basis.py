@@ -9,11 +9,64 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_DIR = ROOT / "project_sources"
 MANIFEST_PATH = SOURCE_DIR / "source-manifest.json"
+BOM_PATH = SOURCE_DIR / "eset-bom.json"
 
 
 @lru_cache(maxsize=1)
 def load_source_manifest() -> dict:
     return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+
+
+@lru_cache(maxsize=1)
+def load_eset_bom() -> dict:
+    return json.loads(BOM_PATH.read_text(encoding="utf-8"))
+
+
+def build_eset_demand(counts: dict[str, int]) -> dict:
+    """Build immutable per-row and project demand from the approved ESET BOM."""
+    bom = load_eset_bom()
+    catalogue = bom["components"]
+    grand: dict[str, int] = {}
+    variants = []
+    for definition in bom["variants"]:
+        code = definition["code"]
+        row_count = max(0, int(counts.get(code, 0)))
+        per_row = []
+        totals = []
+        for key, quantity in bom["quantities"][code].items():
+            component = {"key": key, **catalogue[key]}
+            per_row.append({**component, "quantity_per_row": quantity})
+            total = quantity * row_count
+            totals.append({**component, "quantity_total": total})
+            if total:
+                grand[key] = grand.get(key, 0) + total
+        variants.append({
+            **definition,
+            "row_count": row_count,
+            "total_modules": definition["modules"] * row_count,
+            "per_row": per_row,
+            "totals": totals,
+        })
+    grand_total = [
+        {"key": key, **catalogue[key], "quantity_total": quantity}
+        for key, quantity in grand.items()
+    ]
+    order = {name: index for index, name in enumerate([
+        "Słupy", "Napęd i łożyska", "Rury torsyjne", "Płatwie",
+        "Amortyzatory", "Sterowanie", "Śruby i zestawy",
+    ])}
+    sorter = lambda item: (order.get(item["category"], 99), item["name"], item["spec"])
+    for variant in variants:
+        variant["per_row"].sort(key=sorter)
+        variant["totals"].sort(key=sorter)
+    grand_total.sort(key=sorter)
+    return {
+        "policy": bom["policy"],
+        "total_rows": sum(item["row_count"] for item in variants),
+        "total_modules": sum(item["total_modules"] for item in variants),
+        "variants": variants,
+        "grand_total": grand_total,
+    }
 
 
 def sha256_file(path: Path) -> str:

@@ -163,7 +163,54 @@ class UniversalWorkflowTest(unittest.TestCase):
         with SessionLocal() as db: result = analyze(path, ".xlsx", db)
         self.assertEqual(result["summary"]["relations"], 1)
 
-    def test_only_five_approved_files_drive_sources_and_templates(self):
+    def test_eset_variant_configuration_calculates_precise_project_demand(self):
+        created = self.client.post(
+            "/api/projects", headers=self.manager,
+            json={"name": "ESET BOM", "location": "Momo", "capacity_mw": 1.0, "structure_type": "Tracker ESET 1P"},
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        project_id = created.json()["id"]
+
+        initial = self.client.get(f"/api/projects/{project_id}/tracker-config", headers=self.manager)
+        self.assertEqual(initial.status_code, 200, initial.text)
+        self.assertEqual(initial.json()["total_rows"], 0)
+        self.assertEqual([item["code"] for item in initial.json()["variants"]], ["1x28", "1x42", "1x56", "1x70"])
+
+        configured = self.client.put(
+            f"/api/projects/{project_id}/tracker-config", headers=self.foreman,
+            json={"items": [
+                {"variant_code": "1x28", "row_count": 10},
+                {"variant_code": "1x42", "row_count": 0},
+                {"variant_code": "1x56", "row_count": 4},
+                {"variant_code": "1x70", "row_count": 0},
+            ]},
+        )
+        self.assertEqual(configured.status_code, 200, configured.text)
+        demand = configured.json()
+        self.assertEqual(demand["total_rows"], 14)
+        self.assertEqual(demand["total_modules"], 504)
+        totals = {item["key"]: item for item in demand["grand_total"]}
+        self.assertEqual(totals["QZ1-3050"]["quantity_total"], 10)
+        self.assertEqual(totals["QZ3-3024"]["quantity_total"], 4)
+        self.assertEqual(totals["LT1-1450-18"]["quantity_total"], 532)
+        self.assertEqual(totals["TCU"]["quantity_total"], 14)
+        self.assertEqual(totals["B-M16-75"]["quantity_total"], 40)
+        self.assertEqual(totals["B-M16-75"]["torque_min_nm"], 145)
+        self.assertIn("podkładki", totals["B-M16-75"]["spec"])
+
+        invalid = self.client.put(
+            f"/api/projects/{project_id}/tracker-config", headers=self.manager,
+            json={"items": [
+                {"variant_code": "1x28", "row_count": 1},
+                {"variant_code": "1x42", "row_count": 1},
+                {"variant_code": "1x56", "row_count": 1},
+                {"variant_code": "wariant-własny", "row_count": 1},
+            ]},
+        )
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
+
+    def test_only_eight_approved_files_drive_sources_and_templates(self):
         projects = self.client.get("/api/projects", headers=self.manager).json()
         source_project = next(item for item in projects if item["name"] == "RF-GIULIETTA")
         project_id = source_project["id"]
@@ -172,13 +219,13 @@ class UniversalWorkflowTest(unittest.TestCase):
         basis = self.client.get(f"/api/source-basis?project_id={project_id}", headers=self.manager)
         self.assertEqual(basis.status_code, 200, basis.text)
         basis = basis.json()
-        self.assertEqual(basis["registered_sources"], 5)
+        self.assertEqual(basis["registered_sources"], 8)
         self.assertEqual([item["name"] for item in basis["templates"]], ["1x28", "1x42", "1x56", "1x70"])
 
         documents = self.client.get(f"/api/documents?project_id={project_id}", headers=self.manager).json()
         approved = [item for item in documents if item["approved_source"]]
-        self.assertEqual(len(approved), 5)
-        expected_names = {"łaczenia rur.pdf", "planimetria.pdf", "planimetria 6,5mw.pdf", "montaż mechaniczny.pdf", "manual v.2.pdf"}
+        self.assertEqual(len(approved), 8)
+        expected_names = {"łaczenia rur.pdf", "planimetria.pdf", "planimetria 6,5mw.pdf", "montaż mechaniczny.pdf", "manual v.2.pdf", "montaż mechaniczny 3.pdf", "montaż mechaniczny 4.pdf", "montaż mechaniczny 5.pdf"}
         self.assertEqual({item["filename"] for item in approved}, expected_names)
         for item in approved:
             downloaded = self.client.get(f"/api/documents/{item['id']}/file", headers=self.manager)
