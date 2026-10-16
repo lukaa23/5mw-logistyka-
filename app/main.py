@@ -1,22 +1,23 @@
-import json, math, mimetypes, os, shutil, uuid
+import hashlib, json, math, mimetypes, os, shutil, uuid
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import quote
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import Integer, delete, func, select
 from sqlalchemy.orm import Session, selectinload
 from .auth import create_token, current_user, decode_token, hash_password, roles, verify_password
-from .database import Base, SessionLocal, UPLOAD_DIR, engine, get_db
+from .database import Base, DATABASE_URL, SessionLocal, UPLOAD_DIR, engine, get_db
 from .migrations import ensure_schema_columns
-from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, MaterialTemplate, Project, ProjectMaterial, ProjectVariantConfig, RFI, RowType, RowTypeComponent, Section, SiteDelivery, SiteDeliveryItem, User, WorkLog, Zone, ZoneVariantConfig
+from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, MaterialTemplate, Project, ProjectMaterial, ProjectVariantConfig, RFI, RowNote, RowType, RowTypeComponent, Section, SiteDelivery, SiteDeliveryItem, User, WorkLog, Zone, ZoneVariantConfig
 from .services.report import daily_report
 from .services.source_basis import SOURCE_DIR, build_eset_demand, load_eset_bom, load_source_manifest, sha256_file, source_analysis, source_entry_by_hash
 
-app=FastAPI(title="ASOLAR ESET Tracker Manager",version="4.3.0")
+app=FastAPI(title="ASOLAR ESET Tracker Manager",version="4.5.0")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024
 MAX_PHOTO_SIZE=25*1024*1024
@@ -24,8 +25,19 @@ MAX_PHOTO_SIZE=25*1024*1024
 def utc_now():
     return datetime.now(UTC).replace(tzinfo=None)
 
+async def upload_bytes(file:UploadFile,limit:int):
+    content=await file.read(limit+1)
+    if len(content)>limit:raise HTTPException(413,"Plik przekracza dozwolony limit rozmiaru")
+    return content
+
+def stored_response(content:bytes,media_type:str|None,filename:str,inline:bool=False):
+    clean=filename.replace('"',"").replace("\r","").replace("\n","")
+    safe=clean.encode("ascii","ignore").decode() or "plik"
+    disposition="inline" if inline else "attachment"
+    return Response(content=content,media_type=media_type or "application/octet-stream",headers={"Content-Disposition":f'{disposition}; filename="{safe}"; filename*=UTF-8\'\'{quote(clean)}'})
+
 class LoginIn(BaseModel): username:str; password:str
-class UserIn(BaseModel): username:str; full_name:str; role:str; password:str=Field(min_length=8)
+class UserIn(BaseModel): username:str=Field(min_length=3,max_length=80,pattern=r"^[A-Za-z0-9._-]+$"); full_name:str=Field(min_length=2,max_length=150); role:Literal["kierownik","brygadzista"]; password:str=Field(min_length=8,max_length=200)
 class ProjectIn(BaseModel): name:str; location:str=""; capacity_mw:float=0; structure_type:str="tracker"
 class ProjectUpdate(BaseModel): name:str|None=None; location:str|None=None; capacity_mw:float|None=None; structure_type:str|None=None; archived:bool|None=None
 class ZoneIn(BaseModel): project_id:int; name:str
@@ -34,6 +46,7 @@ class NameUpdate(BaseModel): name:str=Field(min_length=1,max_length=180)
 class RowsIn(BaseModel): section_id:int; prefix:str="R"; start_number:int=1; count:int=Field(ge=1,le=2000); template_id:int|None=None; variant_name:str=""; length_m:float=0; specification:str=""; material_quantities:dict[str,float]=Field(default_factory=dict)
 class RowIn(BaseModel): section_id:int; code:str; template_id:int|None=None; variant_name:str=""; length_m:float=0; specification:str=""; material_quantities:dict[str,float]=Field(default_factory=dict)
 class RowUpdate(BaseModel): code:str|None=None; template_id:int|None=None; variant_name:str|None=None; length_m:float|None=None; specification:str|None=None; material_quantities:dict[str,float]|None=None; built:bool|None=None; qc_checked:bool|None=None; note:str|None=None
+class RowNoteIn(BaseModel): text:str=Field(min_length=1,max_length=5000); client_id:str|None=None
 class RowMoveIn(BaseModel): direction:str
 class RFIIn(BaseModel): project_id:int; row_id:int|None=None; title:str; description:str; priority:str="normalny"; client_id:str|None=None
 class RFIUpdate(BaseModel): status:str|None=None; assigned_to_id:int|None=None; priority:str|None=None
@@ -57,7 +70,7 @@ def audit(db,user,action,entity_type,entity_id=None,details=""):
 def user_dict(user): return {"id":user.id,"username":user.username,"full_name":user.full_name,"role":user.role,"active":user.active}
 def project_dict(project): return {"id":project.id,"name":project.name,"location":project.location,"capacity_mw":project.capacity_mw,"structure_type":project.structure_type,"archived":project.archived,"archived_at":project.archived_at}
 def row_dict(row):
-    return {"id":row.id,"code":row.code,"section_id":row.section_id,"template_id":row.template_id,"variant_name":row.variant_name,"variant_ordinal":row.variant_ordinal,"sort_order":row.sort_order,"auto_generated":row.auto_generated,"active":row.active,"length_m":row.length_m,"specification":row.specification,"material_quantities":json.loads(row.material_quantities_json or "{}"),"built":row.built,"built_by":row.built_by.full_name if row.built_by else None,"built_at":row.built_at,"qc_checked":row.qc_checked,"qc_by":row.qc_by.full_name if row.qc_by else None,"qc_at":row.qc_at,"note":row.note}
+    return {"id":row.id,"code":row.code,"section_id":row.section_id,"template_id":row.template_id,"variant_name":row.variant_name,"variant_ordinal":row.variant_ordinal,"sort_order":row.sort_order,"auto_generated":row.auto_generated,"active":row.active,"length_m":row.length_m,"specification":row.specification,"material_quantities":json.loads(row.material_quantities_json or "{}"),"built":row.built,"built_by":row.built_by.full_name if row.built_by else None,"built_at":row.built_at,"qc_checked":row.qc_checked,"qc_by":row.qc_by.full_name if row.qc_by else None,"qc_at":row.qc_at,"note":row.note,"last_changed_by":row.last_changed_by.full_name if row.last_changed_by else None,"last_changed_at":row.last_changed_at}
 
 class Realtime:
     def __init__(self): self.clients=[]
@@ -212,21 +225,42 @@ def seed_source_documents(db,project_id,user_id):
         stored=f'source-{entry["sha256"][:20]}.pdf';target=UPLOAD_DIR/stored
         if not target.exists():shutil.copy2(source_path,target)
         analysis=source_analysis(entry)
+        document_kind="PLANIMETRIA" if entry["filename"].lower().startswith("planimetria") else "PDF"
         item=approved.get(entry["sha256"])
         if item:
-            item.status="zatwierdzone źródło";item.analysis_json=json.dumps(analysis,ensure_ascii=False);item.stored_name=stored;item.size=target.stat().st_size
+            item.status="zatwierdzone źródło";item.analysis_json=json.dumps(analysis,ensure_ascii=False);item.stored_name=stored;item.size=target.stat().st_size;item.kind=document_kind
         else:
-            db.add(Document(project_id=project_id,filename=entry["filename"],stored_name=stored,kind="PDF",size=target.stat().st_size,status="zatwierdzone źródło",extracted_text="",analysis_json=json.dumps(analysis,ensure_ascii=False),uploaded_by_id=user_id))
+            db.add(Document(project_id=project_id,filename=entry["filename"],stored_name=stored,kind=document_kind,size=target.stat().st_size,status="zatwierdzone źródło",extracted_text="",analysis_json=json.dumps(analysis,ensure_ascii=False),uploaded_by_id=user_id))
 
 def seed():
     Base.metadata.create_all(engine)
     ensure_schema_columns(engine)
     with SessionLocal() as db:
+        manager_password=os.getenv("ASOLAR_MANAGER_PASSWORD","Asolar2026!")
+        foreman1_password=os.getenv("ASOLAR_FOREMAN1_PASSWORD","Brygada1-2026!")
+        foreman2_password=os.getenv("ASOLAR_FOREMAN2_PASSWORD","Brygada2-2026!")
         if not db.scalar(select(func.count(User.id))):
             db.add_all([
-                User(username="kierownik",full_name="Kierownik Budowy",role="kierownik",password_hash=hash_password("Asolar2026!")),
-                User(username="brygadzista",full_name="Brygadzista",role="brygadzista",password_hash=hash_password("Brygada2026!")),
-                User(username="magazynier",full_name="Magazynier",role="magazynier",password_hash=hash_password("Magazyn2026!"))])
+                User(username="kierownik",full_name="Kierownik Budowy",role="kierownik",password_hash=hash_password(manager_password)),
+                User(username="brygadzista1",full_name="Brygadzista 1",role="brygadzista",password_hash=hash_password(foreman1_password)),
+                User(username="brygadzista2",full_name="Brygadzista 2",role="brygadzista",password_hash=hash_password(foreman2_password))])
+        else:
+            legacy=db.scalar(select(User).where(User.username=="brygadzista"))
+            foreman1=db.scalar(select(User).where(User.username=="brygadzista1"))
+            if legacy and not foreman1:
+                legacy.username="brygadzista1";legacy.full_name="Brygadzista 1";legacy.role="brygadzista";legacy.password_hash=hash_password(foreman1_password)
+                foreman1=legacy
+            warehouse=db.scalar(select(User).where(User.username=="magazynier"))
+            foreman2=db.scalar(select(User).where(User.username=="brygadzista2"))
+            if warehouse and not foreman2:
+                warehouse.username="brygadzista2";warehouse.full_name="Brygadzista 2";warehouse.role="brygadzista";warehouse.password_hash=hash_password(foreman2_password)
+                foreman2=warehouse
+            if not foreman1:
+                db.add(User(username="brygadzista1",full_name="Brygadzista 1",role="brygadzista",password_hash=hash_password(foreman1_password)))
+            if not foreman2:
+                db.add(User(username="brygadzista2",full_name="Brygadzista 2",role="brygadzista",password_hash=hash_password(foreman2_password)))
+            if not db.scalar(select(User).where(User.username=="kierownik")):
+                db.add(User(username="kierownik",full_name="Kierownik Budowy",role="kierownik",password_hash=hash_password(manager_password)))
         db.flush();manager=db.scalar(select(User).where(User.username=="kierownik"))
         project=db.scalar(select(Project).limit(1))
         if not project:
@@ -238,6 +272,9 @@ def seed():
         placeholder=db.scalar(select(Zone).where(Zone.name=="Strefa do uzupełnienia"))
         if placeholder:placeholder.name="Strefa A"
         for item in db.scalars(select(Project)).all():ensure_materials(db,item.id);ensure_variant_config(db,item.id);ensure_project_zone_configs(db,item.id)
+        for row in db.scalars(select(ConstructionRow).where(ConstructionRow.note!="")).all():
+            if not db.scalar(select(RowNote.id).where(RowNote.row_id==row.id)):
+                db.add(RowNote(client_id=f"legacy-row-note-{row.id}",row_id=row.id,text=row.note,author_id=row.built_by_id or row.qc_by_id or manager.id,created_at=row.last_changed_at or row.built_at or row.qc_at or utc_now()))
         ensure_bom_components(db)
         seed_source_templates(db,project.id)
         seed_source_documents(db,project.id,manager.id)
@@ -245,7 +282,7 @@ def seed():
 seed()
 
 @app.get("/api/health")
-def health(): return {"status":"ok","version":"4.3.0","time":utc_now()}
+def health(): return {"status":"ok","version":"4.5.0","database":"postgresql" if DATABASE_URL.startswith("postgresql") else "sqlite","file_storage":"database","realtime":"websocket","time":utc_now()}
 
 @app.post("/api/auth/login")
 def login(data:LoginIn,db:Session=Depends(get_db)):
@@ -260,10 +297,9 @@ def me(user=Depends(current_user)): return user_dict(user)
 def users(db:Session=Depends(get_db),user=Depends(roles("kierownik"))): return [user_dict(x) for x in db.scalars(select(User).order_by(User.full_name))]
 
 @app.post("/api/users")
-def create_user(data:UserIn,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
-    if data.role not in ("kierownik","brygadzista","magazynier"): raise HTTPException(400,"Nieznana rola")
+async def create_user(data:UserIn,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
     if db.scalar(select(User).where(User.username==data.username)): raise HTTPException(409,"Login już istnieje")
-    item=User(username=data.username,full_name=data.full_name,role=data.role,password_hash=hash_password(data.password));db.add(item);db.commit();return user_dict(item)
+    item=User(username=data.username.strip(),full_name=data.full_name.strip(),role=data.role,password_hash=hash_password(data.password));db.add(item);db.commit();await realtime.send("user.changed",{"id":item.id});return user_dict(item)
 
 @app.get("/api/projects")
 def projects(include_archived:bool=False,db:Session=Depends(get_db),user=Depends(current_user)):
@@ -299,7 +335,7 @@ async def delete_project(project_id:int,db:Session=Depends(get_db),user=Depends(
 
 @app.get("/api/projects/{project_id}/tree")
 def project_tree(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
-    project=db.scalar(select(Project).where(Project.id==project_id).options(selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.row_type),selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.built_by),selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.qc_by)))
+    project=db.scalar(select(Project).where(Project.id==project_id).options(selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.row_type),selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.built_by),selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.qc_by),selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.last_changed_by)))
     if not project: raise HTTPException(404,"Brak projektu")
     return {**project_dict(project),"zones":[{"id":z.id,"name":z.name,"sections":[{"id":s.id,"name":s.name,"archived":s.archived,"rows":[row_dict(r) for r in s.rows if r.active]} for s in z.sections]} for z in project.zones]}
 
@@ -336,7 +372,7 @@ async def delete_section(section_id:int,db:Session=Depends(get_db),user=Depends(
 async def create_row(data:RowIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
     if not db.get(Section,data.section_id):raise HTTPException(404,"Brak sekcji")
     if db.scalar(select(ConstructionRow).where(ConstructionRow.section_id==data.section_id,ConstructionRow.code==data.code)):raise HTTPException(409,"Rząd o tym oznaczeniu już istnieje w sekcji")
-    values=data.model_dump(exclude={"material_quantities"});item=ConstructionRow(**values,material_quantities_json=json.dumps(data.material_quantities,ensure_ascii=False));db.add(item);db.flush();audit(db,user,"create","row",item.id,item.code);db.commit();await realtime.send("structure.changed");return row_dict(item)
+    values=data.model_dump(exclude={"material_quantities"});item=ConstructionRow(**values,material_quantities_json=json.dumps(data.material_quantities,ensure_ascii=False),last_changed_by_id=user.id,last_changed_at=utc_now());db.add(item);db.flush();audit(db,user,"create","row",item.id,item.code);db.commit();await realtime.send("structure.changed");return row_dict(item)
 
 @app.post("/api/rows/bulk")
 async def create_rows(data:RowsIn,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
@@ -346,7 +382,7 @@ async def create_rows(data:RowsIn,db:Session=Depends(get_db),user=Depends(roles(
     for i in range(data.start_number,data.start_number+data.count):
         code=f"{data.prefix}{i:03d}"
         if db.scalar(select(ConstructionRow).where(ConstructionRow.section_id==data.section_id,ConstructionRow.code==code)): continue
-        row=ConstructionRow(section_id=data.section_id,template_id=data.template_id,code=code,variant_name=data.variant_name,length_m=data.length_m,specification=data.specification,material_quantities_json=json.dumps(data.material_quantities,ensure_ascii=False));db.add(row);db.flush();created.append(row.id)
+        row=ConstructionRow(section_id=data.section_id,template_id=data.template_id,code=code,variant_name=data.variant_name,length_m=data.length_m,specification=data.specification,material_quantities_json=json.dumps(data.material_quantities,ensure_ascii=False),last_changed_by_id=user.id,last_changed_at=utc_now());db.add(row);db.flush();created.append(row.id)
     audit(db,user,"bulk_create","row",details=f"{len(created)} rzędów");db.commit();await realtime.send("structure.changed");return {"created":len(created),"ids":created}
 
 @app.patch("/api/rows/{row_id}")
@@ -361,11 +397,32 @@ async def update_row(row_id:int,data:RowUpdate,db:Session=Depends(get_db),user=D
         if user.role!="kierownik": raise HTTPException(403,"Odbiór QA/QC wykonuje Kierownik Budowy")
         if data.qc_checked and not row.built: raise HTTPException(400,"Najpierw oznacz rząd jako zbudowany")
         row.qc_checked=data.qc_checked;row.qc_by_id=user.id if data.qc_checked else None;row.qc_at=now if data.qc_checked else None
-    if data.note is not None: row.note=data.note
+    if data.note is not None:
+        clean=data.note.strip()
+        if clean and clean!=row.note:db.add(RowNote(row_id=row.id,text=clean,author_id=user.id))
+        row.note=data.note
     values=data.model_dump(exclude_unset=True,exclude={"built","qc_checked","note","material_quantities"})
     for key,value in values.items():setattr(row,key,value)
     if "material_quantities" in data.model_fields_set:row.material_quantities_json=json.dumps(data.material_quantities or {},ensure_ascii=False)
+    row.last_changed_by_id=user.id;row.last_changed_at=now
     audit(db,user,"update","row",row.id,json.dumps(data.model_dump(exclude_unset=True),ensure_ascii=False));db.commit();await realtime.send("row.changed",{"id":row.id});db.refresh(row);return row_dict(row)
+
+@app.get("/api/rows/{row_id}/notes")
+def row_notes(row_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+    if not db.get(ConstructionRow,row_id):raise HTTPException(404,"Brak rzędu")
+    items=db.scalars(select(RowNote).where(RowNote.row_id==row_id).options(selectinload(RowNote.author)).order_by(RowNote.created_at.desc(),RowNote.id.desc())).all()
+    return [{"id":item.id,"text":item.text,"author":item.author.full_name,"created_at":item.created_at} for item in items]
+
+@app.post("/api/rows/{row_id}/notes")
+async def create_row_note(row_id:int,data:RowNoteIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    row=db.get(ConstructionRow,row_id)
+    if not row:raise HTTPException(404,"Brak rzędu")
+    if data.client_id:
+        existing=db.scalar(select(RowNote).where(RowNote.client_id==data.client_id))
+        if existing:return {"id":existing.id,"deduplicated":True}
+    text=data.text.strip()
+    if not text:raise HTTPException(400,"Treść notatki jest wymagana")
+    item=RowNote(client_id=data.client_id,row_id=row.id,text=text,author_id=user.id);db.add(item);db.flush();row.note=text;row.last_changed_by_id=user.id;row.last_changed_at=item.created_at or utc_now();audit(db,user,"create","row_note",item.id,f"row:{row.id}");db.commit();await realtime.send("row.note",{"id":row.id});return {"id":item.id}
 
 @app.delete("/api/rows/{row_id}")
 async def delete_row(row_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
@@ -524,12 +581,13 @@ async def delete_tracker_zone(zone_id:int,db:Session=Depends(get_db),user=Depend
 def operational_rows(project_id:int,zone_id:int|None=None,db:Session=Depends(get_db),user=Depends(current_user)):
     if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
     ensure_project_zone_configs(db,project_id)
-    statement=select(ConstructionRow,Zone).join(Section,Section.id==ConstructionRow.section_id).join(Zone,Zone.id==Section.zone_id).where(Zone.project_id==project_id,ConstructionRow.auto_generated==True,ConstructionRow.active==True).options(selectinload(ConstructionRow.built_by),selectinload(ConstructionRow.qc_by))
+    statement=select(ConstructionRow,Zone).join(Section,Section.id==ConstructionRow.section_id).join(Zone,Zone.id==Section.zone_id).where(Zone.project_id==project_id,ConstructionRow.auto_generated==True,ConstructionRow.active==True).options(selectinload(ConstructionRow.built_by),selectinload(ConstructionRow.qc_by),selectinload(ConstructionRow.last_changed_by))
     if zone_id is not None:statement=statement.where(Zone.id==zone_id)
     pairs=db.execute(statement).all();row_ids=[row.id for row,_ in pairs]
     photo_counts=dict(db.execute(select(Attachment.entity_id,func.count(Attachment.id)).where(Attachment.entity_type=="row",Attachment.entity_id.in_(row_ids or [-1])).group_by(Attachment.entity_id)).all())
+    note_counts=dict(db.execute(select(RowNote.row_id,func.count(RowNote.id)).where(RowNote.row_id.in_(row_ids or [-1])).group_by(RowNote.row_id)).all())
     result=[]
-    for row,zone in pairs:result.append({**row_dict(row),"zone_id":zone.id,"zone_name":zone.name,"photos":int(photo_counts.get(row.id,0))})
+    for row,zone in pairs:result.append({**row_dict(row),"zone_id":zone.id,"zone_name":zone.name,"photos":int(photo_counts.get(row.id,0)),"notes_count":int(note_counts.get(row.id,0))})
     result.sort(key=lambda item:(item["zone_id"],item["sort_order"],item["id"]))
     db.commit();return result
 
@@ -548,6 +606,7 @@ async def move_operational_row(row_id:int,data:RowMoveIn,db:Session=Depends(get_
     for item in rows:item.code=f"tmp-{uuid.uuid4().hex[:24]}"
     db.flush()
     for position,item in enumerate(rows,1):item.sort_order=position;item.code=str(position)
+    row.last_changed_by_id=user.id;row.last_changed_at=utc_now()
     audit(db,user,"move","row",row_id,data.direction);db.commit();await realtime.send("row-order.changed",{"project_id":zone.project_id,"zone_id":zone.id});return {"ok":True,"moved":True}
 
 def document_dict(item):
@@ -561,31 +620,59 @@ def documents(project_id:int|None=None,db:Session=Depends(get_db),user=Depends(c
     return [document_dict(x) for x in db.scalars(q)]
 
 @app.post("/api/documents")
-async def upload_document(project_id:int=Form(...),file:UploadFile=File(...),db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista","magazynier"))):
+async def upload_document(project_id:int=Form(...),file:UploadFile=File(...),db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
     if not db.get(Project,project_id): raise HTTPException(404,"Brak projektu")
     if file.size is not None and file.size>MAX_DOCUMENT_SIZE: raise HTTPException(413,"Plik przekracza limit rozmiaru")
     extension=Path(file.filename or "").suffix.lower()
     if extension not in (".pdf",".dwg",".dxf",".xlsx",".xlsm"): raise HTTPException(400,"Dozwolone: PDF, DWG, DXF, XLSX")
-    stored=f"{uuid.uuid4().hex}{extension}";path=UPLOAD_DIR/stored
-    with path.open("wb") as target: shutil.copyfileobj(file.file,target)
-    if path.stat().st_size>MAX_DOCUMENT_SIZE:
-        path.unlink(missing_ok=True);raise HTTPException(413,"Plik przekracza limit rozmiaru")
-    digest=sha256_file(path);source=source_entry_by_hash(digest)
+    content=await upload_bytes(file,MAX_DOCUMENT_SIZE)
+    stored=f"db-{uuid.uuid4().hex}{extension}"
+    digest=hashlib.sha256(content).hexdigest();source=source_entry_by_hash(digest)
     if source:
         existing=next((item for item in db.scalars(select(Document).where(Document.project_id==project_id)).all() if json.loads(item.analysis_json or "{}").get("sha256")==digest),None)
         if existing:
-            path.unlink(missing_ok=True);return {"id":existing.id,"status":existing.status,"analysis":json.loads(existing.analysis_json or "{}"),"deduplicated":True}
+            return {"id":existing.id,"status":existing.status,"analysis":json.loads(existing.analysis_json or "{}"),"deduplicated":True}
         result=source_analysis(source);status="zatwierdzone źródło";filename=source["filename"]
     else:
         result={"approved_source":False,"sha256":digest,"summary":{"source_policy":"plik pomocniczy"},"warnings":["Plik zapisano, ale nie należy do dziesięciu zatwierdzonych źródeł. Nie zmienia instrukcji ani bazy BOM."]};status="pomocniczy — poza bazą źródłową";filename=Path(file.filename or "dokument").name
-    item=Document(project_id=project_id,filename=filename,stored_name=stored,kind=extension[1:].upper(),size=path.stat().st_size,status=status,extracted_text="",analysis_json=json.dumps(result,ensure_ascii=False),uploaded_by_id=user.id)
+    item=Document(project_id=project_id,filename=filename,stored_name=stored,kind=extension[1:].upper(),size=len(content),status=status,extracted_text="",analysis_json=json.dumps(result,ensure_ascii=False),content_blob=content,content_type=file.content_type or mimetypes.guess_type(filename)[0],uploaded_by_id=user.id)
     db.add(item);db.flush();audit(db,user,"upload","document",item.id,item.filename);db.commit();await realtime.send("document.changed",{"id":item.id});return {"id":item.id,"status":status,"analysis":result}
 
 @app.get("/api/documents/{document_id}/file")
 def document_file(document_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
     item=db.get(Document,document_id)
     if not item: raise HTTPException(404,"Brak dokumentu")
-    return FileResponse(UPLOAD_DIR/item.stored_name,filename=item.filename)
+    media=item.content_type or ("application/pdf" if item.kind in ("PDF","PLANIMETRIA") else mimetypes.guess_type(item.filename)[0])
+    if item.content_blob is not None:return stored_response(item.content_blob,media,item.filename,inline=item.kind in ("PDF","PLANIMETRIA"))
+    path=UPLOAD_DIR/item.stored_name
+    if not path.exists():raise HTTPException(404,"Brak pliku dokumentu")
+    return FileResponse(path,media_type=media,filename=item.filename,content_disposition_type="inline" if item.kind in ("PDF","PLANIMETRIA") else "attachment")
+
+@app.get("/api/planimetry")
+def planimetry(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    items=db.scalars(select(Document).where(Document.project_id==project_id,Document.kind=="PLANIMETRIA").order_by(Document.uploaded_at.desc())).all();users={item.id:item.full_name for item in db.scalars(select(User)).all()}
+    return [{"id":item.id,"title":json.loads(item.analysis_json or "{}").get("title") or item.filename,"filename":item.filename,"size":item.size,"uploaded_at":item.uploaded_at,"uploaded_by":users.get(item.uploaded_by_id,"—"),"deletable":not bool(json.loads(item.analysis_json or "{}").get("approved_source")),"file_url":f"/api/documents/{item.id}/file"} for item in items]
+
+@app.post("/api/planimetry")
+async def upload_planimetry(project_id:int=Form(...),title:str=Form(""),file:UploadFile=File(...),db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    if file.size is not None and file.size>MAX_DOCUMENT_SIZE:raise HTTPException(413,"Plik przekracza limit rozmiaru")
+    if Path(file.filename or "").suffix.lower()!=".pdf":raise HTTPException(400,"Planimetria musi być plikiem PDF")
+    content=await upload_bytes(file,MAX_DOCUMENT_SIZE)
+    stored=f"db-plan-{uuid.uuid4().hex}.pdf"
+    clean_title=title.strip() or Path(file.filename or "planimetria.pdf").stem
+    analysis={"planimetry":True,"official":True,"title":clean_title,"sha256":hashlib.sha256(content).hexdigest()}
+    item=Document(project_id=project_id,filename=Path(file.filename or "planimetria.pdf").name,stored_name=stored,kind="PLANIMETRIA",size=len(content),status="oficjalna planimetria",extracted_text="",analysis_json=json.dumps(analysis,ensure_ascii=False),content_blob=content,content_type="application/pdf",uploaded_by_id=user.id);db.add(item);db.flush();audit(db,user,"upload","planimetry",item.id,clean_title);db.commit();await realtime.send("planimetry.changed",{"project_id":project_id,"id":item.id});return {"id":item.id,"title":clean_title}
+
+@app.delete("/api/planimetry/{document_id}")
+async def delete_planimetry(document_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    item=db.get(Document,document_id)
+    if not item or item.kind!="PLANIMETRIA":raise HTTPException(404,"Brak planimetrii")
+    if json.loads(item.analysis_json or "{}").get("approved_source"):raise HTTPException(409,"Zatwierdzony dokument źródłowy nie może zostać usunięty")
+    project_id=item.project_id
+    if item.content_blob is None:(UPLOAD_DIR/item.stored_name).unlink(missing_ok=True)
+    audit(db,user,"delete","planimetry",item.id,item.filename);db.delete(item);db.commit();await realtime.send("planimetry.changed",{"project_id":project_id});return {"ok":True}
 
 @app.get("/api/instructions")
 def instructions(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
@@ -664,26 +751,29 @@ async def upload_photo(entity_type:str,entity_id:int,file:UploadFile=File(...),d
     if file.size is not None and file.size>MAX_PHOTO_SIZE:raise HTTPException(413,"Zdjęcie przekracza limit 25 MB")
     mime=file.content_type or "application/octet-stream"
     if not mime.startswith("image/"):raise HTTPException(400,"Wymagany plik zdjęcia")
-    extension=Path(file.filename or ".jpg").suffix.lower() or ".jpg";stored=f"{uuid.uuid4().hex}{extension}"
-    with (UPLOAD_DIR/stored).open("wb") as target:shutil.copyfileobj(file.file,target)
-    if (UPLOAD_DIR/stored).stat().st_size>MAX_PHOTO_SIZE:
-        (UPLOAD_DIR/stored).unlink(missing_ok=True);raise HTTPException(413,"Zdjęcie przekracza limit 25 MB")
-    item=Attachment(entity_type=entity_type,entity_id=entity_id,filename=Path(file.filename or "zdjecie.jpg").name,stored_name=stored,mime_type=mime,uploaded_by_id=user.id);db.add(item);db.commit();await realtime.send(f"{entity_type}.photo",{"id":entity_id});return {"id":item.id}
+    content=await upload_bytes(file,MAX_PHOTO_SIZE)
+    extension=Path(file.filename or ".jpg").suffix.lower() or ".jpg";stored=f"db-{uuid.uuid4().hex}{extension}"
+    item=Attachment(entity_type=entity_type,entity_id=entity_id,filename=Path(file.filename or "zdjecie.jpg").name,stored_name=stored,mime_type=mime,content_blob=content,uploaded_by_id=user.id);db.add(item)
+    if entity_type=="row":entity.last_changed_by_id=user.id;entity.last_changed_at=utc_now()
+    db.commit();await realtime.send(f"{entity_type}.photo",{"id":entity_id});return {"id":item.id}
 
 @app.get("/api/{entity_type}/{entity_id}/photos")
 def photos(entity_type:str,entity_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
     if entity_type not in ("row","rfi","worklog"):raise HTTPException(400,"Nieznany typ obiektu")
-    items=db.scalars(select(Attachment).where(Attachment.entity_type==entity_type,Attachment.entity_id==entity_id).order_by(Attachment.created_at.desc())).all()
-    return [{"id":item.id,"filename":item.filename,"mime_type":item.mime_type,"created_at":item.created_at,"url":f"/api/attachments/{item.id}"} for item in items]
+    items=db.scalars(select(Attachment).where(Attachment.entity_type==entity_type,Attachment.entity_id==entity_id).order_by(Attachment.created_at.desc())).all();users={item.id:item.full_name for item in db.scalars(select(User)).all()}
+    return [{"id":item.id,"filename":item.filename,"mime_type":item.mime_type,"created_at":item.created_at,"uploaded_by":users.get(item.uploaded_by_id,"—"),"url":f"/api/attachments/{item.id}"} for item in items]
 
 @app.get("/api/attachments/{attachment_id}")
 def attachment(attachment_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
     item=db.get(Attachment,attachment_id)
     if not item:raise HTTPException(404,"Brak załącznika")
-    return FileResponse(UPLOAD_DIR/item.stored_name,media_type=item.mime_type,filename=item.filename)
+    if item.content_blob is not None:return stored_response(item.content_blob,item.mime_type,item.filename,inline=True)
+    path=UPLOAD_DIR/item.stored_name
+    if not path.exists():raise HTTPException(404,"Brak pliku załącznika")
+    return FileResponse(path,media_type=item.mime_type,filename=item.filename,content_disposition_type="inline")
 
 @app.post("/api/deliveries")
-async def create_delivery(data:DeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","magazynier"))):
+async def create_delivery(data:DeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
     if data.client_id:
         existing=db.scalar(select(SiteDelivery).where(SiteDelivery.client_id==data.client_id))
         if existing:return {"id":existing.id,"deduplicated":True}
@@ -705,7 +795,7 @@ def project_materials(project_id:int,db:Session=Depends(get_db),user=Depends(cur
     return [{"id":item.id,"slot_number":item.slot_number,"name":item.name,"unit":item.unit,"required_quantity":item.required_quantity} for item in db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==project_id).order_by(ProjectMaterial.slot_number))]
 
 @app.put("/api/projects/{project_id}/materials")
-async def update_project_materials(project_id:int,data:MaterialListIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","magazynier"))):
+async def update_project_materials(project_id:int,data:MaterialListIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
     if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
     if {item.slot_number for item in data.items}!={1,2,3}:raise HTTPException(400,"Lista musi zawierać dokładnie pozycje 1, 2 i 3")
     ensure_materials(db,project_id);db.flush();by_slot={item.slot_number:item for item in db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==project_id))}
@@ -744,7 +834,7 @@ def bom_delivery_status(project_id:int,db:Session=Depends(get_db),user=Depends(c
     result=bom_delivery_status_payload(db,project_id);db.commit();return result
 
 @app.post("/api/bom-deliveries")
-async def create_bom_delivery(data:BomDeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","magazynier"))):
+async def create_bom_delivery(data:BomDeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
     if not db.get(Project,data.project_id):raise HTTPException(404,"Brak projektu")
     if not data.wz_number.strip():raise HTTPException(400,"Numer WZ jest wymagany")
     if data.client_id:

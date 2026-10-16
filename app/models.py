@@ -1,5 +1,5 @@
 from datetime import UTC, date, datetime
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .database import Base
 
@@ -96,10 +96,25 @@ class ConstructionRow(Base):
     qc_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     qc_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
+    last_changed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    last_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     section: Mapped[Section] = relationship(back_populates="rows")
     row_type: Mapped[RowType | None] = relationship()
     built_by: Mapped[User | None] = relationship(foreign_keys=[built_by_id])
     qc_by: Mapped[User | None] = relationship(foreign_keys=[qc_by_id])
+    last_changed_by: Mapped[User | None] = relationship(foreign_keys=[last_changed_by_id])
+    notes: Mapped[list["RowNote"]] = relationship(back_populates="row", cascade="all, delete-orphan")
+
+class RowNote(Base):
+    __tablename__ = "row_notes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
+    row_id: Mapped[int] = mapped_column(ForeignKey("construction_rows.id", ondelete="CASCADE"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+    row: Mapped[ConstructionRow] = relationship(back_populates="notes")
+    author: Mapped[User] = relationship()
 
 class Component(Base):
     __tablename__ = "components"
@@ -132,6 +147,8 @@ class Document(Base):
     status: Mapped[str] = mapped_column(String(80), default="wgrany")
     extracted_text: Mapped[str] = mapped_column(Text, default="")
     analysis_json: Mapped[str] = mapped_column(Text, default="{}")
+    content_blob: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
@@ -244,6 +261,7 @@ class Attachment(Base):
     filename: Mapped[str] = mapped_column(String(255))
     stored_name: Mapped[str] = mapped_column(String(255), unique=True)
     mime_type: Mapped[str] = mapped_column(String(100))
+    content_blob: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 

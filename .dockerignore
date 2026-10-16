@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+data
+runtime-packages
+frontend/node_modules
+tests
+windows
+assets
+*.zip
+ASOLAR.exe
+Uruchom-Windows.bat
+__pycache__
+*.pyc

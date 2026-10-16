@@ -547,8 +547,11 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
 .module-reference.compact { margin: 0; border-width: 1px 0 0; border-radius: 0; }
 .module-reference.compact > div { padding: .8rem 1.2rem; }
 .open-operations { display: block; margin: 1rem 0 0 auto; min-height: 44px; }
-.operational-toolbar { display: grid; grid-template-columns: 220px 220px 1fr; gap: 1rem; align-items: end; margin-bottom: 1rem; }
+.operational-toolbar { display: grid; grid-template-columns: 210px minmax(420px,1fr) auto; gap: 1rem; align-items: end; margin-bottom: 1rem; }
 .operational-toolbar label { margin: 0; }
+.quick-filters { display: flex; gap: .35rem; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: #f4f7f5; overflow-x: auto; }
+.quick-filters button { flex: 1 0 auto; min-height: 36px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); padding: .45rem .65rem; font-size: .62rem; font-weight: 700; white-space: nowrap; }
+.quick-filters button.active { color: white; background: var(--green-900); }
 .operational-kpis { display: flex; justify-content: flex-end; gap: .6rem; }
 .operational-kpis span { border-radius: 8px; background: var(--green-50); padding: .65rem .75rem; color: var(--muted); font-size: .62rem; }
 .operational-kpis b { color: var(--green-900); font-size: .9rem; margin-right: .2rem; }
@@ -578,12 +581,46 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
 .operational-status.qc i { color: white; background: var(--green-500); border-color: var(--green-500); }
 .operational-status:disabled { cursor: not-allowed; opacity: .58; }
 .row-detail-button { color: var(--green-700); font-size: .63rem; font-weight: 700; padding: .7rem; }
+.row-last-change { padding: .35rem 1rem; border-top: 1px solid #eef2ef; background: #fbfcfb; color: var(--muted); font-size: .55rem; text-align: right; }
 .operational-detail { padding: 1rem 1.2rem; border-top: 1px solid var(--line); background: #fafcfb; }
 .operational-detail label { margin-bottom: .65rem; }
 .operational-detail-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
 .compact-camera { width: fit-content; min-height: 40px; margin: 0; padding: .55rem .75rem; }
 .operational-detail .photo-gallery { max-width: 700px; }
+.row-memory-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.row-memory-grid h3 { margin-bottom: .65rem; }
+.row-note { border-left: 3px solid var(--green-500); border-radius: 0 8px 8px 0; background: white; padding: .65rem .75rem; margin-bottom: .5rem; box-shadow: 0 2px 8px rgba(18,62,48,.04); }
+.row-note p { margin: 0 0 .35rem; font-size: .67rem; line-height: 1.5; white-space: pre-wrap; }
+.row-note small { font-size: .52rem; }
 .sorting-hint { grid-column: 1 / -1; color: #8c6a20; font-size: .59rem; }
+
+/* Planimetry PDF */
+.plan-upload { display: grid; grid-template-columns: minmax(250px,1fr) minmax(220px,.8fr) minmax(200px,.8fr) auto; align-items: end; gap: 1rem; margin-bottom: 1rem; }
+.plan-upload h2 { margin-bottom: .25rem; }
+.plan-upload label { margin: 0; }
+.plan-upload .file-drop { min-height: 43px; }
+.plan-upload button { min-height: 43px; }
+.plan-layout { display: grid; grid-template-columns: 280px minmax(0,1fr); gap: 1rem; align-items: start; }
+.plan-list { position: sticky; top: 90px; padding: .8rem; max-height: 78vh; overflow-y: auto; }
+.plan-list .card-head { padding: .25rem .3rem .7rem; margin: 0; }
+.plan-list h2 { margin: 0; }
+.plan-list > button { width: 100%; display: grid; grid-template-columns: 42px 1fr; align-items: center; gap: .65rem; border: 1px solid transparent; border-radius: 9px; background: transparent; padding: .65rem; text-align: left; }
+.plan-list > button > span { width: 38px; height: 42px; display: grid; place-items: center; border-radius: 6px; background: var(--red-bg); color: var(--red); font-size: .58rem; font-weight: 800; }
+.plan-list > button strong, .plan-list > button small { display: block; }
+.plan-list > button strong { font-size: .67rem; line-height: 1.35; }
+.plan-list > button small { margin-top: .2rem; font-size: .5rem; }
+.plan-list > button.active { border-color: #bdd8cb; background: var(--green-50); }
+.plan-viewer { padding: 0; overflow: hidden; min-height: 70vh; }
+.plan-toolbar { min-height: 62px; display: flex; align-items: center; gap: .65rem; padding: .7rem 1rem; border-bottom: 1px solid var(--line); background: white; }
+.plan-toolbar > div:first-child { min-width: 160px; margin-right: auto; }
+.plan-toolbar strong, .plan-toolbar small { display: block; }
+.plan-toolbar strong { font-size: .72rem; }
+.plan-toolbar small { margin-top: .14rem; font-size: .51rem; }
+.zoom-controls { display: flex; align-items: center; gap: .3rem; }
+.zoom-controls button { min-width: 34px; min-height: 34px; border: 1px solid var(--line); border-radius: 7px; background: white; color: var(--green-700); font-weight: 800; }
+.zoom-controls b { min-width: 44px; text-align: center; font-size: .62rem; }
+.plan-pdf-viewport { height: 76vh; overflow: auto; background: #46504b; }
+.plan-pdf-viewport iframe { width: 100%; height: 76vh; border: 0; transform-origin: top left; background: white; }
 
 @media (max-width: 1180px) {
   .kpi-grid { grid-template-columns: repeat(3, 1fr); }
@@ -596,6 +633,8 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
   .zone-variant-grid { grid-template-columns: repeat(2,1fr); }
   .operational-row-main { grid-template-columns: minmax(170px,1fr) 74px minmax(145px,.8fr) minmax(145px,.8fr); }
   .row-detail-button { grid-column: 1 / -1; min-height: 40px !important; border-top: 1px solid var(--line) !important; }
+  .plan-upload { grid-template-columns: 1fr 1fr; }
+  .plan-upload > div { grid-column: 1 / -1; }
 }
 
 @media (max-width: 900px) {
@@ -735,6 +774,8 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
   .zone-totals button { grid-column: 1 / -1; width: 100%; margin: 0; min-height: 44px; }
   .module-reference { grid-template-columns: 1fr; }
   .operational-toolbar { grid-template-columns: 1fr 1fr; gap: .65rem; }
+  .operational-toolbar > label, .quick-filters, .operational-kpis { grid-column: 1 / -1; }
+  .quick-filters { margin-inline: -.25rem; }
   .operational-kpis { display: grid; grid-template-columns: repeat(3,1fr); gap: .4rem; }
   .operational-kpis span { display: grid; padding: .55rem; }
   .operational-row-main { grid-template-columns: 1fr 1fr; }
@@ -745,6 +786,20 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
   .operational-detail { padding: .85rem; }
   .operational-detail-actions { display: grid; }
   .compact-camera { width: 100%; }
+  .row-memory-grid { grid-template-columns: 1fr; }
+  .row-last-change { text-align: left; line-height: 1.4; }
+  .plan-upload { grid-template-columns: 1fr; }
+  .plan-upload > div { grid-column: auto; }
+  .plan-layout { grid-template-columns: 1fr; }
+  .plan-list { position: static; display: flex; gap: .45rem; max-height: none; overflow-x: auto; }
+  .plan-list .card-head { min-width: 125px; }
+  .plan-list > button { flex: 0 0 220px; }
+  .plan-viewer { min-height: 68vh; }
+  .plan-toolbar { flex-wrap: wrap; }
+  .plan-toolbar > div:first-child { width: 100%; }
+  .plan-toolbar .secondary, .plan-toolbar .danger-button { flex: 1; }
+  .zoom-controls { order: 3; width: 100%; justify-content: center; }
+  .plan-pdf-viewport, .plan-pdf-viewport iframe { height: 68vh; }
   .toast { left: .8rem; right: .8rem; bottom: calc(74px + env(safe-area-inset-bottom)); }
 }
 

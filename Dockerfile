@@ -11,6 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 ASOLAR_HOST=0.0.0.0 PORT=8765
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
+COPY project_sources ./project_sources
 COPY server.py desktop.py ./
 COPY --from=frontend /build/frontend/dist ./frontend/dist
 RUN mkdir -p /app/data/uploads
