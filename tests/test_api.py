@@ -4,10 +4,12 @@ import unittest
 import hashlib
 from pathlib import Path
 
+# Domyślnie świeża baza SQLite; CI ustawia DATABASE_URL na PostgreSQL (jak na Render).
 TEST_DB = Path(tempfile.gettempdir()) / "asolar-universal-test.db"
-TEST_DB.unlink(missing_ok=True)
-os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB}"
-os.environ["ASOLAR_SECRET"] = "test-only-secret"
+if not os.environ.get("DATABASE_URL"):
+    TEST_DB.unlink(missing_ok=True)
+    os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB}"
+os.environ.setdefault("ASOLAR_SECRET", "test-only-secret")
 
 from fastapi.testclient import TestClient
 from openpyxl import Workbook

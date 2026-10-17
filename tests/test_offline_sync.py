@@ -77,6 +77,11 @@ class OfflineSyncTest(unittest.TestCase):
     def test_manager_backup_is_a_valid_sqlite_copy(self):
         self.assertEqual(self.client.get("/api/admin/backup", headers=self.foreman).status_code, 403)
         response = self.client.get("/api/admin/backup", headers=self.manager)
+        if not os.environ["DATABASE_URL"].startswith("sqlite"):
+            # PostgreSQL (Render): kopię wykonuje się pg_dump, endpoint to wyjaśnia.
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("pg_dump", response.json()["detail"])
+            return
         self.assertEqual(response.status_code, 200, response.text)
         self.assertTrue(response.content.startswith(b"SQLite format 3"))
         path = Path(tempfile.gettempdir()) / "asolar-backup-check.db"

@@ -1,6 +1,10 @@
+# Render Blueprint: serwer WWW (Docker, Python 3.11) + trwała baza PostgreSQL w tym samym regionie.
+# Hasła startowe wpisujesz w formularzu Render przy pierwszym wdrożeniu (sync: false).
 databases:
   - name: asolar-postgres
     plan: free
+    region: frankfurt
+    postgresMajorVersion: "16"
     databaseName: asolar
     user: asolar
 
@@ -9,6 +13,7 @@ services:
     name: asolar-eset-tracker
     runtime: docker
     plan: free
+    region: frankfurt
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
     autoDeploy: true
