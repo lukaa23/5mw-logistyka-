@@ -24,6 +24,7 @@ app=FastAPI(title="ASOLAR ESET Tracker Manager",version=APP_VERSION)
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024
 MAX_PHOTO_SIZE=25*1024*1024
+ALLOWED_PHOTO_MIME={"image/jpeg","image/jpg","image/png","image/webp","image/gif","image/heic","image/heif"}
 
 def utc_now():
     return datetime.now(UTC).replace(tzinfo=None)
@@ -878,8 +879,9 @@ async def upload_photo(entity_type:str,entity_id:int,file:UploadFile=File(...),d
     entity=db.get(entity_models[entity_type],entity_id)
     if not entity:raise HTTPException(404,"Nie znaleziono wskazanego obiektu")
     if file.size is not None and file.size>MAX_PHOTO_SIZE:raise HTTPException(413,"Zdjęcie przekracza limit 25 MB")
-    mime=file.content_type or "application/octet-stream"
-    if not mime.startswith("image/"):raise HTTPException(400,"Wymagany plik zdjęcia")
+    mime=(file.content_type or "application/octet-stream").lower()
+    # Tylko formaty rastrowe: SVG mógłby zawierać skrypt wykonywany przy otwarciu z tego samego origin.
+    if mime not in ALLOWED_PHOTO_MIME:raise HTTPException(400,"Dozwolone zdjęcia: JPG, PNG, WEBP, GIF, HEIC")
     content=await upload_bytes(file,MAX_PHOTO_SIZE)
     extension=Path(file.filename or ".jpg").suffix.lower() or ".jpg";stored=f"db-{uuid.uuid4().hex}{extension}"
     item=Attachment(entity_type=entity_type,entity_id=entity_id,filename=Path(file.filename or "zdjecie.jpg").name,stored_name=stored,mime_type=mime,content_blob=content,uploaded_by_id=user.id);db.add(item)

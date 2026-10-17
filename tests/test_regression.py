@@ -140,6 +140,8 @@ class RegressionTest(unittest.TestCase):
             uploaded = self.client.post(f"/api/row/{third['id']}/photos", headers=self.foreman, files={"file": (f"foto{index}.png", PNG_BYTES, "image/png")})
             self.assertEqual(uploaded.status_code, 200, uploaded.text)
         self.assertEqual(self.client.post(f"/api/row/{third['id']}/photos", headers=self.foreman, files={"file": ("x.pdf", PDF_BYTES, "application/pdf")}).status_code, 400)
+        svg = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+        self.assertEqual(self.client.post(f"/api/row/{third['id']}/photos", headers=self.foreman, files={"file": ("x.svg", svg, "image/svg+xml")}).status_code, 400)
 
         # Zmniejszenie liczby rzędów ukrywa rekord, ale go nie usuwa.
         self.client.put(f"/api/tracker-zones/{zone['id']}/config", headers=self.manager, json=counts_payload({"1x28": 2}))
