@@ -1,5 +1,7 @@
 # ASOLAR ESET Tracker Manager
 
+[![CI — PostgreSQL i Docker](https://github.com/lukaa23/5mw-logistyka-/actions/workflows/ci.yml/badge.svg)](https://github.com/lukaa23/5mw-logistyka-/actions/workflows/ci.yml) [![Wdróż na Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/lukaa23/5mw-logistyka-)
+
 Responsywna aplikacja PWA do konfiguracji trackerów ESET, wyliczania zapotrzebowania projektowego, prowadzenia meldunków brygadzisty i kontroli QA/QC na farmie PV.
 
 ## Praca wieloosobowa klient–serwer
@@ -79,6 +81,10 @@ Zapotrzebowanie obejmuje komponenty systemowe, w tym słupy, TCU i odbiornik. Li
 ## Wdrożenie na Render przez Blueprint
 
 Repozytorium zawiera [render.yaml](render.yaml), obraz Docker (Python 3.11) i konfigurację PostgreSQL.
+
+Najszybciej: kliknij przycisk **„Deploy to Render”** na górze tego pliku (lub otwórz `https://render.com/deploy?repo=https://github.com/lukaa23/5mw-logistyka-`), zaloguj się w Render i przejdź od kroku 4.
+
+Każda zmiana w repozytorium jest sprawdzana przez CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)): testy backendu na PostgreSQL 16, testy frontendu oraz zbudowanie obrazu Docker i test dymny ([scripts/smoke_test.py](scripts/smoke_test.py)) — kierownik i brygadziści, powiadomienia WebSocket, zdjęcia z `client_id`, restart kontenera bez utraty danych i haseł.
 
 1. Wypchnij gałąź do GitHuba (wdrożenie produkcyjne wykonuj świadomie — `autoDeploy` w Blueprincie wdraża każdą zmianę wybranej gałęzi).
 2. W Render wybierz **New + → Blueprint** i połącz repozytorium.
