@@ -835,3 +835,24 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
   .user-row { flex-wrap: wrap; }
   .row-bom-table td input { width: 4.8rem; }
 }
+
+/* 4.6 — synchronizacja offline, ekran ratunkowy */
+button.connection { border: 0; cursor: pointer; font: inherit; font-size: .7rem; }
+.connection b.failed { background: var(--red); }
+.connection.has-failed { outline: 2px solid var(--red-bg); }
+.sync-overlay { position: fixed; inset: 0; background: rgba(11,43,33,.45); z-index: 60; display: grid; place-items: center; padding: 16px; }
+.sync-panel { width: min(560px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
+.sync-list { display: grid; gap: .4rem; margin: .8rem 0; max-height: 260px; overflow: auto; }
+.sync-list > div { display: grid; padding: .55rem .7rem; border-radius: 9px; background: var(--green-50); }
+.sync-list > div.failed { background: var(--red-bg); }
+.sync-list small { overflow-wrap: anywhere; }
+.server-backup { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: 1rem; }
+.server-backup .hint { overflow-wrap: anywhere; }
+.backup-tools { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: 1rem; font-size: .8rem; }
+.backup-tools.compact { font-size: .75rem; }
+.file-button { position: relative; overflow: hidden; display: inline-flex; align-items: center; cursor: pointer; }
+.file-button input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.rescue-screen { color: var(--ink); background: #fff; border: 1px solid var(--red-bg); }
+.rescue-screen h2 { color: #9f3029; }
+.rescue-screen.full { max-width: 620px; margin: 10vh auto; }
+.pending-photo { position: relative; opacity: .85; outline: 2px dashed var(--amber); }

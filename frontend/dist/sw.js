@@ -8,8 +8,8 @@
  * - fallback do index.html wyłącznie dla nawigacji.
  */
 const CACHE_PREFIX = "asolar-";
-const CACHE_NAME = "asolar-eset-shell-v4.5.1";
-const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];
+const CACHE_NAME = "asolar-eset-shell-v4.6.0";
+const SHELL = ["/", "/index.html", "/manifest.json", "/icon.svg", "/icon-192.png", "/icon-512.png"];
 
 function shouldHandle(request) {
   if (!request || request.method !== "GET") return false;
@@ -45,10 +45,22 @@ async function safeMatch(request) {
   try { return await caches.match(request); } catch { return undefined; }
 }
 
+/** Pliki /assets/… wskazane w index.html (nazwy z hashem po buildzie Vite). */
+function assetsFromHtml(html) {
+  const found = new Set();
+  for (const match of String(html).matchAll(/(?:src|href)="(\/assets\/[^"?#]+)"/g)) found.add(match[1]);
+  return [...found];
+}
+
 async function precache() {
   try {
     const cache = await caches.open(CACHE_NAME);
     await Promise.all(SHELL.map(path => cache.add(path).catch(() => undefined)));
+    // Bez tego pierwsza wizyta nie zapisałaby skryptów i offline aplikacja by się nie uruchomiła.
+    try {
+      const response = await fetch("/index.html", { cache: "no-store" });
+      if (response.ok) await Promise.all(assetsFromHtml(await response.text()).map(path => cache.add(path).catch(() => undefined)));
+    } catch { /* brak sieci podczas instalacji — pliki zostaną zapisane przy pierwszym użyciu */ }
   } catch (error) {
     console.warn("[ASOLAR SW] Nie przygotowano cache powłoki", error);
   }

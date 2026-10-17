@@ -1,7 +1,11 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import ErrorBoundary from "./ErrorBoundary";
+import { installGlobalErrorHandlers } from "./errors";
 import "./styles.css";
+
+installGlobalErrorHandlers();
 
 if ("serviceWorker" in navigator && import.meta.env.PROD) {
   window.addEventListener("load", () => {
@@ -9,4 +13,5 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
   });
 }
 
-createRoot(document.getElementById("root")).render(<React.StrictMode><App /></React.StrictMode>);
+createRoot(document.getElementById("root")).render(<React.StrictMode><ErrorBoundary fullScreen><App /></ErrorBoundary></React.StrictMode>);
+window.__asolarMounted = true;

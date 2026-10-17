@@ -9,11 +9,12 @@ import { flushQueue, mutate, queuedCount } from "../src/api";
 
 const setOnline = value => Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => value });
 
-beforeEach(() => { localStorage.clear(); setOnline(true); });
+beforeEach(() => { localStorage.clear(); localStorage.setItem("asolar_token", "test-token"); setOnline(true); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("logowanie", () => {
   it("formularz nie zawiera wpisanego loginu ani hasła", () => {
+    localStorage.clear();
     render(<App />);
     const password = document.querySelector('input[type="password"]');
     expect(password.value).toBe("");

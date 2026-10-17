@@ -124,11 +124,53 @@ Schemat jest tworzony i uzupełniany automatycznie przy starcie (brakujące kolu
 - **iPhone / Safari:** przycisk *Udostępnij* → *Do ekranu początkowego*.
 - PWA buforuje tylko powłokę aplikacji (HTML, skrypty, ikony). Dane zawsze pochodzą z serwera; ostatnio pobrane widoki są pamiętane lokalnie na wypadek braku zasięgu.
 
-### Praca bez zasięgu
+### Praca bez zasięgu (telefon brygadzisty)
 
-- Proste zapisy (statusy rzędów, notatki, meldunki, RFI, dostawy WZ, konfiguracja stref, kolejność rzędów) trafiają do lokalnej kolejki i są wysyłane automatycznie po odzyskaniu połączenia. `client_id` chroni przed podwójnym zapisem.
-- **Zdjęć i plików nie da się wgrać offline** — aplikacja wyświetla wtedy komunikat. Dodaj je po odzyskaniu sieci.
-- Wskaźnik w górnym pasku: *Na żywo* (WebSocket), *Łączenie…*, *Offline* oraz liczba zapisów w kolejce. Niezależnie od WebSocketu widoki odświeżają się co 15 sekund.
+- **Wszystkie zmiany w terenie działają bez internetu:** statusy „Zbudowane” / „Sprawdzone QC/QA”, notatki, **zdjęcia z aparatu**, meldunki (także ze zdjęciami), RFI, dostawy WZ, konfiguracja stref i kolejność rzędów.
+- Zmiany trafiają do trwałej kolejki w **IndexedDB** telefonu (zdjęcia jako pliki binarne). Gdy IndexedDB jest niedostępne, zapisy tekstowe trafiają do localStorage, a o zdjęciach aplikacja informuje komunikatem.
+- Po odzyskaniu połączenia kolejka jest wysyłana automatycznie (zdarzenie „online”, start aplikacji i co 15 s), w kolejności zapisu. Każdy wpis ma `client_id`, więc ponowne wysłanie — np. po zerwaniu połączenia w trakcie wysyłania zdjęcia — nie tworzy duplikatu.
+- Na serwerze zapisuje się **czas zmiany z telefonu** (np. kiedy rząd zbudowano bez zasięgu), a nie czas synchronizacji. Czas z przyszłości lub starszy niż 30 dni jest zastępowany czasem serwera.
+- Zdjęcie do meldunku lub RFI utworzonego offline jest dołączane po jego `client_id` (`/api/{worklog|rfi}/by-client/{client_id}/photos`).
+- Niewysłane zmiany są widoczne od razu: status rzędu, liczniki notatek i zdjęć oraz miniatury „czeka na wysłanie”.
+- Wpis odrzucony przez serwer (np. odbiór QC rzędu, który ktoś cofnął) **nie jest usuwany** — jest oznaczony w panelu synchronizacji, można go ponowić albo zapisać w kopii.
+- Konflikty: przy równoczesnej zmianie tego samego rzędu przez dwie osoby obowiązuje zmiana wysłana jako ostatnia; każda zmiana zostaje w dzienniku zdarzeń (`audit_events`).
+- Po zalogowaniu aplikacja zapamiętuje konto, więc uruchomienie telefonu bez zasięgu nie wylogowuje użytkownika (dane widoków pochodzą z ostatniej kopii).
+- **Wskaźnik w górnym pasku** (*Na żywo / Łączenie… / Offline*, liczba zmian w kolejce, liczba odrzuconych) otwiera **panel synchronizacji**: lista zmian, „Wyślij teraz”, „Ponów odrzucone”, „Pobierz kopię niewysłanych zmian”, „Przywróć dane z kopii”, a dla kierownika — „Pobierz kopię bazy (SQLite)”.
+
+Wymagania i ograniczenia:
+
+- Aby PWA działała offline (także po ponownym otwarciu bez zasięgu), telefon musi **raz otworzyć aplikację online pod adresem HTTPS** — wtedy service worker zapisuje powłokę i skrypty. Przeglądarki nie instalują service workera pod adresem `http://` innym niż `localhost`.
+- Dokumenty techniczne i planimetrie wgrywa się wyłącznie online.
+- Pojemność pamięci telefonu dla zdjęć zależy od przeglądarki; przy dużej liczbie zdjęć offline warto zsynchronizować je, gdy pojawi się zasięg.
+
+### Ekran ratunkowy zamiast „białego ekranu”
+
+- Każdy widok i cała aplikacja są osłonięte przez Error Boundary. Błąd pokazuje komunikat z przyciskami **„Odśwież aplikację”**, „Spróbuj ponownie” oraz **„Pobierz kopię niewysłanych zmian” / „Przywróć dane z kopii”** (plik JSON z notatkami, statusami i zdjęciami).
+- `window.onerror` i `unhandledrejection` są przechwytywane globalnie: błąd trafia do dziennika (ostatnie 20 w localStorage) i komunikatu, aplikacja działa dalej.
+- Moduł Planimetrii jest ładowany na żądanie z jedną ponowną próbą; błąd wczytania (brak sieci) kończy się ekranem ratunkowym.
+- Jeżeli nie wczyta się nawet główny skrypt, `index.html` sam pokazuje prosty ekran z przyciskami „Odśwież aplikację” i „Wyczyść pamięć podręczną i odśwież” (czyści tylko pliki aplikacji, nie kolejkę zmian).
+
+**Procedura ręczna** (uzupełnia testy automatyczne): w Chrome DevTools → *Network* ustaw **Offline**, zmień status rzędu, dodaj notatkę i zdjęcie, odśwież stronę (dane i zmiany pozostają, brak białego ekranu), przywróć **Online** i sprawdź, że licznik kolejki spada do zera, a zmiany widać na drugim urządzeniu. W trakcie wysyłania zdjęcia przełącz na Offline — zdjęcie musi pojawić się w kolejce, nie zniknąć.
+
+## Aplikacja desktopowa (Electron) — komputer kierownika
+
+Folder [desktop](desktop) zawiera aplikację Electron z ikoną ASOLAR (`desktop/build/icon.ico`) i konfiguracją `electron-builder`.
+
+- **Tryb serwera (domyślny):** aplikacja uruchamia lokalny serwer ASOLAR (FastAPI + SQLite) i otwiera go w oknie. Baza, zdjęcia i dokumenty są zapisywane w profilu użytkownika: `%APPDATA%\ASOLAR ESET Tracker Manager\data` — nie znikają przy braku internetu ani przy aktualizacji programu. Klucz sesji jest generowany przy pierwszym uruchomieniu (`secret.key`).
+- **Udostępnianie telefonom:** menu *Serwer → Udostępnij serwer telefonom w sieci lokalnej*, potem *Pokaż adresy dla telefonów*. Telefony w tej samej sieci Wi-Fi otwierają `http://ADRES-KOMPUTERA:8765` (zapora Windows może zapytać o zgodę). Do pełnej PWA offline potrzebny jest adres HTTPS — np. wspólny serwer w Render albo tunel HTTPS do komputera kierownika.
+- **Tryb klienta:** *Serwer → Połącz z serwerem zdalnym* (pole `serverUrl` w `config.json`) albo plik `server-url.txt` obok programu — aplikacja otwiera wtedy wspólny serwer i nie potrzebuje Pythona.
+- Zajęty port 8765 jest wykrywany — program pokazuje komunikat zamiast otwierać starą instancję. Druga kopia programu nie startuje (przełącza na otwarte okno).
+- Kopia bazy: panel synchronizacji → „Pobierz kopię bazy (SQLite)” albo *Plik → Otwórz folder danych*.
+- **Wymaganie trybu serwera:** Python 3.11 z Python Launcher (`py -3.11`). Przy pierwszym uruchomieniu program jednorazowo instaluje składniki serwera do profilu użytkownika (wymaga Internetu, ok. 1 minuty). Python nie jest wbudowany w instalator.
+
+Budowanie (Windows, Node.js 20+):
+
+```bash
+cd frontend && npm ci && npm run build && cd ..
+cd desktop && npm ci && npm test && npx electron-builder --win nsis portable
+```
+
+Wynik w `desktop/dist`: `ASOLAR-4.6.0-instalator.exe` (instalator NSIS ze skrótami na pulpicie i w menu Start) oraz `ASOLAR-4.6.0-portable.exe`. Pliki **nie są podpisane cyfrowo** — Windows SmartScreen pokaże ostrzeżenie „Nieznany wydawca” do czasu podpisania certyfikatem firmy (zmienne `CSC_LINK` / `CSC_KEY_PASSWORD` w electron-builder). Ikony (`.ico`, PNG dla PWA) generuje `py -3.11 windows/build_icon.py` (wymaga Pillow).
 
 ## Uruchomienie na Windows (Python 3.11)
 
@@ -180,13 +222,22 @@ Domyślnie SQLite w wolumenie `asolar_data`. Po ustawieniu `DATABASE_URL=postgre
 ## Testy
 
 ```bash
-.venv/Scripts/python -m pytest -q          # backend: 22 testy
-cd frontend && npm test                    # React + service worker: 30 testów
+.venv/Scripts/python -m pytest -q          # backend
+cd frontend && npm test                    # React, service worker, odporność offline
 cd frontend && npm run build               # build produkcyjny Vite
+cd desktop && npm test                     # funkcje aplikacji Electron
 ```
 
 - **Backend** (`tests/test_api.py`, `tests/test_regression.py`): role i logowanie, brak resetu haseł po restarcie, wymagane zmienne serwera, trwałe notatki i zdjęcia w bazie, historia przy zmniejszaniu i zwiększaniu liczby rzędów, ręczne sortowanie z trwałym ID, warianty łączone jako suma BOM, korekty materiałowe rzędu, zapotrzebowanie niezależne od dostaw, zerowy stan dostaw i deduplikacja WZ, planimetria i uprawnienia, analiza plików pomocniczych bez zmiany bazy technicznej, KPI i prognoza, raport PDF, zdarzenia WebSocket, 404 dla brakujących skryptów, zgodność manifestu SHA-256 dziesięciu źródeł.
 - **Frontend** (`frontend/tests`): Planimetria (odświeżanie synchronizacji, usunięcie bieżącego planu, zmiana projektu, spóźnione odpowiedzi, zmiana planu w trakcie pobierania, brak starego PDF pod nowym tytułem, zwalnianie blob URL, null/pusta lista/niepoprawne rekordy, brak tytułu, błędna data, błąd pobierania), service worker (schematy rozszerzeń, obcy origin, API, WebSocket, POST, Range, błąd `cache.put`/`caches.open`, brak cache dla 500/206, fallback tylko dla nawigacji, usuwanie wyłącznie starych cache ASOLAR), logowanie bez haseł w kodzie, ErrorBoundary i kolejka offline.
+
+## Zmiany w wersji 4.6.0
+
+- Aplikacja desktopowa Electron (instalator i wersja portable `.exe` z ikoną ASOLAR): serwer kierownika z bazą w profilu użytkownika, udostępnianie w sieci lokalnej, tryb klienta.
+- Pełna praca offline na telefonie: kolejka w IndexedDB obejmuje zdjęcia; deduplikacja zdjęć po `client_id`; czas zmiany z telefonu; zdjęcia do meldunków/RFI utworzonych offline; panel synchronizacji; start bez zasięgu bez wylogowania.
+- Ekran ratunkowy (odświeżenie, kopia i przywrócenie niewysłanych zmian), globalne łapanie błędów, zabezpieczenie `index.html`, ładowanie modułów z ponowieniem; service worker zapisuje skrypty już przy pierwszej wizycie.
+- Kopia zapasowa bazy SQLite dla kierownika (`/api/admin/backup`), `manifest.json` z ikonami PNG dla Androida/iOS.
+- Testy odporności: brak sieci, zerwanie połączenia podczas wysyłania zdjęć, odrzucenie przez serwer, błędy wczytania modułów, błędy globalne.
 
 ## Zmiany w wersji 4.5.1
 

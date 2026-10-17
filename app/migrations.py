@@ -28,6 +28,7 @@ COLUMNS = {
     },
     "attachments": {
         "content_blob": "BLOB NULL",
+        "client_id": "VARCHAR(80) NULL",
     },
     "work_logs": {
         "qc_notes": "TEXT NOT NULL DEFAULT ''",
@@ -51,3 +52,5 @@ def ensure_schema_columns(engine) -> None:
                     if engine.dialect.name == "postgresql":
                         sql_definition = sql_definition.replace("BOOLEAN NOT NULL DEFAULT 0", "BOOLEAN NOT NULL DEFAULT FALSE").replace("DATETIME", "TIMESTAMP").replace("BLOB", "BYTEA")
                     connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {sql_definition}")
+        if "attachments" in tables:
+            connection.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_attachments_client_id ON attachments (client_id)")

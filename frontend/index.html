@@ -5,9 +5,45 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#123e30" />
     <meta name="description" content="Konfiguracja trackerów ESET, zapotrzebowanie BOM, meldunki i QA/QC" />
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="manifest" href="/manifest.json" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
     <title>ASOLAR ESET Tracker Manager</title>
+    <script>
+      /* Ostatnia linia obrony przed białym ekranem: gdy główny skrypt się nie wczyta
+         (brak sieci, uszkodzona pamięć podręczna), pokazujemy prosty ekran ratunkowy. */
+      (function () {
+        function rescue(reason) {
+          if (window.__asolarMounted || document.getElementById("asolar-rescue")) return;
+          var box = document.createElement("div");
+          box.id = "asolar-rescue";
+          box.setAttribute("role", "alert");
+          box.style.cssText = "font-family:system-ui,sans-serif;max-width:520px;margin:12vh auto;padding:24px;border-radius:14px;background:#fff;color:#18251f;box-shadow:0 4px 20px rgba(18,62,48,.12)";
+          box.innerHTML = '<h1 style="font-size:22px;margin:0 0 12px;color:#123e30">Nie udało się uruchomić ASOLAR</h1>' +
+            '<p>Aplikacja nie mogła wczytać swoich plików (' + reason + '). Zmiany zapisane offline pozostają w pamięci urządzenia.</p>' +
+            '<p><button id="asolar-reload" style="padding:12px 16px;border:0;border-radius:9px;background:#123e30;color:#fff;font-weight:700">Odśwież aplikację</button> ' +
+            '<button id="asolar-reset" style="padding:12px 16px;border:1px solid #c9d6d0;border-radius:9px;background:#fff;color:#123e30;font-weight:700">Wyczyść pamięć podręczną i odśwież</button></p>';
+          document.body.style.background = "#f3f6f4";
+          document.body.appendChild(box);
+          document.getElementById("asolar-reload").onclick = function () { location.reload(); };
+          document.getElementById("asolar-reset").onclick = function () {
+            /* Czyści wyłącznie pliki aplikacji (cache i service worker) — nie dotyka kolejki zmian w IndexedDB. */
+            var jobs = [];
+            if (window.caches) jobs.push(caches.keys().then(function (keys) { return Promise.all(keys.filter(function (k) { return k.indexOf("asolar-") === 0; }).map(function (k) { return caches.delete(k); })); }));
+            if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (r) { return Promise.all(r.map(function (x) { return x.unregister(); })); }));
+            Promise.all(jobs).catch(function () {}).then(function () { location.reload(); });
+          };
+        }
+        window.__asolarRescue = rescue;
+        window.addEventListener("error", function (event) {
+          var t = event.target;
+          if (t && (t.tagName === "SCRIPT" || t.tagName === "LINK") && !window.__asolarMounted) rescue("błąd wczytania pliku " + (t.src || t.href || ""));
+        }, true);
+        window.addEventListener("load", function () {
+          setTimeout(function () { if (!window.__asolarMounted) rescue("przekroczony czas uruchamiania"); }, 8000);
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

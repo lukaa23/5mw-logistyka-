@@ -1,0 +1,87 @@
+{
+  "name": "asolar-eset-desktop",
+  "productName": "ASOLAR ESET Tracker Manager",
+  "version": "4.6.0",
+  "description": "ASOLAR ESET Tracker Manager — aplikacja desktopowa (serwer kierownika i klient)",
+  "author": "ASOLAR Sp. z o.o.",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/*.test.js\"",
+    "prebuild:frontend": "npm --prefix ../frontend ci",
+    "build:frontend": "npm --prefix ../frontend run build",
+    "dist": "npm run build:frontend && electron-builder --win nsis portable",
+    "dist:dir": "electron-builder --win dir"
+  },
+  "build": {
+    "appId": "pl.asolar.eset-tracker",
+    "productName": "ASOLAR ESET Tracker Manager",
+    "copyright": "ASOLAR Sp. z o.o.",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "lib.js",
+      "build/icon.ico",
+      "build/icon.png",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../app",
+        "to": "backend/app",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**"
+        ]
+      },
+      {
+        "from": "../frontend/dist",
+        "to": "backend/frontend/dist"
+      },
+      {
+        "from": "../project_sources",
+        "to": "backend/project_sources"
+      },
+      {
+        "from": "../requirements.txt",
+        "to": "backend/requirements.txt"
+      },
+      {
+        "from": "../server.py",
+        "to": "backend/server.py"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "ASOLAR-${version}-${arch}-${target}.${ext}"
+    },
+    "portable": {
+      "artifactName": "ASOLAR-${version}-portable.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ASOLAR ESET Tracker Manager",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "ASOLAR-${version}-instalator.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "44.9.0",
+    "electron-builder": "26.15.3"
+  }
+}

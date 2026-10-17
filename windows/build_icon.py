@@ -20,7 +20,17 @@ draw.line((152, 76, 166, 156), fill="#123e30", width=9)
 draw.line((128, 158, 128, 208), fill="white", width=13)
 draw.line((90, 210, 166, 210), fill="white", width=13)
 
-target = Path(__file__).resolve().parents[1] / "assets" / "asolar.ico"
-target.parent.mkdir(exist_ok=True)
-image.save(target, format="ICO", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
-print(target)
+ROOT = Path(__file__).resolve().parents[1]
+ICO_SIZES = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+
+# Ikona Windows: launcher C (assets) oraz aplikacja Electron (desktop/build).
+for target in (ROOT / "assets" / "asolar.ico", ROOT / "desktop" / "build" / "icon.ico"):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image.save(target, format="ICO", sizes=ICO_SIZES)
+    print(target)
+
+# PNG dla PWA (Android/iOS) i electron-builder.
+for size, target in ((192, ROOT / "frontend" / "public" / "icon-192.png"), (512, ROOT / "frontend" / "public" / "icon-512.png"), (512, ROOT / "desktop" / "build" / "icon.png")):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image.resize((size, size), Image.LANCZOS).save(target, format="PNG")
+    print(target)

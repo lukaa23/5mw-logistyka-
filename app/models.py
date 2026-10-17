@@ -258,6 +258,8 @@ class SiteDeliveryItem(Base):
 class Attachment(Base):
     __tablename__ = "attachments"
     id: Mapped[int] = mapped_column(primary_key=True)
+    # Identyfikator nadany na telefonie — ponowne wysłanie zdjęcia z kolejki offline nie tworzy duplikatu.
+    client_id: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
     entity_type: Mapped[str] = mapped_column(String(30), index=True)
     entity_id: Mapped[int] = mapped_column(Integer, index=True)
     filename: Mapped[str] = mapped_column(String(255))

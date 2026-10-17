@@ -4,9 +4,11 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT / "data"
+# ASOLAR_DATA_DIR pozwala aplikacji desktopowej trzymać bazę w profilu użytkownika
+# (folder instalacji w Program Files jest tylko do odczytu).
+DATA_DIR = Path(os.getenv("ASOLAR_DATA_DIR") or ROOT / "data")
 UPLOAD_DIR = DATA_DIR / "uploads"
-DATA_DIR.mkdir(exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR / 'asolar.db'}")

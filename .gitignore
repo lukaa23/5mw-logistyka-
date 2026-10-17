@@ -8,3 +8,5 @@ runtime-packages/
 windows/*.res
 data/*.db
 data/uploads/
+desktop/node_modules/
+desktop/dist*/

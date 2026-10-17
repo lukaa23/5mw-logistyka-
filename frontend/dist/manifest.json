@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "ASOLAR ESET Tracker Manager",
+  "short_name": "ASOLAR",
+  "description": "Montaż trackerów ESET: strefy, rzędy, BOM, dostawy, meldunki i QA/QC — także bez zasięgu",
+  "lang": "pl",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f6f4",
+  "theme_color": "#123e30",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

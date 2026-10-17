@@ -19,7 +19,7 @@ from .services.parser import inspect_upload
 from .services.report import daily_report
 from .services.source_basis import SOURCE_DIR, build_eset_demand, load_eset_bom, load_source_manifest, sha256_file, source_analysis, source_entry_by_hash
 
-APP_VERSION="4.5.1"
+APP_VERSION="4.6.0"
 app=FastAPI(title="ASOLAR ESET Tracker Manager",version=APP_VERSION)
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024
@@ -28,6 +28,16 @@ ALLOWED_PHOTO_MIME={"image/jpeg","image/jpg","image/png","image/webp","image/gif
 
 def utc_now():
     return datetime.now(UTC).replace(tzinfo=None)
+
+MAX_OFFLINE_AGE=timedelta(days=30)
+
+def effective_time(client_time):
+    """Czas zmiany zapisanej offline na telefonie. Odrzuca wartości z przyszłości i zbyt stare."""
+    now=utc_now()
+    if client_time is None:return now
+    value=client_time.astimezone(UTC).replace(tzinfo=None) if client_time.tzinfo else client_time
+    if value>now+timedelta(minutes=5) or value<now-MAX_OFFLINE_AGE:return now
+    return value
 
 async def upload_bytes(file:UploadFile,limit:int):
     content=await file.read(limit+1)
@@ -49,8 +59,8 @@ class SectionIn(BaseModel): zone_id:int; name:str
 class NameUpdate(BaseModel): name:str=Field(min_length=1,max_length=180)
 class RowsIn(BaseModel): section_id:int; prefix:str="R"; start_number:int=1; count:int=Field(ge=1,le=2000); template_id:int|None=None; variant_name:str=""; length_m:float=0; specification:str=""; material_quantities:dict[str,float]=Field(default_factory=dict)
 class RowIn(BaseModel): section_id:int; code:str; template_id:int|None=None; variant_name:str=""; length_m:float=0; specification:str=""; material_quantities:dict[str,float]=Field(default_factory=dict)
-class RowUpdate(BaseModel): code:str|None=None; template_id:int|None=None; variant_name:str|None=None; length_m:float|None=None; specification:str|None=None; material_quantities:dict[str,float]|None=None; built:bool|None=None; qc_checked:bool|None=None; note:str|None=None
-class RowNoteIn(BaseModel): text:str=Field(min_length=1,max_length=5000); client_id:str|None=None
+class RowUpdate(BaseModel): client_time:datetime|None=None; code:str|None=None; template_id:int|None=None; variant_name:str|None=None; length_m:float|None=None; specification:str|None=None; material_quantities:dict[str,float]|None=None; built:bool|None=None; qc_checked:bool|None=None; note:str|None=None
+class RowNoteIn(BaseModel): text:str=Field(min_length=1,max_length=5000); client_id:str|None=None; client_time:datetime|None=None
 class RowMoveIn(BaseModel): direction:str
 RFI_PRIORITIES=("niski","normalny","wysoki","krytyczny")
 RFI_STATUSES=("otwarty","w analizie","zamknięty")
@@ -354,6 +364,35 @@ def seed():
         db.commit()
 seed()
 
+@app.get("/api/admin/backup")
+def backup(db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    """Spójna kopia bazy SQLite (razem ze zdjęciami i dokumentami zapisanymi w bazie)."""
+    if not DATABASE_URL.startswith("sqlite"):raise HTTPException(400,"Dla PostgreSQL wykonaj kopię poleceniem pg_dump (instrukcja w README)")
+    import sqlite3,tempfile
+    source=engine.raw_connection()
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            target_path=Path(folder)/"kopia.db";target=sqlite3.connect(target_path)
+            try:source.driver_connection.backup(target)
+            finally:target.close()
+            content=target_path.read_bytes()
+    finally:source.close()
+    audit(db,user,"backup","database",None,f"{len(content)} B");db.commit()
+    stamp=utc_now().strftime("%Y-%m-%d_%H-%M")
+    return stored_response(content,"application/vnd.sqlite3",f"ASOLAR-kopia-{stamp}.db")
+
+@app.get("/api/server-info")
+def server_info(user=Depends(roles("kierownik"))):
+    """Adresy, pod którymi telefony w tej samej sieci mogą otworzyć serwer na komputerze kierownika."""
+    import socket
+    port=int(os.getenv("PORT","8765"));host=os.getenv("ASOLAR_HOST","127.0.0.1");addresses=set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(),None,socket.AF_INET):addresses.add(info[4][0])
+    except OSError:pass
+    lan=sorted(address for address in addresses if not address.startswith("127."))
+    return {"listening_on":host,"port":port,"lan_enabled":host in ("0.0.0.0",""),"lan_urls":[f"http://{address}:{port}" for address in lan] if host in ("0.0.0.0","") else [],
+            "note":"Pełny tryb offline PWA (instalacja i praca bez zasięgu) wymaga adresu HTTPS. Adres http:// w sieci lokalnej działa online, ale przeglądarka telefonu nie zainstaluje service workera."}
+
 @app.get("/api/health")
 def health(): return {"status":"ok","version":APP_VERSION,"database":"postgresql" if DATABASE_URL.startswith("postgresql") else "sqlite","file_storage":"database","realtime":"websocket","time":utc_now()}
 
@@ -479,7 +518,7 @@ async def create_rows(data:RowsIn,db:Session=Depends(get_db),user=Depends(roles(
 async def update_row(row_id:int,data:RowUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
     row=db.get(ConstructionRow,row_id)
     if not row: raise HTTPException(404,"Brak rzędu")
-    now=utc_now()
+    now=effective_time(data.client_time)
     if data.built is not None:
         row.built=data.built;row.built_by_id=user.id if data.built else None;row.built_at=now if data.built else None
         if not data.built: row.qc_checked=False;row.qc_by_id=None;row.qc_at=None
@@ -491,11 +530,11 @@ async def update_row(row_id:int,data:RowUpdate,db:Session=Depends(get_db),user=D
         clean=data.note.strip()
         if clean and clean!=row.note:db.add(RowNote(row_id=row.id,text=clean,author_id=user.id))
         row.note=data.note
-    values=data.model_dump(exclude_unset=True,exclude={"built","qc_checked","note","material_quantities"})
+    values=data.model_dump(exclude_unset=True,exclude={"built","qc_checked","note","material_quantities","client_time"})
     for key,value in values.items():setattr(row,key,value)
     if "material_quantities" in data.model_fields_set:row.material_quantities_json=json.dumps(data.material_quantities or {},ensure_ascii=False)
     row.last_changed_by_id=user.id;row.last_changed_at=now
-    audit(db,user,"update","row",row.id,json.dumps(data.model_dump(exclude_unset=True),ensure_ascii=False));db.commit();await realtime.send("row.changed",{"id":row.id});db.refresh(row);return row_dict(row)
+    audit(db,user,"update","row",row.id,json.dumps(data.model_dump(mode="json",exclude_unset=True),ensure_ascii=False));db.commit();await realtime.send("row.changed",{"id":row.id});db.refresh(row);return row_dict(row)
 
 @app.get("/api/rows/{row_id}/notes")
 def row_notes(row_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
@@ -512,7 +551,7 @@ async def create_row_note(row_id:int,data:RowNoteIn,db:Session=Depends(get_db),u
         if existing:return {"id":existing.id,"deduplicated":True}
     text=data.text.strip()
     if not text:raise HTTPException(400,"Treść notatki jest wymagana")
-    item=RowNote(client_id=data.client_id,row_id=row.id,text=text,author_id=user.id);db.add(item);db.flush();row.note=text;row.last_changed_by_id=user.id;row.last_changed_at=item.created_at or utc_now();audit(db,user,"create","row_note",item.id,f"row:{row.id}");db.commit();await realtime.send("row.note",{"id":row.id});return {"id":item.id}
+    item=RowNote(client_id=data.client_id,row_id=row.id,text=text,author_id=user.id,created_at=effective_time(data.client_time));db.add(item);db.flush();row.note=text;row.last_changed_by_id=user.id;row.last_changed_at=item.created_at or utc_now();audit(db,user,"create","row_note",item.id,f"row:{row.id}");db.commit();await realtime.send("row.note",{"id":row.id});return {"id":item.id}
 
 @app.get("/api/rows/{row_id}/bom")
 def row_bom(row_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
@@ -872,21 +911,39 @@ async def update_rfi(rfi_id:int,data:RFIUpdate,db:Session=Depends(get_db),user=D
     item.resolved_at=(item.resolved_at or utc_now()) if item.status=="zamknięty" else None
     audit(db,user,"update","rfi",item.id,item.status);db.commit();await realtime.send("rfi.changed",{"id":item.id});return {"ok":True}
 
+PHOTO_ENTITIES={"row":ConstructionRow,"rfi":RFI,"worklog":WorkLog}
+
+@app.post("/api/{entity_type}/by-client/{parent_client_id}/photos")
+async def upload_photo_by_client(entity_type:str,parent_client_id:str,file:UploadFile=File(...),client_id:str|None=Form(None),client_time:datetime|None=Form(None),db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    """Zdjęcie do meldunku lub RFI utworzonego offline — rodzic jest wskazany przez swój client_id."""
+    if entity_type not in ("rfi","worklog"):raise HTTPException(400,"Po client_id można wskazać tylko meldunek lub RFI")
+    model=PHOTO_ENTITIES[entity_type]
+    entity=db.scalar(select(model).where(model.client_id==parent_client_id))
+    if not entity:raise HTTPException(404,"Nie znaleziono meldunku/RFI — najpierw zsynchronizuj wpis")
+    return await store_photo(entity_type,entity,file,client_id,client_time,db,user)
+
 @app.post("/api/{entity_type}/{entity_id}/photos")
-async def upload_photo(entity_type:str,entity_id:int,file:UploadFile=File(...),db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
-    entity_models={"row":ConstructionRow,"rfi":RFI,"worklog":WorkLog}
-    if entity_type not in entity_models:raise HTTPException(400,"Zdjęcie można przypisać do rzędu, RFI lub meldunku")
-    entity=db.get(entity_models[entity_type],entity_id)
+async def upload_photo(entity_type:str,entity_id:int,file:UploadFile=File(...),client_id:str|None=Form(None),client_time:datetime|None=Form(None),db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    if entity_type not in PHOTO_ENTITIES:raise HTTPException(400,"Zdjęcie można przypisać do rzędu, RFI lub meldunku")
+    entity=db.get(PHOTO_ENTITIES[entity_type],entity_id)
     if not entity:raise HTTPException(404,"Nie znaleziono wskazanego obiektu")
+    return await store_photo(entity_type,entity,file,client_id,client_time,db,user)
+
+async def store_photo(entity_type,entity,file,client_id,client_time,db,user):
+    if client_id:
+        if len(client_id)>80:raise HTTPException(400,"Nieprawidłowy client_id")
+        existing=db.scalar(select(Attachment).where(Attachment.client_id==client_id))
+        if existing:return {"id":existing.id,"deduplicated":True}
     if file.size is not None and file.size>MAX_PHOTO_SIZE:raise HTTPException(413,"Zdjęcie przekracza limit 25 MB")
     mime=(file.content_type or "application/octet-stream").lower()
     # Tylko formaty rastrowe: SVG mógłby zawierać skrypt wykonywany przy otwarciu z tego samego origin.
     if mime not in ALLOWED_PHOTO_MIME:raise HTTPException(400,"Dozwolone zdjęcia: JPG, PNG, WEBP, GIF, HEIC")
     content=await upload_bytes(file,MAX_PHOTO_SIZE)
     extension=Path(file.filename or ".jpg").suffix.lower() or ".jpg";stored=f"db-{uuid.uuid4().hex}{extension}"
-    item=Attachment(entity_type=entity_type,entity_id=entity_id,filename=Path(file.filename or "zdjecie.jpg").name,stored_name=stored,mime_type=mime,content_blob=content,uploaded_by_id=user.id);db.add(item)
-    if entity_type=="row":entity.last_changed_by_id=user.id;entity.last_changed_at=utc_now()
-    db.commit();await realtime.send(f"{entity_type}.photo",{"id":entity_id});return {"id":item.id}
+    when=effective_time(client_time)
+    item=Attachment(client_id=client_id,entity_type=entity_type,entity_id=entity.id,filename=Path(file.filename or "zdjecie.jpg").name,stored_name=stored,mime_type=mime,content_blob=content,uploaded_by_id=user.id,created_at=when);db.add(item)
+    if entity_type=="row":entity.last_changed_by_id=user.id;entity.last_changed_at=max(when,entity.last_changed_at or when)
+    db.commit();await realtime.send(f"{entity_type}.photo",{"id":entity.id});return {"id":item.id}
 
 @app.get("/api/{entity_type}/{entity_id}/photos")
 def photos(entity_type:str,entity_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
@@ -1053,7 +1110,7 @@ if FRONTEND.exists():
         target=FRONTEND/full_path
         if full_path.startswith("api/"):raise HTTPException(404,"Nie znaleziono")
         if full_path and target.is_file() and FRONTEND.resolve() in target.resolve().parents:
-            headers={"Cache-Control":"no-cache"} if full_path in ("sw.js","manifest.webmanifest") else None
+            headers={"Cache-Control":"no-cache"} if full_path in ("sw.js","manifest.json","index.html") else None
             return FileResponse(target,headers=headers)
         # Brakujący plik statyczny (np. .js) dostaje 404, nigdy index.html zamiast skryptu.
         if Path(full_path).suffix:raise HTTPException(404,"Brak pliku")
