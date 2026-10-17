@@ -85,6 +85,8 @@ class ConstructionRow(Base):
     length_m: Mapped[float] = mapped_column(Float, default=0)
     specification: Mapped[str] = mapped_column(Text, default="")
     material_quantities_json: Mapped[str] = mapped_column(Text, default="{}")
+    # Ręczne korekty BOM pojedynczego rzędu: {klucz komponentu: ilość}. Wartości źródłowe pozostają w eset-bom.json.
+    bom_overrides_json: Mapped[str] = mapped_column(Text, default="{}")
     auto_generated: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     variant_ordinal: Mapped[int] = mapped_column(Integer, default=0)

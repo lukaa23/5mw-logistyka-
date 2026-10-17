@@ -1,12 +1,100 @@
-const CACHE = "asolar-eset-shell-v45";
-const SHELL = ["/", "/manifest.webmanifest", "/icon.svg"];
-self.addEventListener("install", event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting())));
-self.addEventListener("activate", event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));
-self.addEventListener("fetch", event => {
-  if (event.request.method !== "GET" || new URL(event.request.url).pathname.startsWith("/api/")) return;
-  event.respondWith(fetch(event.request).then(response => {
-    const copy = response.clone();
-    caches.open(CACHE).then(cache => cache.put(event.request, copy));
+/* ASOLAR ESET Tracker Manager — service worker.
+ *
+ * Zasady:
+ * - obsługujemy wyłącznie GET przez http/https do własnego origin;
+ * - nie dotykamy API, WebSocket, żądań Range, rozszerzeń przeglądarki ani blob:;
+ * - do cache trafiają tylko pełne odpowiedzi 200 typu "basic";
+ * - błąd Cache API nigdy nie blokuje poprawnej odpowiedzi sieciowej;
+ * - fallback do index.html wyłącznie dla nawigacji.
+ */
+const CACHE_PREFIX = "asolar-";
+const CACHE_NAME = "asolar-eset-shell-v4.5.1";
+const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];
+
+function shouldHandle(request) {
+  if (!request || request.method !== "GET") return false;
+  let url;
+  try { url = new URL(request.url); } catch { return false; }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  if (url.origin !== self.location.origin) return false;
+  if (url.pathname === "/api" || url.pathname.startsWith("/api/")) return false;
+  if (url.pathname === "/ws" || url.pathname.startsWith("/ws/")) return false;
+  const headers = request.headers;
+  if (headers && typeof headers.get === "function") {
+    if (headers.get("range")) return false;
+    if ((headers.get("upgrade") || "").toLowerCase() === "websocket") return false;
+  }
+  return true;
+}
+
+function isCacheableResponse(response) {
+  return !!response && response.status === 200 && response.ok && !["opaque", "opaqueredirect", "error"].includes(response.type);
+}
+
+async function safeCachePut(request, response) {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(request, response);
+  } catch (error) {
+    // Cache jest tylko przyspieszeniem — awaria nie może przerwać działania aplikacji.
+    console.warn("[ASOLAR SW] Nie zapisano odpowiedzi w cache", error);
+  }
+}
+
+async function safeMatch(request) {
+  try { return await caches.match(request); } catch { return undefined; }
+}
+
+async function precache() {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    await Promise.all(SHELL.map(path => cache.add(path).catch(() => undefined)));
+  } catch (error) {
+    console.warn("[ASOLAR SW] Nie przygotowano cache powłoki", error);
+  }
+}
+
+async function cleanup() {
+  try {
+    const keys = await caches.keys();
+    await Promise.all(keys
+      .filter(key => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
+      .map(key => caches.delete(key).catch(() => false)));
+  } catch (error) {
+    console.warn("[ASOLAR SW] Nie usunięto starych wersji cache", error);
+  }
+}
+
+async function handleFetch(event) {
+  const request = event.request;
+  try {
+    const response = await fetch(request);
+    if (isCacheableResponse(response)) {
+      let copy = null;
+      try { copy = response.clone(); } catch { copy = null; }
+      if (copy) event.waitUntil(safeCachePut(request, copy));
+    }
     return response;
-  }).catch(() => caches.match(event.request).then(hit => hit || caches.match("/"))));
+  } catch (networkError) {
+    const hit = await safeMatch(request);
+    if (hit) return hit;
+    if (request.mode === "navigate") {
+      const shell = (await safeMatch("/index.html")) || (await safeMatch("/"));
+      if (shell) return shell;
+    }
+    return Response.error();
+  }
+}
+
+self.addEventListener("install", event => {
+  event.waitUntil(precache().then(() => self.skipWaiting()));
+});
+
+self.addEventListener("activate", event => {
+  event.waitUntil(cleanup().then(() => self.clients.claim()));
+});
+
+self.addEventListener("fetch", event => {
+  if (!shouldHandle(event.request)) return;
+  event.respondWith(handleFetch(event));
 });

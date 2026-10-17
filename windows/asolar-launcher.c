@@ -1,9 +1,32 @@
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <shellapi.h>
 #include <string.h>
 #include <wchar.h>
 
 #define BUFFER_SIZE 32768
+#define ASOLAR_PORT 8765
+
+/* Zwraca 1, gdy na 127.0.0.1:ASOLAR_PORT coś już nasłuchuje (np. starsza instancja programu). */
+static int port_in_use(unsigned short port) {
+    WSADATA data;
+    SOCKET probe;
+    struct sockaddr_in address;
+    int busy = 0;
+    if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return 0;
+    probe = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (probe != INVALID_SOCKET) {
+        memset(&address, 0, sizeof(address));
+        address.sin_family = AF_INET;
+        address.sin_port = htons(port);
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        busy = connect(probe, (struct sockaddr *)&address, sizeof(address)) == 0;
+        closesocket(probe);
+    }
+    WSACleanup();
+    return busy;
+}
 
 static int run_and_wait(const wchar_t *command, DWORD flags, DWORD *exit_code) {
     STARTUPINFOW startup = {0};
@@ -97,6 +120,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR arguments, int
     if (cloud_client > 0) return 0;
     if (cloud_client < 0) return 6;
 
+    if (port_in_use(ASOLAR_PORT)) {
+        show_error(L"Port 8765 jest już zajęty — prawdopodobnie działa wcześniejsza instancja ASOLAR lub inny program.
+
+Zamknij poprzednie okno ASOLAR (czarne okno konsoli) i uruchom ASOLAR.exe ponownie. Program nie otworzy starej instancji, aby nie pracować na nieaktualnej wersji.");
+        return 7;
+    }
     if (!run_and_wait(L"py -3.11 --version", CREATE_NO_WINDOW, &exit_code) || exit_code != 0) {
         show_error(L"Nie znaleziono Pythona 3.11. Zainstaluj Python 3.11 z python.org razem z programem Python Launcher (py), a następnie ponownie uruchom ASOLAR.exe.");
         return 2;

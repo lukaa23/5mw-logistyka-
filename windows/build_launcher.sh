@@ -9,6 +9,6 @@ x86_64-w64-mingw32-windres windows/asolar-launcher.rc -O coff -o windows/asolar-
 x86_64-w64-mingw32-gcc \
   -municode -mwindows -Os -s \
   windows/asolar-launcher.c windows/asolar-launcher.res \
-  -lshell32 -o ASOLAR.exe
+  -lshell32 -lws2_32 -o ASOLAR.exe
 
 file ASOLAR.exe

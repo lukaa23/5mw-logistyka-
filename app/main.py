@@ -1,5 +1,6 @@
 import hashlib, json, math, mimetypes, os, shutil, uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
@@ -14,10 +15,12 @@ from .auth import create_token, current_user, decode_token, hash_password, roles
 from .database import Base, DATABASE_URL, SessionLocal, UPLOAD_DIR, engine, get_db
 from .migrations import ensure_schema_columns
 from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, MaterialTemplate, Project, ProjectMaterial, ProjectVariantConfig, RFI, RowNote, RowType, RowTypeComponent, Section, SiteDelivery, SiteDeliveryItem, User, WorkLog, Zone, ZoneVariantConfig
+from .services.parser import inspect_upload
 from .services.report import daily_report
 from .services.source_basis import SOURCE_DIR, build_eset_demand, load_eset_bom, load_source_manifest, sha256_file, source_analysis, source_entry_by_hash
 
-app=FastAPI(title="ASOLAR ESET Tracker Manager",version="4.5.0")
+APP_VERSION="4.5.1"
+app=FastAPI(title="ASOLAR ESET Tracker Manager",version=APP_VERSION)
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024
 MAX_PHOTO_SIZE=25*1024*1024
@@ -48,8 +51,10 @@ class RowIn(BaseModel): section_id:int; code:str; template_id:int|None=None; var
 class RowUpdate(BaseModel): code:str|None=None; template_id:int|None=None; variant_name:str|None=None; length_m:float|None=None; specification:str|None=None; material_quantities:dict[str,float]|None=None; built:bool|None=None; qc_checked:bool|None=None; note:str|None=None
 class RowNoteIn(BaseModel): text:str=Field(min_length=1,max_length=5000); client_id:str|None=None
 class RowMoveIn(BaseModel): direction:str
-class RFIIn(BaseModel): project_id:int; row_id:int|None=None; title:str; description:str; priority:str="normalny"; client_id:str|None=None
-class RFIUpdate(BaseModel): status:str|None=None; assigned_to_id:int|None=None; priority:str|None=None
+RFI_PRIORITIES=("niski","normalny","wysoki","krytyczny")
+RFI_STATUSES=("otwarty","w analizie","zamknięty")
+class RFIIn(BaseModel): project_id:int; row_id:int|None=None; title:str=Field(min_length=1,max_length=180); description:str=Field(min_length=1); priority:Literal["niski","normalny","wysoki","krytyczny"]="normalny"; assigned_to_id:int|None=None; client_id:str|None=None
+class RFIUpdate(BaseModel): status:Literal["otwarty","w analizie","zamknięty"]|None=None; assigned_to_id:int|None=None; priority:Literal["niski","normalny","wysoki","krytyczny"]|None=None
 class WorkLogIn(BaseModel): project_id:int; work_date:date=Field(default_factory=date.today); team:str; stage:str; people:int=Field(ge=1,le=1000); hours:float=Field(gt=0,le=24,default=8); rows_completed:float=Field(ge=0); qc_notes:str=""; note:str=""; row_id:int|None=None; client_id:str|None=None
 class WorkLogUpdate(BaseModel): work_date:date|None=None; team:str|None=None; stage:str|None=None; people:int|None=Field(default=None,ge=1,le=1000); hours:float|None=Field(default=None,gt=0,le=24); rows_completed:float|None=Field(default=None,ge=0); qc_notes:str|None=None; note:str|None=None; row_id:int|None=None
 class DeliveryItemIn(BaseModel): material_id:int; quantity_received:float=Field(gt=0); quantity_damaged:float=Field(ge=0,default=0)
@@ -61,6 +66,8 @@ class MaterialListIn(BaseModel): items:list[MaterialIn]=Field(min_length=3,max_l
 class TemplateIn(BaseModel): project_id:int; name:str=Field(min_length=1,max_length=120); structure_type:str=""; default_length_m:float=Field(ge=0,le=1000); specification:str=""; materials:dict[str,float]=Field(default_factory=dict)
 class TemplateUpdate(BaseModel): name:str|None=None; structure_type:str|None=None; default_length_m:float|None=None; specification:str|None=None; materials:dict[str,float]|None=None
 class CalculatorIn(BaseModel): project_id:int; template_id:int|None=None; variant_name:str=""; length_m:float=Field(ge=0,le=1000); row_count:int=Field(ge=1,le=5000); materials:dict[str,float]|None=None
+class UserUpdate(BaseModel): full_name:str|None=Field(default=None,min_length=2,max_length=150); role:Literal["kierownik","brygadzista"]|None=None; active:bool|None=None; password:str|None=Field(default=None,min_length=8,max_length=200)
+class RowBomOverridesIn(BaseModel): overrides:dict[str,float|None]=Field(default_factory=dict)
 class VariantCountIn(BaseModel): variant_code:str; row_count:int=Field(ge=0,le=5000)
 class VariantConfigurationIn(BaseModel): items:list[VariantCountIn]=Field(min_length=7,max_length=7)
 
@@ -70,7 +77,7 @@ def audit(db,user,action,entity_type,entity_id=None,details=""):
 def user_dict(user): return {"id":user.id,"username":user.username,"full_name":user.full_name,"role":user.role,"active":user.active}
 def project_dict(project): return {"id":project.id,"name":project.name,"location":project.location,"capacity_mw":project.capacity_mw,"structure_type":project.structure_type,"archived":project.archived,"archived_at":project.archived_at}
 def row_dict(row):
-    return {"id":row.id,"code":row.code,"section_id":row.section_id,"template_id":row.template_id,"variant_name":row.variant_name,"variant_ordinal":row.variant_ordinal,"sort_order":row.sort_order,"auto_generated":row.auto_generated,"active":row.active,"length_m":row.length_m,"specification":row.specification,"material_quantities":json.loads(row.material_quantities_json or "{}"),"built":row.built,"built_by":row.built_by.full_name if row.built_by else None,"built_at":row.built_at,"qc_checked":row.qc_checked,"qc_by":row.qc_by.full_name if row.qc_by else None,"qc_at":row.qc_at,"note":row.note,"last_changed_by":row.last_changed_by.full_name if row.last_changed_by else None,"last_changed_at":row.last_changed_at}
+    return {"id":row.id,"code":row.code,"section_id":row.section_id,"template_id":row.template_id,"variant_name":row.variant_name,"variant_ordinal":row.variant_ordinal,"sort_order":row.sort_order,"auto_generated":row.auto_generated,"active":row.active,"length_m":row.length_m,"specification":row.specification,"material_quantities":json.loads(row.material_quantities_json or "{}"),"built":row.built,"built_by":row.built_by.full_name if row.built_by else None,"built_at":row.built_at,"qc_checked":row.qc_checked,"qc_by":row.qc_by.full_name if row.qc_by else None,"qc_at":row.qc_at,"note":row.note,"last_changed_by":row.last_changed_by.full_name if row.last_changed_by else None,"last_changed_at":row.last_changed_at,"bom_overrides":row_overrides(row)}
 
 class Realtime:
     def __init__(self): self.clients=[]
@@ -110,6 +117,59 @@ def bom_catalogue():
     module=SOURCE_MANIFEST["module"]
     catalogue[MODULE_COMPONENT_SKU]={"key":MODULE_COMPONENT_SKU,"name":f'Moduł PV {module["model"]}',"category":"Moduły PV","unit":"szt.","spec":f'{module["dimensions_mm"]}; {module["power_min_w"]}–{module["power_max_w"]} W; {module["weight_kg"]} kg',"source":module["source"],"torque_min_nm":None,"torque_max_nm":None}
     return catalogue
+
+BOM_CATEGORY_ORDER={name:index for index,name in enumerate(["Słupy","Napęd i łożyska","Rury torsyjne","Płatwie","Amortyzatory","Sterowanie","Śruby i zestawy"])}
+OVERRIDE_POLICY="Wartości źródłowe pochodzą z zatwierdzonego BOM. Korekta rzędu jest zapisywana osobno, oznaczana jako nadpisana i doliczana do zapotrzebowania jako różnica względem wartości źródłowej."
+
+def row_overrides(row):
+    try:data=json.loads(row.bom_overrides_json or "{}")
+    except (TypeError,ValueError):return {}
+    if not isinstance(data,dict):return {}
+    return {str(key):float(value) for key,value in data.items() if isinstance(value,(int,float)) and not isinstance(value,bool) and value>=0}
+
+@lru_cache(maxsize=16)
+def _source_per_row(code):
+    variant=next((item for item in build_eset_demand({code:1})["variants"] if item["code"]==code),None)
+    return tuple((item["key"],item["quantity_per_row"]) for item in variant["per_row"]) if variant else ()
+
+def source_per_row(code):
+    return dict(_source_per_row(code)) if code in ESET_VARIANT_CODES else {}
+
+def row_bom_payload(row):
+    catalogue=load_eset_bom()["components"];source=source_per_row(row.variant_name);overrides=row_overrides(row)
+    items=[]
+    for key in list(source)+[key for key in overrides if key not in source]:
+        definition=catalogue.get(key)
+        if not definition:continue
+        source_quantity=source.get(key,0);override=overrides.get(key)
+        items.append({"key":key,**definition,"source_quantity":source_quantity,"override_quantity":override,"quantity":override if override is not None else source_quantity,"overridden":override is not None and override!=source_quantity,"torque_confirmed":definition.get("torque_min_nm") is not None})
+    items.sort(key=lambda item:(BOM_CATEGORY_ORDER.get(item["category"],99),item["name"],item["spec"]))
+    return {"row_id":row.id,"variant":row.variant_name,"specification":row.specification,"source_specification":f"Tracker ESET {row.variant_name}" if row.variant_name in ESET_VARIANT_CODES else "",
+            "items":items,"overrides_count":sum(item["overridden"] for item in items),"policy":OVERRIDE_POLICY}
+
+def apply_row_overrides(demand,rows):
+    """Dolicza ręczne korekty aktywnych rzędów jako różnice względem BOM źródłowego."""
+    for item in demand["grand_total"]:item["source_quantity_total"]=item["quantity_total"];item["override_delta"]=0
+    deltas={};changed_rows=0
+    for row in rows:
+        source=source_per_row(row.variant_name);changed=False
+        for key,value in row_overrides(row).items():
+            delta=value-source.get(key,0)
+            if delta:deltas[key]=deltas.get(key,0)+delta;changed=True
+        changed_rows+=changed
+    catalogue=load_eset_bom()["components"];by_key={item["key"]:item for item in demand["grand_total"]}
+    for key,delta in deltas.items():
+        if key not in catalogue:continue
+        item=by_key.get(key)
+        if not item:
+            item={"key":key,**catalogue[key],"quantity_total":0,"source_quantity_total":0,"override_delta":0};demand["grand_total"].append(item);by_key[key]=item
+        item["override_delta"]+=delta;item["quantity_total"]=max(0,item["source_quantity_total"]+item["override_delta"])
+    demand["grand_total"].sort(key=lambda item:(BOM_CATEGORY_ORDER.get(item["category"],99),item["name"],item["spec"]))
+    demand["overrides"]={"rows":changed_rows,"items":len(deltas),"policy":OVERRIDE_POLICY}
+    return demand
+
+def overridden_rows(db,*conditions):
+    return db.scalars(select(ConstructionRow).join(Section).join(Zone).where(ConstructionRow.auto_generated==True,ConstructionRow.active==True,ConstructionRow.bom_overrides_json.not_in(["","{}"]),*conditions)).all()
 
 def ensure_variant_config(db,project_id):
     current={item.variant_code for item in db.scalars(select(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id))}
@@ -186,7 +246,7 @@ def project_demand(db,project_id):
         for code,count in db.execute(select(ZoneVariantConfig.variant_code,func.sum(ZoneVariantConfig.row_count)).join(Zone).where(Zone.project_id==project_id).group_by(ZoneVariantConfig.variant_code)):values[code]=int(count or 0)
     else:
         ensure_variant_config(db,project_id);db.flush();values={item.variant_code:item.row_count for item in db.scalars(select(ProjectVariantConfig).where(ProjectVariantConfig.project_id==project_id))}
-    return build_eset_demand(values)
+    return apply_row_overrides(build_eset_demand(values),overridden_rows(db,Zone.project_id==project_id) if zones else [])
 
 def validate_variant_configuration(items):
     codes=[item.variant_code for item in items]
@@ -194,7 +254,7 @@ def validate_variant_configuration(items):
         raise HTTPException(400,"Konfiguracja musi zawierać dokładnie siedem zatwierdzonych wariantów ESET")
 
 def zone_demand_payload(db,zone):
-    demand=build_eset_demand(zone_variant_values(db,zone.id))
+    demand=apply_row_overrides(build_eset_demand(zone_variant_values(db,zone.id)),overridden_rows(db,Section.zone_id==zone.id))
     total,built,qc=db.execute(select(func.count(ConstructionRow.id),func.sum(func.cast(ConstructionRow.built,Integer)),func.sum(func.cast(ConstructionRow.qc_checked,Integer))).join(Section).where(Section.zone_id==zone.id,ConstructionRow.auto_generated==True,ConstructionRow.active==True)).one()
     return {"id":zone.id,"project_id":zone.project_id,"name":zone.name,"stats":{"total":int(total or 0),"built":int(built or 0),"qc":int(qc or 0)},"demand":demand}
 
@@ -232,35 +292,47 @@ def seed_source_documents(db,project_id,user_id):
         else:
             db.add(Document(project_id=project_id,filename=entry["filename"],stored_name=stored,kind=document_kind,size=target.stat().st_size,status="zatwierdzone źródło",extracted_text="",analysis_json=json.dumps(analysis,ensure_ascii=False),uploaded_by_id=user_id))
 
+LOCAL_DEFAULT_PASSWORDS={"ASOLAR_MANAGER_PASSWORD":"Asolar2026!","ASOLAR_FOREMAN1_PASSWORD":"Brygada1-2026!","ASOLAR_FOREMAN2_PASSWORD":"Brygada2-2026!"}
+
+def server_mode():
+    return DATABASE_URL.startswith("postgresql") or os.getenv("ASOLAR_REQUIRE_PASSWORDS")=="1"
+
+def startup_password(name):
+    value=os.getenv(name,"")
+    if value:return value
+    if server_mode():raise RuntimeError(f"Brak zmiennej {name}. Wdrożenie serwerowe wymaga własnego hasła startowego dla nowego konta.")
+    return LOCAL_DEFAULT_PASSWORDS[name]
+
 def seed():
     Base.metadata.create_all(engine)
     ensure_schema_columns(engine)
     with SessionLocal() as db:
-        manager_password=os.getenv("ASOLAR_MANAGER_PASSWORD","Asolar2026!")
-        foreman1_password=os.getenv("ASOLAR_FOREMAN1_PASSWORD","Brygada1-2026!")
-        foreman2_password=os.getenv("ASOLAR_FOREMAN2_PASSWORD","Brygada2-2026!")
+        # Hasła są odczytywane tylko przy tworzeniu brakującego konta — istniejące konta nie są resetowane.
+        manager_password=lambda:startup_password("ASOLAR_MANAGER_PASSWORD")
+        foreman1_password=lambda:startup_password("ASOLAR_FOREMAN1_PASSWORD")
+        foreman2_password=lambda:startup_password("ASOLAR_FOREMAN2_PASSWORD")
         if not db.scalar(select(func.count(User.id))):
             db.add_all([
-                User(username="kierownik",full_name="Kierownik Budowy",role="kierownik",password_hash=hash_password(manager_password)),
-                User(username="brygadzista1",full_name="Brygadzista 1",role="brygadzista",password_hash=hash_password(foreman1_password)),
-                User(username="brygadzista2",full_name="Brygadzista 2",role="brygadzista",password_hash=hash_password(foreman2_password))])
+                User(username="kierownik",full_name="Kierownik Budowy",role="kierownik",password_hash=hash_password(manager_password())),
+                User(username="brygadzista1",full_name="Brygadzista 1",role="brygadzista",password_hash=hash_password(foreman1_password())),
+                User(username="brygadzista2",full_name="Brygadzista 2",role="brygadzista",password_hash=hash_password(foreman2_password()))])
         else:
             legacy=db.scalar(select(User).where(User.username=="brygadzista"))
             foreman1=db.scalar(select(User).where(User.username=="brygadzista1"))
             if legacy and not foreman1:
-                legacy.username="brygadzista1";legacy.full_name="Brygadzista 1";legacy.role="brygadzista";legacy.password_hash=hash_password(foreman1_password)
+                legacy.username="brygadzista1";legacy.full_name="Brygadzista 1";legacy.role="brygadzista";legacy.password_hash=hash_password(foreman1_password())
                 foreman1=legacy
             warehouse=db.scalar(select(User).where(User.username=="magazynier"))
             foreman2=db.scalar(select(User).where(User.username=="brygadzista2"))
             if warehouse and not foreman2:
-                warehouse.username="brygadzista2";warehouse.full_name="Brygadzista 2";warehouse.role="brygadzista";warehouse.password_hash=hash_password(foreman2_password)
+                warehouse.username="brygadzista2";warehouse.full_name="Brygadzista 2";warehouse.role="brygadzista";warehouse.password_hash=hash_password(foreman2_password())
                 foreman2=warehouse
             if not foreman1:
-                db.add(User(username="brygadzista1",full_name="Brygadzista 1",role="brygadzista",password_hash=hash_password(foreman1_password)))
+                db.add(User(username="brygadzista1",full_name="Brygadzista 1",role="brygadzista",password_hash=hash_password(foreman1_password())))
             if not foreman2:
-                db.add(User(username="brygadzista2",full_name="Brygadzista 2",role="brygadzista",password_hash=hash_password(foreman2_password)))
+                db.add(User(username="brygadzista2",full_name="Brygadzista 2",role="brygadzista",password_hash=hash_password(foreman2_password())))
             if not db.scalar(select(User).where(User.username=="kierownik")):
-                db.add(User(username="kierownik",full_name="Kierownik Budowy",role="kierownik",password_hash=hash_password(manager_password)))
+                db.add(User(username="kierownik",full_name="Kierownik Budowy",role="kierownik",password_hash=hash_password(manager_password())))
         db.flush();manager=db.scalar(select(User).where(User.username=="kierownik"))
         project=db.scalar(select(Project).limit(1))
         if not project:
@@ -282,12 +354,13 @@ def seed():
 seed()
 
 @app.get("/api/health")
-def health(): return {"status":"ok","version":"4.5.0","database":"postgresql" if DATABASE_URL.startswith("postgresql") else "sqlite","file_storage":"database","realtime":"websocket","time":utc_now()}
+def health(): return {"status":"ok","version":APP_VERSION,"database":"postgresql" if DATABASE_URL.startswith("postgresql") else "sqlite","file_storage":"database","realtime":"websocket","time":utc_now()}
 
 @app.post("/api/auth/login")
 def login(data:LoginIn,db:Session=Depends(get_db)):
     user=db.scalar(select(User).where(User.username==data.username))
     if not user or not verify_password(data.password,user.password_hash): raise HTTPException(401,"Nieprawidłowy login lub hasło")
+    if not user.active: raise HTTPException(403,"Konto zostało dezaktywowane przez kierownika")
     return {"token":create_token(user),"user":user_dict(user)}
 
 @app.get("/api/auth/me")
@@ -300,6 +373,21 @@ def users(db:Session=Depends(get_db),user=Depends(roles("kierownik"))): return [
 async def create_user(data:UserIn,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
     if db.scalar(select(User).where(User.username==data.username)): raise HTTPException(409,"Login już istnieje")
     item=User(username=data.username.strip(),full_name=data.full_name.strip(),role=data.role,password_hash=hash_password(data.password));db.add(item);db.commit();await realtime.send("user.changed",{"id":item.id});return user_dict(item)
+
+@app.patch("/api/users/{user_id}")
+async def update_user(user_id:int,data:UserUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    item=db.get(User,user_id)
+    if not item:raise HTTPException(404,"Brak użytkownika")
+    if item.id==user.id and (data.active is False or (data.role and data.role!="kierownik")):raise HTTPException(400,"Nie można odebrać uprawnień własnemu kontu")
+    if data.full_name is not None:item.full_name=data.full_name.strip()
+    if data.role is not None:item.role=data.role
+    if data.active is not None:item.active=data.active
+    if data.password:item.password_hash=hash_password(data.password)
+    audit(db,user,"update","user",item.id,json.dumps(data.model_dump(exclude_none=True,exclude={"password"}),ensure_ascii=False));db.commit();await realtime.send("user.changed",{"id":item.id});return user_dict(item)
+
+@app.get("/api/team")
+def team(db:Session=Depends(get_db),user=Depends(current_user)):
+    return [{"id":x.id,"full_name":x.full_name,"role":x.role} for x in db.scalars(select(User).where(User.active==True).order_by(User.full_name))]
 
 @app.get("/api/projects")
 def projects(include_archived:bool=False,db:Session=Depends(get_db),user=Depends(current_user)):
@@ -324,6 +412,7 @@ async def update_project(project_id:int,data:ProjectUpdate,db:Session=Depends(ge
 async def delete_project(project_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
     item=db.get(Project,project_id)
     if not item:raise HTTPException(404,"Brak projektu")
+    if not item.archived:raise HTTPException(409,"Przed usunięciem zarchiwizuj projekt. Usunięcie jest nieodwracalne.")
     row_ids=list(db.scalars(select(ConstructionRow.id).join(Section).join(Zone).where(Zone.project_id==project_id)))
     rfi_ids=list(db.scalars(select(RFI.id).where(RFI.project_id==project_id)))
     log_ids=list(db.scalars(select(WorkLog.id).where(WorkLog.project_id==project_id)))
@@ -423,6 +512,26 @@ async def create_row_note(row_id:int,data:RowNoteIn,db:Session=Depends(get_db),u
     text=data.text.strip()
     if not text:raise HTTPException(400,"Treść notatki jest wymagana")
     item=RowNote(client_id=data.client_id,row_id=row.id,text=text,author_id=user.id);db.add(item);db.flush();row.note=text;row.last_changed_by_id=user.id;row.last_changed_at=item.created_at or utc_now();audit(db,user,"create","row_note",item.id,f"row:{row.id}");db.commit();await realtime.send("row.note",{"id":row.id});return {"id":item.id}
+
+@app.get("/api/rows/{row_id}/bom")
+def row_bom(row_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+    row=db.get(ConstructionRow,row_id)
+    if not row:raise HTTPException(404,"Brak rzędu")
+    return row_bom_payload(row)
+
+@app.put("/api/rows/{row_id}/bom-overrides")
+async def update_row_bom(row_id:int,data:RowBomOverridesIn,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    row=db.get(ConstructionRow,row_id)
+    if not row:raise HTTPException(404,"Brak rzędu")
+    catalogue=load_eset_bom()["components"];current=row_overrides(row);source=source_per_row(row.variant_name)
+    for key,value in data.overrides.items():
+        if key not in catalogue:raise HTTPException(400,f"Nieznany komponent BOM: {key}")
+        if value is None or (key in source and value==source[key]) or (key not in source and value==0):current.pop(key,None);continue
+        if value<0 or value>100000:raise HTTPException(400,"Ilość musi mieścić się w zakresie 0–100000")
+        current[key]=float(value)
+    row.bom_overrides_json=json.dumps(current,ensure_ascii=False,sort_keys=True);row.last_changed_by_id=user.id;row.last_changed_at=utc_now()
+    zone=db.get(Zone,db.get(Section,row.section_id).zone_id)
+    audit(db,user,"update","row_bom_overrides",row.id,row.bom_overrides_json);db.commit();await realtime.send("row.bom",{"id":row.id,"project_id":zone.project_id});return row_bom_payload(row)
 
 @app.delete("/api/rows/{row_id}")
 async def delete_row(row_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
@@ -611,7 +720,9 @@ async def move_operational_row(row_id:int,data:RowMoveIn,db:Session=Depends(get_
 
 def document_dict(item):
     analysis=json.loads(item.analysis_json or "{}")
-    return {"id":item.id,"filename":item.filename,"kind":item.kind,"size":item.size,"status":item.status,"approved_source":bool(analysis.get("approved_source")),"sha256":analysis.get("sha256"),"role":analysis.get("role"),"analysis":analysis,"uploaded_at":item.uploaded_at}
+    approved=bool(analysis.get("approved_source"))
+    processing=analysis.get("processing_status") or ("przeanalizowany" if approved else "zapisany")
+    return {"id":item.id,"filename":item.filename,"kind":item.kind,"size":item.size,"status":item.status,"approved_source":approved,"processing_status":processing,"approved_for_calculations":approved,"sha256":analysis.get("sha256"),"role":analysis.get("role"),"analysis":analysis,"uploaded_at":item.uploaded_at}
 
 @app.get("/api/documents")
 def documents(project_id:int|None=None,db:Session=Depends(get_db),user=Depends(current_user)):
@@ -632,9 +743,12 @@ async def upload_document(project_id:int=Form(...),file:UploadFile=File(...),db:
         existing=next((item for item in db.scalars(select(Document).where(Document.project_id==project_id)).all() if json.loads(item.analysis_json or "{}").get("sha256")==digest),None)
         if existing:
             return {"id":existing.id,"status":existing.status,"analysis":json.loads(existing.analysis_json or "{}"),"deduplicated":True}
-        result=source_analysis(source);status="zatwierdzone źródło";filename=source["filename"]
+        result=source_analysis(source);result["processing_status"]="przeanalizowany";result["approved_for_calculations"]=True;status="zatwierdzone źródło";filename=source["filename"]
     else:
-        result={"approved_source":False,"sha256":digest,"summary":{"source_policy":"plik pomocniczy"},"warnings":["Plik zapisano, ale nie należy do dziesięciu zatwierdzonych źródeł. Nie zmienia instrukcji ani bazy BOM."]};status="pomocniczy — poza bazą źródłową";filename=Path(file.filename or "dokument").name
+        result=inspect_upload(content,extension);result["sha256"]=digest
+        result["summary"]["source_policy"]="plik pomocniczy"
+        result["warnings"].insert(0,"Plik nie należy do zatwierdzonych źródeł. Nie zmienia instrukcji ani bazy BOM.")
+        status=result["processing_status"]+" — niezatwierdzony do obliczeń";filename=Path(file.filename or "dokument").name
     item=Document(project_id=project_id,filename=filename,stored_name=stored,kind=extension[1:].upper(),size=len(content),status=status,extracted_text="",analysis_json=json.dumps(result,ensure_ascii=False),content_blob=content,content_type=file.content_type or mimetypes.guess_type(filename)[0],uploaded_by_id=user.id)
     db.add(item);db.flush();audit(db,user,"upload","document",item.id,item.filename);db.commit();await realtime.send("document.changed",{"id":item.id});return {"id":item.id,"status":status,"analysis":result}
 
@@ -652,7 +766,13 @@ def document_file(document_id:int,db:Session=Depends(get_db),user=Depends(curren
 def planimetry(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
     if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
     items=db.scalars(select(Document).where(Document.project_id==project_id,Document.kind=="PLANIMETRIA").order_by(Document.uploaded_at.desc())).all();users={item.id:item.full_name for item in db.scalars(select(User)).all()}
-    return [{"id":item.id,"title":json.loads(item.analysis_json or "{}").get("title") or item.filename,"filename":item.filename,"size":item.size,"uploaded_at":item.uploaded_at,"uploaded_by":users.get(item.uploaded_by_id,"—"),"deletable":not bool(json.loads(item.analysis_json or "{}").get("approved_source")),"file_url":f"/api/documents/{item.id}/file"} for item in items]
+    result=[]
+    for item in items:
+        try:analysis=json.loads(item.analysis_json or "{}")
+        except ValueError:analysis={}
+        approved=bool(analysis.get("approved_source"))
+        result.append({"id":item.id,"title":(analysis.get("title") or "").strip() or item.filename or f"Plan #{item.id}","filename":item.filename,"size":item.size,"uploaded_at":item.uploaded_at,"uploaded_by":users.get(item.uploaded_by_id,"—"),"approved_source":approved,"deletable":not approved,"file_url":f"/api/documents/{item.id}/file"})
+    return result
 
 @app.post("/api/planimetry")
 async def upload_planimetry(project_id:int=Form(...),title:str=Form(""),file:UploadFile=File(...),db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
@@ -697,16 +817,17 @@ async def create_worklog(data:WorkLogIn,db:Session=Depends(get_db),user=Depends(
 def worklogs(project_id:int,work_date:date|None=None,db:Session=Depends(get_db),user=Depends(current_user)):
     q=select(WorkLog).where(WorkLog.project_id==project_id).order_by(WorkLog.work_date.desc(),WorkLog.created_at.desc())
     if work_date:q=q.where(WorkLog.work_date==work_date)
-    result=[]
+    result=[];users={item.id:item.full_name for item in db.scalars(select(User)).all()}
     for x in db.scalars(q).all():
         photos=db.scalar(select(func.count(Attachment.id)).where(Attachment.entity_type=="worklog",Attachment.entity_id==x.id)) or 0
-        result.append({"id":x.id,"work_date":x.work_date,"team":x.team,"stage":x.stage,"people":x.people,"hours":x.hours,"rows_completed":x.rows_completed,"manhours":x.people*x.hours,"qc_notes":x.qc_notes,"note":x.note,"row_id":x.row_id,"photos":photos})
+        result.append({"id":x.id,"work_date":x.work_date,"team":x.team,"stage":x.stage,"people":x.people,"hours":x.hours,"rows_completed":x.rows_completed,"manhours":x.people*x.hours,"qc_notes":x.qc_notes,"note":x.note,"row_id":x.row_id,"photos":photos,"author":users.get(x.author_id,"—"),"author_id":x.author_id,"created_at":x.created_at})
     return result
 
 @app.patch("/api/worklogs/{worklog_id}")
 async def update_worklog(worklog_id:int,data:WorkLogUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
     item=db.get(WorkLog,worklog_id)
     if not item:raise HTTPException(404,"Brak meldunku")
+    if user.role!="kierownik" and item.author_id!=user.id:raise HTTPException(403,"Brygadzista może edytować tylko własne meldunki")
     for key,value in data.model_dump(exclude_unset=True).items():setattr(item,key,value)
     db.commit();await realtime.send("worklog.changed",{"project_id":item.project_id});return {"ok":True}
 
@@ -722,24 +843,32 @@ async def create_rfi(data:RFIIn,db:Session=Depends(get_db),user=Depends(roles("k
     if data.client_id:
         existing=db.scalar(select(RFI).where(RFI.client_id==data.client_id))
         if existing:return {"id":existing.id,"deduplicated":True}
+    if not db.get(Project,data.project_id):raise HTTPException(404,"Brak projektu")
+    if data.row_id and not db.scalar(select(ConstructionRow.id).join(Section).join(Zone).where(ConstructionRow.id==data.row_id,Zone.project_id==data.project_id)):raise HTTPException(400,"Rząd nie należy do wybranego projektu")
+    if data.assigned_to_id and not db.get(User,data.assigned_to_id):raise HTTPException(400,"Nieznana osoba odpowiedzialna")
     item=RFI(**data.model_dump(),created_by_id=user.id);db.add(item);db.flush();audit(db,user,"create","rfi",item.id,item.title);db.commit();await realtime.send("rfi.changed",{"id":item.id});return {"id":item.id}
 
 @app.get("/api/rfis")
 def rfis(project_id:int,status:str|None=None,db:Session=Depends(get_db),user=Depends(current_user)):
     q=select(RFI).where(RFI.project_id==project_id).order_by(RFI.created_at.desc())
     if status:q=q.where(RFI.status==status)
-    result=[]
+    result=[];users={item.id:item.full_name for item in db.scalars(select(User)).all()}
     for x in db.scalars(q):
         photos=db.scalar(select(func.count(Attachment.id)).where(Attachment.entity_type=="rfi",Attachment.entity_id==x.id))
-        result.append({"id":x.id,"row_id":x.row_id,"title":x.title,"description":x.description,"priority":x.priority,"status":x.status,"created_at":x.created_at,"photos":photos})
+        row=db.get(ConstructionRow,x.row_id) if x.row_id else None
+        zone_name=db.scalar(select(Zone.name).join(Section).where(Section.id==row.section_id)) if row else None
+        result.append({"id":x.id,"row_id":x.row_id,"row_label":f"{zone_name} · rząd {row.code} ({row.variant_name})" if row else None,"title":x.title,"description":x.description,"priority":x.priority,"status":x.status,"created_at":x.created_at,"resolved_at":x.resolved_at,"created_by":users.get(x.created_by_id,"—"),"assigned_to_id":x.assigned_to_id,"assigned_to":users.get(x.assigned_to_id) if x.assigned_to_id else None,"photos":photos})
     return result
 
 @app.patch("/api/rfis/{rfi_id}")
 async def update_rfi(rfi_id:int,data:RFIUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
     item=db.get(RFI,rfi_id)
     if not item:raise HTTPException(404,"Brak RFI")
-    for key,value in data.model_dump(exclude_none=True).items():setattr(item,key,value)
-    if item.status=="zamknięty":item.resolved_at=utc_now()
+    values=data.model_dump(exclude_unset=True)
+    if values.get("assigned_to_id") and not db.get(User,values["assigned_to_id"]):raise HTTPException(400,"Nieznana osoba odpowiedzialna")
+    for key,value in values.items():
+        if value is not None or key=="assigned_to_id":setattr(item,key,value)
+    item.resolved_at=(item.resolved_at or utc_now()) if item.status=="zamknięty" else None
     audit(db,user,"update","rfi",item.id,item.status);db.commit();await realtime.send("rfi.changed",{"id":item.id});return {"ok":True}
 
 @app.post("/api/{entity_type}/{entity_id}/photos")
@@ -862,21 +991,45 @@ async def delete_bom_delivery(delivery_id:int,db:Session=Depends(get_db),user=De
     if not item:raise HTTPException(404,"Brak dostawy")
     project_id=item.project_id;audit(db,user,"delete","bom_delivery",item.id,item.wz_number);db.delete(item);db.commit();await realtime.send("bom-delivery.changed",{"project_id":project_id});return {"ok":True}
 
+FORECAST_MIN_DAYS=2
+
+def kpi_payload(db,project_id,today=None):
+    """KPI z rzeczywistych statusów rzędów oraz tempa z meldunków. Założenia prognozy są zwracane jawnie."""
+    today=today or date.today()
+    project_demand(db,project_id)
+    total,built,qc=db.execute(select(func.count(ConstructionRow.id),func.sum(func.cast(ConstructionRow.built,Integer)),func.sum(func.cast(ConstructionRow.qc_checked,Integer))).join(Section).join(Zone).where(Zone.project_id==project_id,ConstructionRow.active==True)).one()
+    total=int(total or 0);built=int(built or 0);qc=int(qc or 0);remaining=max(0,total-built)
+    open_rfi=db.scalar(select(func.count(RFI.id)).where(RFI.project_id==project_id,RFI.status!="zamknięty")) or 0
+    rows_done,manhours,days=db.execute(select(func.sum(WorkLog.rows_completed),func.sum(WorkLog.people*WorkLog.hours),func.count(func.distinct(WorkLog.work_date))).where(WorkLog.project_id==project_id)).one()
+    rows_done=float(rows_done or 0);manhours=float(manhours or 0);days=int(days or 0)
+    productivity=rows_done/manhours if manhours else 0;daily=rows_done/days if days else 0
+    forecast_days=None;forecast_date=None;forecast_status="brak danych"
+    if total and not remaining:forecast_status="zakończono montaż"
+    elif days>=FORECAST_MIN_DAYS and daily>0:
+        forecast_days=remaining/daily;forecast_date=(today+timedelta(days=math.ceil(forecast_days))).isoformat();forecast_status="szacunek"
+    elif days:forecast_status=f"za mało danych — potrzeba meldunków z co najmniej {FORECAST_MIN_DAYS} dni"
+    assumptions=[
+        "Postęp i odbiór QA/QC liczone są ze statusów rzędów oznaczonych w aplikacji.",
+        "Tempo montażu = suma rzędów zgłoszonych w meldunkach ÷ suma roboczogodzin (osoby × godziny).",
+        f"Prognoza dzieli liczbę pozostałych rzędów przez średnią liczbę rzędów z dni, w których złożono meldunek (obecnie {days} dni, {round(daily,2)} rz./dzień).",
+        "Każdy kolejny dzień kalendarzowy jest traktowany jako dzień roboczy z takim samym tempem — prognoza nie uwzględnia przerw, pogody, braków materiałowych ani zmian liczby brygad.",
+        f"Prognoza jest liczona dopiero po meldunkach z co najmniej {FORECAST_MIN_DAYS} różnych dni.",
+    ]
+    return {"rows_total":total,"rows_built":built,"rows_remaining":remaining,"rows_qc":qc,"completion_pct":round(100*built/total,1) if total else 0,"qc_pct":round(100*qc/total,1) if total else 0,
+            "open_rfi":int(open_rfi),"rows_reported":round(rows_done,2),"manhours":round(manhours,1),"report_days":days,"productivity":round(productivity,4),"daily_rate":round(daily,3),
+            "forecast_days":round(forecast_days,1) if forecast_days is not None else None,"forecast_date":forecast_date,"forecast_status":forecast_status,"forecast_assumptions":assumptions,"offline_supported":True}
+
 @app.get("/api/dashboard")
 def dashboard(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
-    legacy_total,built,qc=db.execute(select(func.count(ConstructionRow.id),func.sum(func.cast(ConstructionRow.built,Integer)),func.sum(func.cast(ConstructionRow.qc_checked,Integer))).join(Section).join(Zone).where(Zone.project_id==project_id,ConstructionRow.active==True)).one();legacy_total=legacy_total or 0;built=built or 0;qc=qc or 0
-    open_rfi=db.scalar(select(func.count(RFI.id)).where(RFI.project_id==project_id,RFI.status!="zamknięty")) or 0
-    rows_done,manhours,days=db.execute(select(func.sum(WorkLog.rows_completed),func.sum(WorkLog.people*WorkLog.hours),func.count(func.distinct(WorkLog.work_date))).where(WorkLog.project_id==project_id)).one();rows_done=rows_done or 0;manhours=manhours or 0;days=days or 0
-    configured_total=project_demand(db,project_id)["total_rows"];total=configured_total or legacy_total;built=min(total,max(float(built),float(rows_done))) if total else float(built)
-    productivity=rows_done/manhours if manhours else 0;daily=rows_done/days if days else 0;forecast=max(0,total-built)/daily if daily else None
-    db.commit();return {"rows_total":total,"rows_built":built,"rows_remaining":total-built,"rows_qc":qc,"completion_pct":round(100*built/total,1) if total else 0,"qc_pct":round(100*qc/total,1) if total else 0,"open_rfi":open_rfi,"manhours":round(manhours,1),"productivity":round(productivity,4),"forecast_days":round(forecast,1) if forecast is not None else None,"offline_supported":True}
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    result=kpi_payload(db,project_id);db.commit();return result
 
 @app.get("/api/reports/daily")
 def report(project_id:int,report_date:date|None=None,db:Session=Depends(get_db),user=Depends(current_user)):
     report_date=report_date or date.today()
     project=db.get(Project,project_id)
     if not project:raise HTTPException(404,"Brak projektu")
-    content=daily_report(db,project,report_date)
+    content=daily_report(db,project,report_date,kpi_payload(db,project_id,report_date));db.commit()
     return StreamingResponse(content,media_type="application/pdf",headers={"Content-Disposition":f'attachment; filename="raport-{report_date.isoformat()}.pdf"'})
 
 @app.websocket("/ws")
@@ -885,7 +1038,9 @@ async def websocket(ws:WebSocket,token:str):
     except HTTPException:await ws.close(code=4401);return
     await realtime.connect(ws)
     try:
-        while True:await ws.receive_text()
+        while True:
+            message=await ws.receive_text()
+            if message=="ping":await ws.send_text("pong")
     except WebSocketDisconnect:realtime.disconnect(ws)
 
 FRONTEND=Path(__file__).resolve().parent.parent/"frontend"/"dist"
@@ -894,5 +1049,10 @@ if FRONTEND.exists():
     @app.get("/{full_path:path}",include_in_schema=False)
     def spa(full_path:str):
         target=FRONTEND/full_path
-        if full_path and target.is_file():return FileResponse(target)
-        return FileResponse(FRONTEND/"index.html")
+        if full_path.startswith("api/"):raise HTTPException(404,"Nie znaleziono")
+        if full_path and target.is_file() and FRONTEND.resolve() in target.resolve().parents:
+            headers={"Cache-Control":"no-cache"} if full_path in ("sw.js","manifest.webmanifest") else None
+            return FileResponse(target,headers=headers)
+        # Brakujący plik statyczny (np. .js) dostaje 404, nigdy index.html zamiast skryptu.
+        if Path(full_path).suffix:raise HTTPException(404,"Brak pliku")
+        return FileResponse(FRONTEND/"index.html",headers={"Cache-Control":"no-cache"})

@@ -547,7 +547,7 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
 .module-reference.compact { margin: 0; border-width: 1px 0 0; border-radius: 0; }
 .module-reference.compact > div { padding: .8rem 1.2rem; }
 .open-operations { display: block; margin: 1rem 0 0 auto; min-height: 44px; }
-.operational-toolbar { display: grid; grid-template-columns: 210px minmax(420px,1fr) auto; gap: 1rem; align-items: end; margin-bottom: 1rem; }
+.operational-toolbar { display: grid; grid-template-columns: 210px minmax(0,1fr) auto; gap: 1rem; align-items: end; margin-bottom: 1rem; }
 .operational-toolbar label { margin: 0; }
 .quick-filters { display: flex; gap: .35rem; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: #f4f7f5; overflow-x: auto; }
 .quick-filters button { flex: 1 0 auto; min-height: 36px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); padding: .45rem .65rem; font-size: .62rem; font-weight: 700; white-space: nowrap; }
@@ -804,3 +804,34 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
 }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; } }
+
+/* 4.5.1 — korekty BOM, statusy dokumentów, założenia KPI */
+.override-note { display: block; color: #92670b; font-size: .66rem; margin-top: .2rem; }
+.row-tabs { margin-bottom: 1rem; }
+.row-bom-panel { display: grid; gap: .7rem; min-width: 0; }
+.row-bom-panel > * { min-width: 0; }
+.operational-toolbar .quick-filters { flex-wrap: wrap; }
+.operational-row, .operational-detail { min-width: 0; }
+.row-bom-panel label small { font-weight: 400; }
+.row-bom-table td input { width: 6.5rem; padding: .35rem .45rem; border: 1px solid var(--line); border-radius: 8px; }
+.row-bom-table tr.overridden td { background: var(--amber-bg); }
+.row-bom-table .badge { margin-left: .4rem; }
+.row-bom-table .text-button { display: block; margin-top: .25rem; font-size: .66rem; }
+.row-last-change .badge { margin-left: .5rem; }
+.doc-status { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; }
+.supplemental-document summary { display: flex; align-items: center; gap: .8rem; cursor: pointer; list-style: none; }
+.supplemental-document summary > div:nth-child(2) { flex: 1; min-width: 0; }
+.analysis-detail { display: grid; gap: .3rem; padding: .7rem 0 0 3.2rem; font-size: .72rem; overflow-wrap: anywhere; }
+.forecast-assumptions { margin-bottom: 1.2rem; }
+.forecast-assumptions summary { cursor: pointer; font-weight: 700; font-size: .8rem; }
+.forecast-assumptions ul { margin: .8rem 0 0; padding-left: 1.2rem; font-size: .74rem; color: var(--muted); line-height: 1.6; }
+.user-row.inactive { opacity: .55; }
+.user-row .card-actions { margin-left: auto; }
+.plan-open-tab { text-decoration: none; display: inline-flex; align-items: center; }
+.rfi-card .camera-button { margin-top: .6rem; }
+.rfi-controls select { max-width: 12rem; }
+@media (max-width: 720px) {
+  .analysis-detail { padding-left: 0; }
+  .user-row { flex-wrap: wrap; }
+  .row-bom-table td input { width: 4.8rem; }
+}

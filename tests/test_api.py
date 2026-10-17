@@ -28,6 +28,10 @@ class UniversalWorkflowTest(unittest.TestCase):
         cls.foreman = cls.login("brygadzista1", "Brygada1-2026!")
         cls.warehouse = cls.login("brygadzista2", "Brygada2-2026!")
 
+    def delete_project(self, project_id):
+        self.client.patch(f"/api/projects/{project_id}", headers=self.manager, json={"archived": True})
+        return self.client.delete(f"/api/projects/{project_id}", headers=self.manager)
+
     @classmethod
     def login(cls, username, password):
         response = cls.client.post("/api/auth/login", json={"username": username, "password": password})
@@ -217,6 +221,8 @@ class UniversalWorkflowTest(unittest.TestCase):
             ]},
         )
         self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 409)
+        self.client.patch(f"/api/projects/{project_id}", headers=self.manager, json={"archived": True})
         self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
 
     def test_only_ten_approved_files_drive_sources_templates_and_module_data(self):
@@ -228,7 +234,7 @@ class UniversalWorkflowTest(unittest.TestCase):
         )
         self.assertEqual({item["role"] for item in team.json()}, {"kierownik", "brygadzista"})
         health = self.client.get("/api/health").json()
-        self.assertEqual(health["version"], "4.5.0")
+        self.assertEqual(health["version"], "4.5.1")
         self.assertEqual(health["file_storage"], "database")
         self.assertEqual(health["realtime"], "websocket")
 
@@ -372,7 +378,7 @@ class UniversalWorkflowTest(unittest.TestCase):
         aggregate = self.client.get(f"/api/projects/{project_id}/tracker-config", headers=self.manager).json()
         self.assertEqual(aggregate["total_rows"], 3)
         self.assertEqual(aggregate["total_modules"], 98)
-        self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
+        self.assertEqual(self.delete_project(project_id).status_code, 200)
 
     def test_zone_demand_scope_and_full_bom_deliveries_are_independent(self):
         created = self.client.post(
@@ -443,7 +449,7 @@ class UniversalWorkflowTest(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/bom-deliveries/{delivery.json()['id']}", headers=self.manager).status_code, 200)
         cleared = self.client.get(f"/api/projects/{project_id}/bom-delivery-status", headers=self.manager).json()
         self.assertTrue(all(item["delivered"] == 0 for item in cleared["items"]))
-        self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
+        self.assertEqual(self.delete_project(project_id).status_code, 200)
 
     def test_row_memory_history_and_planimetry_pdf_are_persistent(self):
         created = self.client.post(
@@ -530,7 +536,7 @@ class UniversalWorkflowTest(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/planimetry/{plan_id}", headers=self.foreman).status_code, 403)
         self.assertEqual(self.client.delete(f"/api/planimetry/{plan_id}", headers=self.manager).status_code, 200)
         self.assertEqual(self.client.get(f"/api/planimetry?project_id={project_id}", headers=self.manager).json(), [])
-        self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
+        self.assertEqual(self.delete_project(project_id).status_code, 200)
 
 
 if __name__ == "__main__":

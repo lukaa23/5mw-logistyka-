@@ -116,3 +116,123 @@ def analyze(path: Path, extension: str, db: Session) -> dict:
     if extension==".dwg": return {"summary":{"format":"DWG","status":"zapisany"},"warnings":["DWG zapisano. Do analizy geometrii wyeksportuj rysunek także jako PDF lub DXF."]}
     if extension==".dxf": return {"summary":{"format":"DXF","status":"zapisany"},"warnings":["DXF zapisano; relacje BOM należy dostarczyć w XLSX."]}
     return {"summary":{"status":"zapisany"}}
+
+
+# --- Analiza plików wgrywanych przez użytkowników -------------------------------------------
+# Funkcje poniżej tylko odczytują plik. Nie zapisują niczego do bazy technicznej, więc
+# dodatkowy dokument nigdy nie nadpisuje zatwierdzonego BOM-u ani instrukcji.
+
+STATUS_SAVED = "zapisany"
+STATUS_ANALYZED = "przeanalizowany"
+
+
+def _result(status, summary, warnings=None, preview=None):
+    return {
+        "approved_source": False,
+        "approved_for_calculations": False,
+        "processing_status": status,
+        "summary": summary,
+        "warnings": warnings or [],
+        "preview": preview or {},
+    }
+
+
+def inspect_pdf_bytes(content: bytes) -> dict:
+    from io import BytesIO
+    try:
+        reader = PdfReader(BytesIO(content))
+        pages = [page.extract_text() or "" for page in reader.pages]
+    except Exception as error:  # uszkodzony lub zaszyfrowany PDF
+        return _result(STATUS_SAVED, {"format": "PDF"}, [f"Nie udało się odczytać PDF: {error.__class__.__name__}. Plik zapisano bez analizy."])
+    text = "\n".join(pages)
+    variants = sorted(set(re.sub(r"\s+", "", value).upper().replace("P", "X").replace("×", "X").replace("*", "X") for value in re.findall(r"1\s*[PpXx×*]\s*\d{2,3}", text)))
+    torque_mentions = len(re.findall(r"\d+(?:[.,]\d+)?\s*N[.·]?m", text))
+    warnings = ["Dane z pliku pomocniczego nie są używane do obliczeń. Wymagają weryfikacji i zatwierdzenia."]
+    if not text.strip():
+        warnings.append("PDF nie zawiera warstwy tekstowej (np. skan). Odczytano tylko liczbę stron.")
+    return _result(STATUS_ANALYZED, {"format": "PDF", "pages": len(pages), "text_characters": len(text), "variant_labels": variants, "torque_mentions": torque_mentions}, warnings, {"text_excerpt": re.sub(r"\s+", " ", text)[:600]})
+
+
+def inspect_excel_bytes(content: bytes) -> dict:
+    from io import BytesIO
+    try:
+        workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    except Exception as error:
+        return _result(STATUS_SAVED, {"format": "XLSX"}, [f"Nie udało się odczytać arkusza: {error.__class__.__name__}. Plik zapisano bez analizy."])
+    sheets = []
+    warnings = ["Pozycje z arkusza są tylko podglądem. Nie zmieniają zatwierdzonej bazy BOM."]
+    for sheet in workbook.worksheets:
+        rows = list(sheet.iter_rows(values_only=True))
+        header_index, headers = -1, {}
+        for index, row in enumerate(rows[:20]):
+            candidate = map_headers(row)
+            if "name" in candidate and "quantity" in candidate:
+                header_index, headers = index, candidate
+                break
+        if header_index < 0:
+            warnings.append(f"{sheet.title}: nie rozpoznano kolumn nazwy i ilości")
+            sheets.append({"name": sheet.title, "rows": len(rows), "bom_rows": 0, "sample": []})
+            continue
+        sample, count = [], 0
+        for row in rows[header_index + 1:]:
+            def cell(key):
+                position = headers.get(key)
+                return row[position] if position is not None and position < len(row) else None
+            name = str(cell("name") or "").strip()
+            quantity = parse_number(cell("quantity"), None)
+            if not name or quantity is None:
+                continue
+            count += 1
+            if len(sample) < 10:
+                sample.append({"sku": str(cell("sku") or "").strip(), "name": name, "quantity": quantity, "unit": str(cell("unit") or "").strip()})
+        sheets.append({"name": sheet.title, "rows": len(rows), "bom_rows": count, "columns": sorted(headers), "sample": sample})
+    workbook.close()
+    return _result(STATUS_ANALYZED, {"format": "XLSX", "sheets": len(sheets), "bom_rows": sum(item["bom_rows"] for item in sheets)}, warnings, {"sheets": sheets})
+
+
+def inspect_dxf_bytes(content: bytes) -> dict:
+    if content.startswith(b"AutoCAD Binary DXF"):
+        return _result(STATUS_SAVED, {"format": "DXF (binarny)"}, ["Binarny DXF nie jest obsługiwany. Zapisz rysunek jako DXF ASCII lub PDF."])
+    text = content.decode("utf-8", errors="replace")
+    lines = [line.strip() for line in text.splitlines()]
+    if len(lines) < 4 or len(lines) % 2:
+        lines = lines[: len(lines) - (len(lines) % 2)]
+    pairs = list(zip(lines[0::2], lines[1::2]))
+    if not pairs or pairs[0] != ("0", "SECTION"):
+        return _result(STATUS_SAVED, {"format": "DXF"}, ["Plik nie wygląda na prawidłowy DXF ASCII. Zapisano bez analizy."])
+    section, entity, entities, layers, texts = None, None, {}, set(), []
+    expecting_section_name = False
+    for code, value in pairs:
+        if code == "0":
+            if value == "SECTION":
+                expecting_section_name = True
+                continue
+            if value == "ENDSEC":
+                section, entity = None, None
+                continue
+            entity = value
+            if section == "ENTITIES":
+                entities[value] = entities.get(value, 0) + 1
+            continue
+        if expecting_section_name and code == "2":
+            section, expecting_section_name = value, False
+            continue
+        if code == "8" and value:
+            layers.add(value)
+        if section == "ENTITIES" and entity in ("TEXT", "MTEXT") and code == "1" and len(texts) < 50:
+            texts.append(value[:200])
+    warnings = ["Geometria DXF nie jest przeliczana na BOM. Treści tekstowe wymagają weryfikacji."]
+    return _result(STATUS_ANALYZED, {"format": "DXF", "entities": sum(entities.values()), "entity_types": dict(sorted(entities.items())), "layers": len(layers)}, warnings, {"layers": sorted(layers)[:100], "texts": texts})
+
+
+def inspect_upload(content: bytes, extension: str) -> dict:
+    extension = extension.lower()
+    if extension == ".pdf":
+        return inspect_pdf_bytes(content)
+    if extension in (".xlsx", ".xlsm"):
+        return inspect_excel_bytes(content)
+    if extension == ".dxf":
+        return inspect_dxf_bytes(content)
+    if extension == ".dwg":
+        return _result(STATUS_SAVED, {"format": "DWG"}, ["Aplikacja nie ma parsera DWG. Plik zapisano bez analizy — do odczytu wyeksportuj rysunek do PDF lub DXF."])
+    return _result(STATUS_SAVED, {"format": extension.lstrip(".").upper()})

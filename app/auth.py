@@ -2,10 +2,14 @@ import base64, hashlib, hmac, json, os, secrets, time
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
-from .database import get_db
+from .database import DATABASE_URL, get_db
 from .models import User
 
-SECRET = os.getenv("ASOLAR_SECRET", "asolar-local-change-me")
+SECRET = os.getenv("ASOLAR_SECRET", "")
+if not SECRET:
+    if DATABASE_URL.startswith("postgresql") or os.getenv("ASOLAR_REQUIRE_PASSWORDS") == "1":
+        raise RuntimeError("Brak zmiennej ASOLAR_SECRET. Wdrożenie serwerowe wymaga własnego, długiego klucza sesji.")
+    SECRET = "asolar-local-change-me"
 TOKEN_TTL = 60 * 60 * 24 * 7
 security = HTTPBearer(auto_error=False)
 

@@ -57,100 +57,142 @@ Zapotrzebowanie obejmuje komponenty systemowe, w tym słupy, TCU i odbiornik. Li
 - zakładka „Mapa / Planimetria” wyświetla zatwierdzone plany źródłowe oraz plany PDF wgrywane przez kierownika, z powiększaniem, pobieraniem i wygodnym podglądem na telefonie;
 - raport dzienny PDF zawiera prace, KPI i dziennik QA/QC;
 - WebSocket synchronizuje urządzenia, a PWA buforuje odczyty i kolejkuje zapisy offline;
+- każdy rząd ma zakładkę „Specyfikacja i BOM” z wartościami źródłowymi i ręcznymi korektami kierownika, wyraźnie oznaczonymi jako nadpisane;
+- pliki pomocnicze mają status zapisany / przeanalizowany / zatwierdzony do obliczeń;
 - interfejs działa po polsku na telefonie, tablecie i komputerze.
 
-## Uruchomienie na Windows
+## Konta startowe i bezpieczeństwo
 
-### Klient do wspólnego serwera
-
-1. Pobierz i rozpakuj pełną paczkę ZIP.
-2. Skopiuj `server-url.txt.example` jako `server-url.txt`.
-3. Wpisz w nim jedną linię z adresem wdrożenia, np. `https://asolar-eset-tracker.onrender.com`.
-4. Uruchom `ASOLAR.exe`. W tym trybie program otwiera wspólny serwer i nie wymaga lokalnego Pythona.
-
-### Samodzielny serwer lokalny
-
-1. Zainstaluj Python 3.11 razem z programem Python Launcher (`py`).
-2. Usuń `server-url.txt`, jeśli istnieje.
-3. Uruchom `ASOLAR.exe` albo awaryjnie `Uruchom-Windows.bat`.
-
-W trybie lokalnym `ASOLAR.exe` używa polecenia `py -3.11`, instaluje zależności do `runtime-packages` i przechowuje bazę w `data/asolar.db`.
-
-## Konta startowe
-
-| Rola | Login | Hasło |
+| Rola | Login | Hasło w instalacji lokalnej (SQLite) |
 |---|---|---|
-| Kierownik Budowy | `kierownik` | `Asolar2026!` |
+| Kierownik budowy | `kierownik` | `Asolar2026!` |
 | Brygadzista 1 | `brygadzista1` | `Brygada1-2026!` |
 | Brygadzista 2 | `brygadzista2` | `Brygada2-2026!` |
 
-Hasła w tabeli dotyczą instalacji lokalnej. Wdrożenie Render wymaga wpisania własnych haseł. Kierownik może później tworzyć kolejne konta.
+- Hasła domyślne działają **wyłącznie** w samodzielnej instalacji lokalnej i należy je zmienić po pierwszym logowaniu (Użytkownicy → Zmień hasło).
+- Na serwerze (PostgreSQL albo `ASOLAR_REQUIRE_PASSWORDS=1`) aplikacja **nie uruchomi się** bez `ASOLAR_SECRET` i bez haseł `ASOLAR_MANAGER_PASSWORD`, `ASOLAR_FOREMAN1_PASSWORD`, `ASOLAR_FOREMAN2_PASSWORD` potrzebnych do utworzenia brakujących kont.
+- Hasła są odczytywane tylko przy **tworzeniu** brakującego konta. Restart serwera nie resetuje haseł istniejących użytkowników.
+- Hasła są przechowywane jako skróty PBKDF2-SHA256 (240 000 iteracji). Frontend nie zawiera żadnych haseł.
+- Uprawnienia są sprawdzane w backendzie: odbiór QA/QC, zarządzanie użytkownikami, wgrywanie i usuwanie planimetrii, korekty materiałowe rzędu, zmiana statusu RFI oraz usuwanie danych są zastrzeżone dla kierownika. Brygadzista edytuje tylko własne meldunki.
+- Kierownik może dodawać konta, zmieniać hasła oraz dezaktywować konta (bez możliwości odebrania uprawnień samemu sobie).
 
-## Wdrożenie na Render — krok po kroku
+## Wdrożenie na Render przez Blueprint
 
-Repozytorium zawiera gotowy [render.yaml](render.yaml), obraz Docker i konfigurację PostgreSQL.
+Repozytorium zawiera [render.yaml](render.yaml), obraz Docker (Python 3.11) i konfigurację PostgreSQL.
 
-1. Umieść repozytorium na GitHubie.
-2. Zaloguj się w Render, wybierz **New + → Blueprint** i połącz repozytorium.
-3. Render odczyta `render.yaml` i utworzy usługę `asolar-eset-tracker` oraz bazę `asolar-postgres`.
-4. W formularzu wpisz silne wartości dla `ASOLAR_MANAGER_PASSWORD`, `ASOLAR_FOREMAN1_PASSWORD` i `ASOLAR_FOREMAN2_PASSWORD`.
-5. Wybierz **Apply** i poczekaj, aż wdrożenie otrzyma status **Live**.
-6. Otwórz adres z Render. Kontrolny adres `/api/health` powinien pokazać `database: postgresql`, `file_storage: database` i `realtime: websocket`.
-7. Przekaż ten sam link obu brygadzistom. Na telefonie mogą wybrać „Dodaj do ekranu głównego”, aby zainstalować PWA.
+1. Wypchnij gałąź do GitHuba (wdrożenie produkcyjne wykonuj świadomie — `autoDeploy` w Blueprincie wdraża każdą zmianę wybranej gałęzi).
+2. W Render wybierz **New + → Blueprint** i połącz repozytorium.
+3. Render utworzy usługę `asolar-eset-tracker` i bazę `asolar-postgres`; `DATABASE_URL` i `ASOLAR_SECRET` zostaną ustawione automatycznie.
+4. W formularzu wpisz silne hasła `ASOLAR_MANAGER_PASSWORD`, `ASOLAR_FOREMAN1_PASSWORD` i `ASOLAR_FOREMAN2_PASSWORD`.
+5. Po statusie **Live** otwórz `https://…onrender.com/api/health` — powinno pokazać `"database": "postgresql"`, `"file_storage": "database"`, `"realtime": "websocket"`, `"version": "4.5.1"`.
+6. Przekaż **jeden adres HTTPS** obu brygadzistom. Wszystkie urządzenia pracują na tym samym serwerze i tej samej bazie.
 
-Darmowa usługa może usypiać aplikację po bezczynności, dlatego pierwsze otwarcie może potrwać kilkadziesiąt sekund. Dane pozostają w PostgreSQL. Dla stałej pracy produkcyjnej należy wybrać plan bazy bez terminu wygaśnięcia zgodnie z aktualną ofertą hostingu.
+Adresy `postgres://…` i `postgresql://…` są automatycznie przekształcane na sterownik psycopg 3.
 
-Najważniejsze zmienne serwera:
+### Trwałość danych i ograniczenia hostingu
 
-| Zmienna | Zastosowanie |
-|---|---|
-| `DATABASE_URL` | Wspólna baza PostgreSQL; Blueprint ustawia ją automatycznie |
-| `ASOLAR_SECRET` | Podpisywanie sesji; Render generuje wartość automatycznie |
-| `ASOLAR_MANAGER_PASSWORD` | Hasło konta `kierownik` przy tworzeniu bazy |
-| `ASOLAR_FOREMAN1_PASSWORD` | Hasło konta `brygadzista1` |
-| `ASOLAR_FOREMAN2_PASSWORD` | Hasło konta `brygadzista2` |
+- Dane, zdjęcia i dokumenty wgrywane przez użytkowników są zapisywane w bazie danych (BLOB), więc restart kontenera ich nie usuwa — pod warunkiem, że baza jest trwała.
+- Starsze pliki z katalogu `data/uploads` są nadal odczytywane.
+- **Darmowe plany hostingu nie gwarantują bezterminowego przechowywania.** Darmowa usługa WWW może usypiać się po bezczynności (pierwsze otwarcie trwa dłużej), a darmowa baza PostgreSQL w Render ma ograniczony czas życia i pojemność według aktualnego cennika. Do pracy produkcyjnej wybierz płatny plan bazy z kopiami zapasowymi i sprawdź bieżące warunki u dostawcy.
+- Zdjęcia w bazie zwiększają jej rozmiar (limit 25 MB na zdjęcie, 100 MB na dokument — `ASOLAR_MAX_DOCUMENT_MB`). Monitoruj zajętość bazy.
 
-## Pakowanie programu na PC
+### Kopie zapasowe
 
-Po przebudowaniu frontendu i launchera można utworzyć paczkę w PowerShell:
-
-```powershell
-Copy-Item server-url.txt.example server-url.txt
-# Zmień adres w server-url.txt na adres z Render.
-Compress-Archive -Path ASOLAR.exe,server-url.txt,README.md -DestinationPath ASOLAR-Cloud-PC.zip -Force
+```bash
+# PostgreSQL (pełna kopia, łącznie ze zdjęciami i dokumentami)
+pg_dump "$DATABASE_URL" --format=custom --file=asolar-$(date +%F).dump
+# odtworzenie
+pg_restore --clean --no-owner --dbname "$DATABASE_URL" asolar-2026-10-17.dump
 ```
 
-Taka paczka jest lekkim klientem do wspólnego serwera. Pełna paczka lokalna powinna dodatkowo zawierać `app`, `frontend/dist`, `project_sources`, `requirements.txt`, `desktop.py`, `server.py` i `Uruchom-Windows.bat`. Źródła launchera i polecenie budowania znajdują się w `windows/build_launcher.sh`.
+Instalacja lokalna: zatrzymaj program i skopiuj cały folder `data/` (`data/asolar.db` oraz `data/uploads`).
+
+### Konfiguracja własnego PostgreSQL
+
+```bash
+DATABASE_URL=postgresql://asolar:haslo@serwer:5432/asolar
+ASOLAR_SECRET=dlugi-losowy-klucz
+ASOLAR_MANAGER_PASSWORD=...  ASOLAR_FOREMAN1_PASSWORD=...  ASOLAR_FOREMAN2_PASSWORD=...
+python server.py
+```
+
+Schemat jest tworzony i uzupełniany automatycznie przy starcie (brakujące kolumny są dodawane, istniejące dane pozostają nienaruszone).
+
+## Instalacja PWA na telefonie
+
+- **Android / Chrome:** otwórz adres HTTPS → menu ⋮ → *Zainstaluj aplikację* / *Dodaj do ekranu głównego*.
+- **iPhone / Safari:** przycisk *Udostępnij* → *Do ekranu początkowego*.
+- PWA buforuje tylko powłokę aplikacji (HTML, skrypty, ikony). Dane zawsze pochodzą z serwera; ostatnio pobrane widoki są pamiętane lokalnie na wypadek braku zasięgu.
+
+### Praca bez zasięgu
+
+- Proste zapisy (statusy rzędów, notatki, meldunki, RFI, dostawy WZ, konfiguracja stref, kolejność rzędów) trafiają do lokalnej kolejki i są wysyłane automatycznie po odzyskaniu połączenia. `client_id` chroni przed podwójnym zapisem.
+- **Zdjęć i plików nie da się wgrać offline** — aplikacja wyświetla wtedy komunikat. Dodaj je po odzyskaniu sieci.
+- Wskaźnik w górnym pasku: *Na żywo* (WebSocket), *Łączenie…*, *Offline* oraz liczba zapisów w kolejce. Niezależnie od WebSocketu widoki odświeżają się co 15 sekund.
+
+## Uruchomienie na Windows (Python 3.11)
+
+- `Uruchom-Windows.bat` zawsze używa `py -3.11`, działa względem własnego katalogu, przy pierwszym uruchomieniu instaluje zależności do `runtime-packages` i pokazuje zrozumiałe komunikaty błędów.
+- `ASOLAR.exe` (źródło: [windows/asolar-launcher.c](windows/asolar-launcher.c)):
+  - jeśli obok leży `server-url.txt`, otwiera wspólny adres serwera — bez lokalnego Pythona;
+  - w przeciwnym razie sprawdza, czy port 8765 jest wolny (zajęty port = komunikat zamiast otwierania starej instancji), a potem uruchamia lokalny backend przez `py -3.11`.
+
+### Budowanie ASOLAR.exe
+
+Windows (MSYS2 / MinGW-w64 w `PATH`, Pillow do ikony: `py -3.11 -m pip install pillow`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows\build_launcher.ps1
+```
+
+Linux (kompilacja krzyżowa): `bash windows/build_launcher.sh`.
+
+### Paczka klienta do wspólnego serwera
+
+```powershell
+Copy-Item server-url.txt.example server-url.txt   # wpisz adres HTTPS z Render
+Compress-Archive -Path ASOLAR.exe,server-url.txt,README.md -DestinationPath ASOLAR-Klient-PC.zip -Force
+```
+
+Pełna paczka lokalna zawiera dodatkowo `app`, `frontend/dist`, `project_sources`, `requirements.txt`, `desktop.py`, `server.py` i `Uruchom-Windows.bat` (bez `server-url.txt`).
 
 ## Uruchomienie deweloperskie
 
-Wymagane są Python 3.11+ i Node.js 20+.
+Wymagane: Python 3.11 i Node.js 20+.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-cd frontend
-npm ci
-npm run build
-cd ..
-.venv/bin/python server.py
+py -3.11 -m venv .venv
+.venv/Scripts/python -m pip install -r requirements-dev.txt   # Linux/macOS: .venv/bin/python
+cd frontend && npm ci && npm run build && cd ..
+.venv/Scripts/python server.py
 ```
 
-Dokumentacja OpenAPI jest dostępna pod `/docs`.
+Interfejs: `http://127.0.0.1:8765`, dokumentacja API: `/docs`. Tryb deweloperski frontendu z proxy: `cd frontend && npm run dev`.
 
 ## Docker
 
 ```bash
-ASOLAR_SECRET="długi-losowy-klucz" docker compose up --build
+ASOLAR_SECRET="dlugi-losowy-klucz" docker compose up --build
 ```
 
-Domyślną bazą jest SQLite. Po ustawieniu `DATABASE_URL=postgresql://...` aplikacja automatycznie korzysta z PostgreSQL przez sterownik psycopg 3.
+Domyślnie SQLite w wolumenie `asolar_data`. Po ustawieniu `DATABASE_URL=postgresql://…` aplikacja korzysta z PostgreSQL.
 
 ## Testy
 
 ```bash
-.venv/bin/python -m unittest -v tests/test_api.py
-cd frontend && npm run build
+.venv/Scripts/python -m pytest -q          # backend: 22 testy
+cd frontend && npm test                    # React + service worker: 30 testów
+cd frontend && npm run build               # build produkcyjny Vite
 ```
 
-Testy sprawdzają strefy, zapotrzebowanie ogólne i strefowe, zerowy stan i sumowanie pełnych dostaw BOM, niezależność dostaw od obliczeń projektowych, automatyczną numerację i ręczne sortowanie rzędów, trwałą historię notatek i wielu zdjęć, autora ostatniej zmiany, siedem wariantów, sumowanie BOM-ów łączonych, momenty dokręcania, role, meldunki, QA/QC, podgląd planimetrii PDF, raport PDF oraz integralność dziesięciu dokumentów źródłowych.
+- **Backend** (`tests/test_api.py`, `tests/test_regression.py`): role i logowanie, brak resetu haseł po restarcie, wymagane zmienne serwera, trwałe notatki i zdjęcia w bazie, historia przy zmniejszaniu i zwiększaniu liczby rzędów, ręczne sortowanie z trwałym ID, warianty łączone jako suma BOM, korekty materiałowe rzędu, zapotrzebowanie niezależne od dostaw, zerowy stan dostaw i deduplikacja WZ, planimetria i uprawnienia, analiza plików pomocniczych bez zmiany bazy technicznej, KPI i prognoza, raport PDF, zdarzenia WebSocket, 404 dla brakujących skryptów, zgodność manifestu SHA-256 dziesięciu źródeł.
+- **Frontend** (`frontend/tests`): Planimetria (odświeżanie synchronizacji, usunięcie bieżącego planu, zmiana projektu, spóźnione odpowiedzi, zmiana planu w trakcie pobierania, brak starego PDF pod nowym tytułem, zwalnianie blob URL, null/pusta lista/niepoprawne rekordy, brak tytułu, błędna data, błąd pobierania), service worker (schematy rozszerzeń, obcy origin, API, WebSocket, POST, Range, błąd `cache.put`/`caches.open`, brak cache dla 500/206, fallback tylko dla nawigacji, usuwanie wyłącznie starych cache ASOLAR), logowanie bez haseł w kodzie, ErrorBoundary i kolejka offline.
+
+## Zmiany w wersji 4.5.1
+
+- **Planimetria — poprawka białego ekranu** (`TypeError: Cannot read properties of undefined (reading 'title')`): synchronizacja nie zeruje już wyboru; PDF jest renderowany tylko, gdy istnieje zarówno dokument, jak i odpowiadający mu adres (klucz projekt + dokument + `file_url`); spóźnione odpowiedzi są ignorowane; adresy blob są zwalniane; błędy pokazują komunikat. Widoki są dodatkowo osłonięte przez ErrorBoundary.
+- **Service worker** obsługuje wyłącznie GET http/https do własnego origin, pomija API/WebSocket/POST/Range i rozszerzenia przeglądarki, nie buforuje błędów ani odpowiedzi częściowych, a awaria Cache API nie blokuje odpowiedzi sieciowej. Serwer zwraca 404 dla brakujących plików statycznych zamiast `index.html`.
+- Korekty materiałowe pojedynczego rzędu z rozróżnieniem wartości źródłowych i nadpisanych, doliczane do zapotrzebowania jako różnica.
+- Statusy plików: *zapisany / przeanalizowany / zatwierdzony do obliczeń*; rzeczywista analiza PDF, XLSX i DXF ASCII; DWG jest tylko zapisywany (brak parsera).
+- RFI z osobą odpowiedzialną i wieloma zdjęciami; meldunki z autorem i wieloma zdjęciami; KPI z jawnymi założeniami prognozy; rozszerzony raport dzienny PDF z polskimi znakami.
+- Kontrolowane usuwanie projektu (najpierw archiwizacja, potwierdzenie nazwą), zarządzanie kontami, wymagane zmienne środowiskowe na serwerze, Docker na Pythonie 3.11, przypięte wersje zależności frontendu.
