@@ -1,0 +1,1415 @@
+diff --git a/.dockerignore b/.dockerignore
+new file mode 100644
+index 0000000000000000000000000000000000000000..2c74a0510944c1a5310a1f854e5d9ddd407bb4c1
+--- /dev/null
++++ b/.dockerignore
+@@ -0,0 +1,14 @@
++.git
++.github
++.venv
++data
++runtime-packages
++frontend/node_modules
++tests
++windows
++assets
++*.zip
++ASOLAR.exe
++Uruchom-Windows.bat
++__pycache__
++*.pyc
+diff --git a/.gitignore b/.gitignore
+index ba1b5223c1ba02a2233adf597dd0afc53b54b84d..088c61aca11770546f7415611865f565e65aff12 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -5,5 +5,6 @@ pypdf/
+ .venv/
+ frontend/node_modules/
+ runtime-packages/
++windows/*.res
+ data/*.db
+ data/uploads/
+diff --git a/Dockerfile b/Dockerfile
+index f2b4ab3c9c86e06281d55550dd3125a5a7c7c0ca..76b8f076b9e95b8aaf044d6b424fe44785701425 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -11,6 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 ASOLAR_HOST=0.0.0.0 PORT=8765
+ COPY requirements.txt ./
+ RUN pip install --no-cache-dir -r requirements.txt
+ COPY app ./app
++COPY project_sources ./project_sources
+ COPY server.py desktop.py ./
+ COPY --from=frontend /build/frontend/dist ./frontend/dist
+ RUN mkdir -p /app/data/uploads
+diff --git a/README.md b/README.md
+index f70379556615d45e3bdbedada6eb7c5bb3e2c511..adddf25034a4c36c5b57a426ec34d5790a589c7a 100644
+--- a/README.md
++++ b/README.md
+@@ -2,6 +2,12 @@
+ 
+ Responsywna aplikacja PWA do konfiguracji trackerów ESET, wyliczania zapotrzebowania projektowego, prowadzenia meldunków brygadzisty i kontroli QA/QC na farmie PV.
+ 
++## Praca wieloosobowa klient–serwer
++
++W trybie zespołowym wszystkie telefony i komputery otwierają jeden adres HTTPS. FastAPI jest serwerem aplikacji, PostgreSQL przechowuje wspólne dane oraz nowe zdjęcia i dokumenty, a WebSocket natychmiast informuje pozostałe urządzenia o zmianach. Frontend automatycznie ponawia połączenie, ma dodatkowe odświeżanie co 15 sekund i kolejkę zapisów na czas utraty zasięgu.
++
++SQLite pozostaje dostępny do pracy lokalnej. Na hostingu należy ustawić `DATABASE_URL` do PostgreSQL, aby restart kontenera nie usuwał danych. Zdjęcia i PDF wgrywane przez użytkowników są zapisywane w bazie, więc nie zależą od nietrwałego dysku darmowej usługi.
++
+ ## Konfiguracja i zapotrzebowanie
+ 
+ Projekt korzysta z siedmiu wariantów. Podstawowe to `1x28`, `1x42`, `1x56` i `1x70`, a łączone to `1x42+1x28`, `1x56+1x28` i `1x56+1x42`. Użytkownik tworzy dowolną liczbę nazwanych stref i w każdej wpisuje liczbę rzędów każdego wariantu. System automatycznie generuje osobne, kolejno numerowane rzędy oraz pokazuje:
+@@ -17,7 +23,7 @@ Projekt korzysta z siedmiu wariantów. Podstawowe to `1x28`, `1x42`, `1x56` i `1
+ 
+ Wariant łączony jest liczony jako dokładna suma dwóch odpowiednich, zatwierdzonych BOM-ów podstawowych. Program nie odejmuje ani nie dodaje części wspólnych, których dokumentacja nie definiuje.
+ 
+-Widok operacyjny pozwala oznaczać każdy wygenerowany rząd jako zbudowany i odebrany QA/QC, prowadzić indywidualne notatki, robić zdjęcia bezpośrednio aparatem telefonu oraz ustawiać rzeczywistą kolejność rzędów przyciskami Góra/Dół. Kolejność jest zapisywana w bazie i synchronizowana między urządzeniami. Zmniejszenie liczby rzędów ukrywa nadmiarowe pozycje bez kasowania ich historii; ponowne zwiększenie przywraca wcześniejsze statusy, notatki i zdjęcia.
++Widok operacyjny pozwala oznaczać każdy wygenerowany rząd jako zbudowany i odebrany QA/QC, prowadzić trwałą historię notatek, robić i przypisywać wiele zdjęć bezpośrednio aparatem telefonu oraz ustawiać rzeczywistą kolejność rzędów przyciskami Góra/Dół. Każdy wpis pamięta autora i czas, a karta rzędu pokazuje ostatnią osobę, która wprowadziła zmianę. Przyciski „Wszystkie”, „Tylko do zrobienia”, „Zbudowane” i „Notatki / zdjęcia” przyspieszają pracę na telefonie. Kolejność oraz cała pamięć rzędu są zapisywane w bazie i synchronizowane między urządzeniami. Zmniejszenie liczby rzędów ukrywa nadmiarowe pozycje bez kasowania ich historii; ponowne zwiększenie przywraca wcześniejsze statusy, notatki i zdjęcia.
+ 
+ Widok „Zapotrzebowanie” przedstawia wyłącznie ilości wymagane przez projekt. Przełącznik „Cała farma / strefa” pozwala porównać ogólny BOM z zapotrzebowaniem wybranej strefy. Obliczenia nie korzystają ze stanów magazynowych ani fizycznych dostaw WZ.
+ 
+@@ -48,27 +54,73 @@ Zapotrzebowanie obejmuje komponenty systemowe, w tym słupy, TCU i odbiornik. Li
+ - meldunek zawiera liczbę zbudowanych rzędów, liczbę osób, godziny, dowolny opis prac, notatki i dziennik QA/QC;
+ - zdjęcia można dodawać bezpośrednio z aparatu telefonu i przeglądać w historii meldunku;
+ - moduł RFI rejestruje problem, priorytet, opis i zdjęcie;
++- zakładka „Mapa / Planimetria” wyświetla zatwierdzone plany źródłowe oraz plany PDF wgrywane przez kierownika, z powiększaniem, pobieraniem i wygodnym podglądem na telefonie;
+ - raport dzienny PDF zawiera prace, KPI i dziennik QA/QC;
+ - WebSocket synchronizuje urządzenia, a PWA buforuje odczyty i kolejkuje zapisy offline;
+ - interfejs działa po polsku na telefonie, tablecie i komputerze.
+ 
+ ## Uruchomienie na Windows
+ 
++### Klient do wspólnego serwera
++
+ 1. Pobierz i rozpakuj pełną paczkę ZIP.
+-2. Zainstaluj Python 3.11 razem z programem Python Launcher (`py`).
+-3. Uruchom `Uruchom-Windows.bat`.
++2. Skopiuj `server-url.txt.example` jako `server-url.txt`.
++3. Wpisz w nim jedną linię z adresem wdrożenia, np. `https://asolar-eset-tracker.onrender.com`.
++4. Uruchom `ASOLAR.exe`. W tym trybie program otwiera wspólny serwer i nie wymaga lokalnego Pythona.
++
++### Samodzielny serwer lokalny
+ 
+-Skrypt używa polecenia `py -3.11`. Przy pierwszym uruchomieniu instaluje zależności w lokalnym folderze `runtime-packages`, a następnie otwiera aplikację. Dane i zdjęcia są przechowywane w folderze `data`.
++1. Zainstaluj Python 3.11 razem z programem Python Launcher (`py`).
++2. Usuń `server-url.txt`, jeśli istnieje.
++3. Uruchom `ASOLAR.exe` albo awaryjnie `Uruchom-Windows.bat`.
++
++W trybie lokalnym `ASOLAR.exe` używa polecenia `py -3.11`, instaluje zależności do `runtime-packages` i przechowuje bazę w `data/asolar.db`.
+ 
+ ## Konta startowe
+ 
+ | Rola | Login | Hasło |
+ |---|---|---|
+ | Kierownik Budowy | `kierownik` | `Asolar2026!` |
+-| Brygadzista | `brygadzista` | `Brygada2026!` |
+-| Magazynier | `magazynier` | `Magazyn2026!` |
++| Brygadzista 1 | `brygadzista1` | `Brygada1-2026!` |
++| Brygadzista 2 | `brygadzista2` | `Brygada2-2026!` |
++
++Hasła w tabeli dotyczą instalacji lokalnej. Wdrożenie Render wymaga wpisania własnych haseł. Kierownik może później tworzyć kolejne konta.
++
++## Wdrożenie na Render — krok po kroku
++
++Repozytorium zawiera gotowy [render.yaml](render.yaml), obraz Docker i konfigurację PostgreSQL.
++
++1. Umieść repozytorium na GitHubie.
++2. Zaloguj się w Render, wybierz **New + → Blueprint** i połącz repozytorium.
++3. Render odczyta `render.yaml` i utworzy usługę `asolar-eset-tracker` oraz bazę `asolar-postgres`.
++4. W formularzu wpisz silne wartości dla `ASOLAR_MANAGER_PASSWORD`, `ASOLAR_FOREMAN1_PASSWORD` i `ASOLAR_FOREMAN2_PASSWORD`.
++5. Wybierz **Apply** i poczekaj, aż wdrożenie otrzyma status **Live**.
++6. Otwórz adres z Render. Kontrolny adres `/api/health` powinien pokazać `database: postgresql`, `file_storage: database` i `realtime: websocket`.
++7. Przekaż ten sam link obu brygadzistom. Na telefonie mogą wybrać „Dodaj do ekranu głównego”, aby zainstalować PWA.
++
++Darmowa usługa może usypiać aplikację po bezczynności, dlatego pierwsze otwarcie może potrwać kilkadziesiąt sekund. Dane pozostają w PostgreSQL. Dla stałej pracy produkcyjnej należy wybrać plan bazy bez terminu wygaśnięcia zgodnie z aktualną ofertą hostingu.
++
++Najważniejsze zmienne serwera:
++
++| Zmienna | Zastosowanie |
++|---|---|
++| `DATABASE_URL` | Wspólna baza PostgreSQL; Blueprint ustawia ją automatycznie |
++| `ASOLAR_SECRET` | Podpisywanie sesji; Render generuje wartość automatycznie |
++| `ASOLAR_MANAGER_PASSWORD` | Hasło konta `kierownik` przy tworzeniu bazy |
++| `ASOLAR_FOREMAN1_PASSWORD` | Hasło konta `brygadzista1` |
++| `ASOLAR_FOREMAN2_PASSWORD` | Hasło konta `brygadzista2` |
++
++## Pakowanie programu na PC
++
++Po przebudowaniu frontendu i launchera można utworzyć paczkę w PowerShell:
++
++```powershell
++Copy-Item server-url.txt.example server-url.txt
++# Zmień adres w server-url.txt na adres z Render.
++Compress-Archive -Path ASOLAR.exe,server-url.txt,README.md -DestinationPath ASOLAR-Cloud-PC.zip -Force
++```
+ 
+-Kierownik może tworzyć kolejne konta. W instalacji sieciowej należy ustawić własny `ASOLAR_SECRET`.
++Taka paczka jest lekkim klientem do wspólnego serwera. Pełna paczka lokalna powinna dodatkowo zawierać `app`, `frontend/dist`, `project_sources`, `requirements.txt`, `desktop.py`, `server.py` i `Uruchom-Windows.bat`. Źródła launchera i polecenie budowania znajdują się w `windows/build_launcher.sh`.
+ 
+ ## Uruchomienie deweloperskie
+ 
+@@ -92,7 +144,7 @@ Dokumentacja OpenAPI jest dostępna pod `/docs`.
+ ASOLAR_SECRET="długi-losowy-klucz" docker compose up --build
+ ```
+ 
+-Domyślną bazą jest SQLite. Po ustawieniu `DATABASE_URL` i zainstalowaniu sterownika można użyć PostgreSQL.
++Domyślną bazą jest SQLite. Po ustawieniu `DATABASE_URL=postgresql://...` aplikacja automatycznie korzysta z PostgreSQL przez sterownik psycopg 3.
+ 
+ ## Testy
+ 
+@@ -101,4 +153,4 @@ Domyślną bazą jest SQLite. Po ustawieniu `DATABASE_URL` i zainstalowaniu ster
+ cd frontend && npm run build
+ ```
+ 
+-Testy sprawdzają strefy, zapotrzebowanie ogólne i strefowe, zerowy stan i sumowanie pełnych dostaw BOM, niezależność dostaw od obliczeń projektowych, automatyczną numerację i ręczne sortowanie rzędów, zachowanie historii, siedem wariantów, sumowanie BOM-ów łączonych, momenty dokręcania, role, meldunki, zdjęcia, QA/QC, raport PDF oraz integralność dziesięciu dokumentów źródłowych.
++Testy sprawdzają strefy, zapotrzebowanie ogólne i strefowe, zerowy stan i sumowanie pełnych dostaw BOM, niezależność dostaw od obliczeń projektowych, automatyczną numerację i ręczne sortowanie rzędów, trwałą historię notatek i wielu zdjęć, autora ostatniej zmiany, siedem wariantów, sumowanie BOM-ów łączonych, momenty dokręcania, role, meldunki, QA/QC, podgląd planimetrii PDF, raport PDF oraz integralność dziesięciu dokumentów źródłowych.
+diff --git a/app/database.py b/app/database.py
+index 4c5892432516aa7f37d70247c85038d5e1756574..ff28149cdd4e586eaca94a104afa90bb3e8c82c0 100644
+--- a/app/database.py
++++ b/app/database.py
+@@ -10,8 +10,14 @@ DATA_DIR.mkdir(exist_ok=True)
+ UPLOAD_DIR.mkdir(exist_ok=True)
+ 
+ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR / 'asolar.db'}")
++# Render, Supabase i część innych usług podaje klasyczny adres postgresql://.
++# Aplikacja używa współczesnego sterownika psycopg 3.
++if DATABASE_URL.startswith("postgres://"):
++    DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL.removeprefix("postgres://")
++elif DATABASE_URL.startswith("postgresql://"):
++    DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL.removeprefix("postgresql://")
+ connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+-engine = create_engine(DATABASE_URL, connect_args=connect_args, pool_pre_ping=True)
++engine = create_engine(DATABASE_URL, connect_args=connect_args, pool_pre_ping=True, pool_recycle=300)
+ if DATABASE_URL.startswith("sqlite"):
+     @event.listens_for(engine, "connect")
+     def enable_sqlite_foreign_keys(connection, _record):
+diff --git a/app/main.py b/app/main.py
+index 50f74e14f15b01c13e7055cf739e57378bb0df3d..370a3bb602833b1f90f7cbbcf17c3310b587bc89 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -1,22 +1,23 @@
+-import json, math, mimetypes, os, shutil, uuid
++import hashlib, json, math, mimetypes, os, shutil, uuid
+ from datetime import UTC, date, datetime
+ from pathlib import Path
+-from typing import Any
++from typing import Any, Literal
++from urllib.parse import quote
+ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+ from fastapi.middleware.cors import CORSMiddleware
+-from fastapi.responses import FileResponse, StreamingResponse
++from fastapi.responses import FileResponse, Response, StreamingResponse
+ from fastapi.staticfiles import StaticFiles
+ from pydantic import BaseModel, Field
+ from sqlalchemy import Integer, delete, func, select
+ from sqlalchemy.orm import Session, selectinload
+ from .auth import create_token, current_user, decode_token, hash_password, roles, verify_password
+-from .database import Base, SessionLocal, UPLOAD_DIR, engine, get_db
++from .database import Base, DATABASE_URL, SessionLocal, UPLOAD_DIR, engine, get_db
+ from .migrations import ensure_schema_columns
+-from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, MaterialTemplate, Project, ProjectMaterial, ProjectVariantConfig, RFI, RowType, RowTypeComponent, Section, SiteDelivery, SiteDeliveryItem, User, WorkLog, Zone, ZoneVariantConfig
++from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, MaterialTemplate, Project, ProjectMaterial, ProjectVariantConfig, RFI, RowNote, RowType, RowTypeComponent, Section, SiteDelivery, SiteDeliveryItem, User, WorkLog, Zone, ZoneVariantConfig
+ from .services.report import daily_report
+ from .services.source_basis import SOURCE_DIR, build_eset_demand, load_eset_bom, load_source_manifest, sha256_file, source_analysis, source_entry_by_hash
+ 
+-app=FastAPI(title="ASOLAR ESET Tracker Manager",version="4.3.0")
++app=FastAPI(title="ASOLAR ESET Tracker Manager",version="4.5.0")
+ app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
+ MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024
+ MAX_PHOTO_SIZE=25*1024*1024
+@@ -24,8 +25,19 @@ MAX_PHOTO_SIZE=25*1024*1024
+ def utc_now():
+     return datetime.now(UTC).replace(tzinfo=None)
+ 
++async def upload_bytes(file:UploadFile,limit:int):
++    content=await file.read(limit+1)
++    if len(content)>limit:raise HTTPException(413,"Plik przekracza dozwolony limit rozmiaru")
++    return content
++
++def stored_response(content:bytes,media_type:str|None,filename:str,inline:bool=False):
++    clean=filename.replace('"',"").replace("\r","").replace("\n","")
++    safe=clean.encode("ascii","ignore").decode() or "plik"
++    disposition="inline" if inline else "attachment"
++    return Response(content=content,media_type=media_type or "application/octet-stream",headers={"Content-Disposition":f'{disposition}; filename="{safe}"; filename*=UTF-8\'\'{quote(clean)}'})
++
+ class LoginIn(BaseModel): username:str; password:str
+-class UserIn(BaseModel): username:str; full_name:str; role:str; password:str=Field(min_length=8)
++class UserIn(BaseModel): username:str=Field(min_length=3,max_length=80,pattern=r"^[A-Za-z0-9._-]+$"); full_name:str=Field(min_length=2,max_length=150); role:Literal["kierownik","brygadzista"]; password:str=Field(min_length=8,max_length=200)
+ class ProjectIn(BaseModel): name:str; location:str=""; capacity_mw:float=0; structure_type:str="tracker"
+ class ProjectUpdate(BaseModel): name:str|None=None; location:str|None=None; capacity_mw:float|None=None; structure_type:str|None=None; archived:bool|None=None
+ class ZoneIn(BaseModel): project_id:int; name:str
+@@ -34,6 +46,7 @@ class NameUpdate(BaseModel): name:str=Field(min_length=1,max_length=180)
+ class RowsIn(BaseModel): section_id:int; prefix:str="R"; start_number:int=1; count:int=Field(ge=1,le=2000); template_id:int|None=None; variant_name:str=""; length_m:float=0; specification:str=""; material_quantities:dict[str,float]=Field(default_factory=dict)
+ class RowIn(BaseModel): section_id:int; code:str; template_id:int|None=None; variant_name:str=""; length_m:float=0; specification:str=""; material_quantities:dict[str,float]=Field(default_factory=dict)
+ class RowUpdate(BaseModel): code:str|None=None; template_id:int|None=None; variant_name:str|None=None; length_m:float|None=None; specification:str|None=None; material_quantities:dict[str,float]|None=None; built:bool|None=None; qc_checked:bool|None=None; note:str|None=None
++class RowNoteIn(BaseModel): text:str=Field(min_length=1,max_length=5000); client_id:str|None=None
+ class RowMoveIn(BaseModel): direction:str
+ class RFIIn(BaseModel): project_id:int; row_id:int|None=None; title:str; description:str; priority:str="normalny"; client_id:str|None=None
+ class RFIUpdate(BaseModel): status:str|None=None; assigned_to_id:int|None=None; priority:str|None=None
+@@ -57,7 +70,7 @@ def audit(db,user,action,entity_type,entity_id=None,details=""):
+ def user_dict(user): return {"id":user.id,"username":user.username,"full_name":user.full_name,"role":user.role,"active":user.active}
+ def project_dict(project): return {"id":project.id,"name":project.name,"location":project.location,"capacity_mw":project.capacity_mw,"structure_type":project.structure_type,"archived":project.archived,"archived_at":project.archived_at}
+ def row_dict(row):
+-    return {"id":row.id,"code":row.code,"section_id":row.section_id,"template_id":row.template_id,"variant_name":row.variant_name,"variant_ordinal":row.variant_ordinal,"sort_order":row.sort_order,"auto_generated":row.auto_generated,"active":row.active,"length_m":row.length_m,"specification":row.specification,"material_quantities":json.loads(row.material_quantities_json or "{}"),"built":row.built,"built_by":row.built_by.full_name if row.built_by else None,"built_at":row.built_at,"qc_checked":row.qc_checked,"qc_by":row.qc_by.full_name if row.qc_by else None,"qc_at":row.qc_at,"note":row.note}
++    return {"id":row.id,"code":row.code,"section_id":row.section_id,"template_id":row.template_id,"variant_name":row.variant_name,"variant_ordinal":row.variant_ordinal,"sort_order":row.sort_order,"auto_generated":row.auto_generated,"active":row.active,"length_m":row.length_m,"specification":row.specification,"material_quantities":json.loads(row.material_quantities_json or "{}"),"built":row.built,"built_by":row.built_by.full_name if row.built_by else None,"built_at":row.built_at,"qc_checked":row.qc_checked,"qc_by":row.qc_by.full_name if row.qc_by else None,"qc_at":row.qc_at,"note":row.note,"last_changed_by":row.last_changed_by.full_name if row.last_changed_by else None,"last_changed_at":row.last_changed_at}
+ 
+ class Realtime:
+     def __init__(self): self.clients=[]
+@@ -212,21 +225,42 @@ def seed_source_documents(db,project_id,user_id):
+         stored=f'source-{entry["sha256"][:20]}.pdf';target=UPLOAD_DIR/stored
+         if not target.exists():shutil.copy2(source_path,target)
+         analysis=source_analysis(entry)
++        document_kind="PLANIMETRIA" if entry["filename"].lower().startswith("planimetria") else "PDF"
+         item=approved.get(entry["sha256"])
+         if item:
+-            item.status="zatwierdzone źródło";item.analysis_json=json.dumps(analysis,ensure_ascii=False);item.stored_name=stored;item.size=target.stat().st_size
++            item.status="zatwierdzone źródło";item.analysis_json=json.dumps(analysis,ensure_ascii=False);item.stored_name=stored;item.size=target.stat().st_size;item.kind=document_kind
+         else:
+-            db.add(Document(project_id=project_id,filename=entry["filename"],stored_name=stored,kind="PDF",size=target.stat().st_size,status="zatwierdzone źródło",extracted_text="",analysis_json=json.dumps(analysis,ensure_ascii=False),uploaded_by_id=user_id))
++            db.add(Document(project_id=project_id,filename=entry["filename"],stored_name=stored,kind=document_kind,size=target.stat().st_size,status="zatwierdzone źródło",extracted_text="",analysis_json=json.dumps(analysis,ensure_ascii=False),uploaded_by_id=user_id))
+ 
+ def seed():
+     Base.metadata.create_all(engine)
+     ensure_schema_columns(engine)
+     with SessionLocal() as db:
++        manager_password=os.getenv("ASOLAR_MANAGER_PASSWORD","Asolar2026!")
++        foreman1_password=os.getenv("ASOLAR_FOREMAN1_PASSWORD","Brygada1-2026!")
++        foreman2_password=os.getenv("ASOLAR_FOREMAN2_PASSWORD","Brygada2-2026!")
+         if not db.scalar(select(func.count(User.id))):
+             db.add_all([
+-                User(username="kierownik",full_name="Kierownik Budowy",role="kierownik",password_hash=hash_password("Asolar2026!")),
+-                User(username="brygadzista",full_name="Brygadzista",role="brygadzista",password_hash=hash_password("Brygada2026!")),
+-                User(username="magazynier",full_name="Magazynier",role="magazynier",password_hash=hash_password("Magazyn2026!"))])
++                User(username="kierownik",full_name="Kierownik Budowy",role="kierownik",password_hash=hash_password(manager_password)),
++                User(username="brygadzista1",full_name="Brygadzista 1",role="brygadzista",password_hash=hash_password(foreman1_password)),
++                User(username="brygadzista2",full_name="Brygadzista 2",role="brygadzista",password_hash=hash_password(foreman2_password))])
++        else:
++            legacy=db.scalar(select(User).where(User.username=="brygadzista"))
++            foreman1=db.scalar(select(User).where(User.username=="brygadzista1"))
++            if legacy and not foreman1:
++                legacy.username="brygadzista1";legacy.full_name="Brygadzista 1";legacy.role="brygadzista";legacy.password_hash=hash_password(foreman1_password)
++                foreman1=legacy
++            warehouse=db.scalar(select(User).where(User.username=="magazynier"))
++            foreman2=db.scalar(select(User).where(User.username=="brygadzista2"))
++            if warehouse and not foreman2:
++                warehouse.username="brygadzista2";warehouse.full_name="Brygadzista 2";warehouse.role="brygadzista";warehouse.password_hash=hash_password(foreman2_password)
++                foreman2=warehouse
++            if not foreman1:
++                db.add(User(username="brygadzista1",full_name="Brygadzista 1",role="brygadzista",password_hash=hash_password(foreman1_password)))
++            if not foreman2:
++                db.add(User(username="brygadzista2",full_name="Brygadzista 2",role="brygadzista",password_hash=hash_password(foreman2_password)))
++            if not db.scalar(select(User).where(User.username=="kierownik")):
++                db.add(User(username="kierownik",full_name="Kierownik Budowy",role="kierownik",password_hash=hash_password(manager_password)))
+         db.flush();manager=db.scalar(select(User).where(User.username=="kierownik"))
+         project=db.scalar(select(Project).limit(1))
+         if not project:
+@@ -238,6 +272,9 @@ def seed():
+         placeholder=db.scalar(select(Zone).where(Zone.name=="Strefa do uzupełnienia"))
+         if placeholder:placeholder.name="Strefa A"
+         for item in db.scalars(select(Project)).all():ensure_materials(db,item.id);ensure_variant_config(db,item.id);ensure_project_zone_configs(db,item.id)
++        for row in db.scalars(select(ConstructionRow).where(ConstructionRow.note!="")).all():
++            if not db.scalar(select(RowNote.id).where(RowNote.row_id==row.id)):
++                db.add(RowNote(client_id=f"legacy-row-note-{row.id}",row_id=row.id,text=row.note,author_id=row.built_by_id or row.qc_by_id or manager.id,created_at=row.last_changed_at or row.built_at or row.qc_at or utc_now()))
+         ensure_bom_components(db)
+         seed_source_templates(db,project.id)
+         seed_source_documents(db,project.id,manager.id)
+@@ -245,7 +282,7 @@ def seed():
+ seed()
+ 
+ @app.get("/api/health")
+-def health(): return {"status":"ok","version":"4.3.0","time":utc_now()}
++def health(): return {"status":"ok","version":"4.5.0","database":"postgresql" if DATABASE_URL.startswith("postgresql") else "sqlite","file_storage":"database","realtime":"websocket","time":utc_now()}
+ 
+ @app.post("/api/auth/login")
+ def login(data:LoginIn,db:Session=Depends(get_db)):
+@@ -260,10 +297,9 @@ def me(user=Depends(current_user)): return user_dict(user)
+ def users(db:Session=Depends(get_db),user=Depends(roles("kierownik"))): return [user_dict(x) for x in db.scalars(select(User).order_by(User.full_name))]
+ 
+ @app.post("/api/users")
+-def create_user(data:UserIn,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+-    if data.role not in ("kierownik","brygadzista","magazynier"): raise HTTPException(400,"Nieznana rola")
++async def create_user(data:UserIn,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+     if db.scalar(select(User).where(User.username==data.username)): raise HTTPException(409,"Login już istnieje")
+-    item=User(username=data.username,full_name=data.full_name,role=data.role,password_hash=hash_password(data.password));db.add(item);db.commit();return user_dict(item)
++    item=User(username=data.username.strip(),full_name=data.full_name.strip(),role=data.role,password_hash=hash_password(data.password));db.add(item);db.commit();await realtime.send("user.changed",{"id":item.id});return user_dict(item)
+ 
+ @app.get("/api/projects")
+ def projects(include_archived:bool=False,db:Session=Depends(get_db),user=Depends(current_user)):
+@@ -299,7 +335,7 @@ async def delete_project(project_id:int,db:Session=Depends(get_db),user=Depends(
+ 
+ @app.get("/api/projects/{project_id}/tree")
+ def project_tree(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+-    project=db.scalar(select(Project).where(Project.id==project_id).options(selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.row_type),selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.built_by),selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.qc_by)))
++    project=db.scalar(select(Project).where(Project.id==project_id).options(selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.row_type),selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.built_by),selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.qc_by),selectinload(Project.zones).selectinload(Zone.sections).selectinload(Section.rows).selectinload(ConstructionRow.last_changed_by)))
+     if not project: raise HTTPException(404,"Brak projektu")
+     return {**project_dict(project),"zones":[{"id":z.id,"name":z.name,"sections":[{"id":s.id,"name":s.name,"archived":s.archived,"rows":[row_dict(r) for r in s.rows if r.active]} for s in z.sections]} for z in project.zones]}
+ 
+@@ -336,7 +372,7 @@ async def delete_section(section_id:int,db:Session=Depends(get_db),user=Depends(
+ async def create_row(data:RowIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+     if not db.get(Section,data.section_id):raise HTTPException(404,"Brak sekcji")
+     if db.scalar(select(ConstructionRow).where(ConstructionRow.section_id==data.section_id,ConstructionRow.code==data.code)):raise HTTPException(409,"Rząd o tym oznaczeniu już istnieje w sekcji")
+-    values=data.model_dump(exclude={"material_quantities"});item=ConstructionRow(**values,material_quantities_json=json.dumps(data.material_quantities,ensure_ascii=False));db.add(item);db.flush();audit(db,user,"create","row",item.id,item.code);db.commit();await realtime.send("structure.changed");return row_dict(item)
++    values=data.model_dump(exclude={"material_quantities"});item=ConstructionRow(**values,material_quantities_json=json.dumps(data.material_quantities,ensure_ascii=False),last_changed_by_id=user.id,last_changed_at=utc_now());db.add(item);db.flush();audit(db,user,"create","row",item.id,item.code);db.commit();await realtime.send("structure.changed");return row_dict(item)
+ 
+ @app.post("/api/rows/bulk")
+ async def create_rows(data:RowsIn,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+@@ -346,7 +382,7 @@ async def create_rows(data:RowsIn,db:Session=Depends(get_db),user=Depends(roles(
+     for i in range(data.start_number,data.start_number+data.count):
+         code=f"{data.prefix}{i:03d}"
+         if db.scalar(select(ConstructionRow).where(ConstructionRow.section_id==data.section_id,ConstructionRow.code==code)): continue
+-        row=ConstructionRow(section_id=data.section_id,template_id=data.template_id,code=code,variant_name=data.variant_name,length_m=data.length_m,specification=data.specification,material_quantities_json=json.dumps(data.material_quantities,ensure_ascii=False));db.add(row);db.flush();created.append(row.id)
++        row=ConstructionRow(section_id=data.section_id,template_id=data.template_id,code=code,variant_name=data.variant_name,length_m=data.length_m,specification=data.specification,material_quantities_json=json.dumps(data.material_quantities,ensure_ascii=False),last_changed_by_id=user.id,last_changed_at=utc_now());db.add(row);db.flush();created.append(row.id)
+     audit(db,user,"bulk_create","row",details=f"{len(created)} rzędów");db.commit();await realtime.send("structure.changed");return {"created":len(created),"ids":created}
+ 
+ @app.patch("/api/rows/{row_id}")
+@@ -361,12 +397,33 @@ async def update_row(row_id:int,data:RowUpdate,db:Session=Depends(get_db),user=D
+         if user.role!="kierownik": raise HTTPException(403,"Odbiór QA/QC wykonuje Kierownik Budowy")
+         if data.qc_checked and not row.built: raise HTTPException(400,"Najpierw oznacz rząd jako zbudowany")
+         row.qc_checked=data.qc_checked;row.qc_by_id=user.id if data.qc_checked else None;row.qc_at=now if data.qc_checked else None
+-    if data.note is not None: row.note=data.note
++    if data.note is not None:
++        clean=data.note.strip()
++        if clean and clean!=row.note:db.add(RowNote(row_id=row.id,text=clean,author_id=user.id))
++        row.note=data.note
+     values=data.model_dump(exclude_unset=True,exclude={"built","qc_checked","note","material_quantities"})
+     for key,value in values.items():setattr(row,key,value)
+     if "material_quantities" in data.model_fields_set:row.material_quantities_json=json.dumps(data.material_quantities or {},ensure_ascii=False)
++    row.last_changed_by_id=user.id;row.last_changed_at=now
+     audit(db,user,"update","row",row.id,json.dumps(data.model_dump(exclude_unset=True),ensure_ascii=False));db.commit();await realtime.send("row.changed",{"id":row.id});db.refresh(row);return row_dict(row)
+ 
++@app.get("/api/rows/{row_id}/notes")
++def row_notes(row_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
++    if not db.get(ConstructionRow,row_id):raise HTTPException(404,"Brak rzędu")
++    items=db.scalars(select(RowNote).where(RowNote.row_id==row_id).options(selectinload(RowNote.author)).order_by(RowNote.created_at.desc(),RowNote.id.desc())).all()
++    return [{"id":item.id,"text":item.text,"author":item.author.full_name,"created_at":item.created_at} for item in items]
++
++@app.post("/api/rows/{row_id}/notes")
++async def create_row_note(row_id:int,data:RowNoteIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
++    row=db.get(ConstructionRow,row_id)
++    if not row:raise HTTPException(404,"Brak rzędu")
++    if data.client_id:
++        existing=db.scalar(select(RowNote).where(RowNote.client_id==data.client_id))
++        if existing:return {"id":existing.id,"deduplicated":True}
++    text=data.text.strip()
++    if not text:raise HTTPException(400,"Treść notatki jest wymagana")
++    item=RowNote(client_id=data.client_id,row_id=row.id,text=text,author_id=user.id);db.add(item);db.flush();row.note=text;row.last_changed_by_id=user.id;row.last_changed_at=item.created_at or utc_now();audit(db,user,"create","row_note",item.id,f"row:{row.id}");db.commit();await realtime.send("row.note",{"id":row.id});return {"id":item.id}
++
+ @app.delete("/api/rows/{row_id}")
+ async def delete_row(row_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+     row=db.get(ConstructionRow,row_id)
+@@ -524,12 +581,13 @@ async def delete_tracker_zone(zone_id:int,db:Session=Depends(get_db),user=Depend
+ def operational_rows(project_id:int,zone_id:int|None=None,db:Session=Depends(get_db),user=Depends(current_user)):
+     if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+     ensure_project_zone_configs(db,project_id)
+-    statement=select(ConstructionRow,Zone).join(Section,Section.id==ConstructionRow.section_id).join(Zone,Zone.id==Section.zone_id).where(Zone.project_id==project_id,ConstructionRow.auto_generated==True,ConstructionRow.active==True).options(selectinload(ConstructionRow.built_by),selectinload(ConstructionRow.qc_by))
++    statement=select(ConstructionRow,Zone).join(Section,Section.id==ConstructionRow.section_id).join(Zone,Zone.id==Section.zone_id).where(Zone.project_id==project_id,ConstructionRow.auto_generated==True,ConstructionRow.active==True).options(selectinload(ConstructionRow.built_by),selectinload(ConstructionRow.qc_by),selectinload(ConstructionRow.last_changed_by))
+     if zone_id is not None:statement=statement.where(Zone.id==zone_id)
+     pairs=db.execute(statement).all();row_ids=[row.id for row,_ in pairs]
+     photo_counts=dict(db.execute(select(Attachment.entity_id,func.count(Attachment.id)).where(Attachment.entity_type=="row",Attachment.entity_id.in_(row_ids or [-1])).group_by(Attachment.entity_id)).all())
++    note_counts=dict(db.execute(select(RowNote.row_id,func.count(RowNote.id)).where(RowNote.row_id.in_(row_ids or [-1])).group_by(RowNote.row_id)).all())
+     result=[]
+-    for row,zone in pairs:result.append({**row_dict(row),"zone_id":zone.id,"zone_name":zone.name,"photos":int(photo_counts.get(row.id,0))})
++    for row,zone in pairs:result.append({**row_dict(row),"zone_id":zone.id,"zone_name":zone.name,"photos":int(photo_counts.get(row.id,0)),"notes_count":int(note_counts.get(row.id,0))})
+     result.sort(key=lambda item:(item["zone_id"],item["sort_order"],item["id"]))
+     db.commit();return result
+ 
+@@ -548,6 +606,7 @@ async def move_operational_row(row_id:int,data:RowMoveIn,db:Session=Depends(get_
+     for item in rows:item.code=f"tmp-{uuid.uuid4().hex[:24]}"
+     db.flush()
+     for position,item in enumerate(rows,1):item.sort_order=position;item.code=str(position)
++    row.last_changed_by_id=user.id;row.last_changed_at=utc_now()
+     audit(db,user,"move","row",row_id,data.direction);db.commit();await realtime.send("row-order.changed",{"project_id":zone.project_id,"zone_id":zone.id});return {"ok":True,"moved":True}
+ 
+ def document_dict(item):
+@@ -561,31 +620,59 @@ def documents(project_id:int|None=None,db:Session=Depends(get_db),user=Depends(c
+     return [document_dict(x) for x in db.scalars(q)]
+ 
+ @app.post("/api/documents")
+-async def upload_document(project_id:int=Form(...),file:UploadFile=File(...),db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista","magazynier"))):
++async def upload_document(project_id:int=Form(...),file:UploadFile=File(...),db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+     if not db.get(Project,project_id): raise HTTPException(404,"Brak projektu")
+     if file.size is not None and file.size>MAX_DOCUMENT_SIZE: raise HTTPException(413,"Plik przekracza limit rozmiaru")
+     extension=Path(file.filename or "").suffix.lower()
+     if extension not in (".pdf",".dwg",".dxf",".xlsx",".xlsm"): raise HTTPException(400,"Dozwolone: PDF, DWG, DXF, XLSX")
+-    stored=f"{uuid.uuid4().hex}{extension}";path=UPLOAD_DIR/stored
+-    with path.open("wb") as target: shutil.copyfileobj(file.file,target)
+-    if path.stat().st_size>MAX_DOCUMENT_SIZE:
+-        path.unlink(missing_ok=True);raise HTTPException(413,"Plik przekracza limit rozmiaru")
+-    digest=sha256_file(path);source=source_entry_by_hash(digest)
++    content=await upload_bytes(file,MAX_DOCUMENT_SIZE)
++    stored=f"db-{uuid.uuid4().hex}{extension}"
++    digest=hashlib.sha256(content).hexdigest();source=source_entry_by_hash(digest)
+     if source:
+         existing=next((item for item in db.scalars(select(Document).where(Document.project_id==project_id)).all() if json.loads(item.analysis_json or "{}").get("sha256")==digest),None)
+         if existing:
+-            path.unlink(missing_ok=True);return {"id":existing.id,"status":existing.status,"analysis":json.loads(existing.analysis_json or "{}"),"deduplicated":True}
++            return {"id":existing.id,"status":existing.status,"analysis":json.loads(existing.analysis_json or "{}"),"deduplicated":True}
+         result=source_analysis(source);status="zatwierdzone źródło";filename=source["filename"]
+     else:
+         result={"approved_source":False,"sha256":digest,"summary":{"source_policy":"plik pomocniczy"},"warnings":["Plik zapisano, ale nie należy do dziesięciu zatwierdzonych źródeł. Nie zmienia instrukcji ani bazy BOM."]};status="pomocniczy — poza bazą źródłową";filename=Path(file.filename or "dokument").name
+-    item=Document(project_id=project_id,filename=filename,stored_name=stored,kind=extension[1:].upper(),size=path.stat().st_size,status=status,extracted_text="",analysis_json=json.dumps(result,ensure_ascii=False),uploaded_by_id=user.id)
++    item=Document(project_id=project_id,filename=filename,stored_name=stored,kind=extension[1:].upper(),size=len(content),status=status,extracted_text="",analysis_json=json.dumps(result,ensure_ascii=False),content_blob=content,content_type=file.content_type or mimetypes.guess_type(filename)[0],uploaded_by_id=user.id)
+     db.add(item);db.flush();audit(db,user,"upload","document",item.id,item.filename);db.commit();await realtime.send("document.changed",{"id":item.id});return {"id":item.id,"status":status,"analysis":result}
+ 
+ @app.get("/api/documents/{document_id}/file")
+ def document_file(document_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+     item=db.get(Document,document_id)
+     if not item: raise HTTPException(404,"Brak dokumentu")
+-    return FileResponse(UPLOAD_DIR/item.stored_name,filename=item.filename)
++    media=item.content_type or ("application/pdf" if item.kind in ("PDF","PLANIMETRIA") else mimetypes.guess_type(item.filename)[0])
++    if item.content_blob is not None:return stored_response(item.content_blob,media,item.filename,inline=item.kind in ("PDF","PLANIMETRIA"))
++    path=UPLOAD_DIR/item.stored_name
++    if not path.exists():raise HTTPException(404,"Brak pliku dokumentu")
++    return FileResponse(path,media_type=media,filename=item.filename,content_disposition_type="inline" if item.kind in ("PDF","PLANIMETRIA") else "attachment")
++
++@app.get("/api/planimetry")
++def planimetry(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
++    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
++    items=db.scalars(select(Document).where(Document.project_id==project_id,Document.kind=="PLANIMETRIA").order_by(Document.uploaded_at.desc())).all();users={item.id:item.full_name for item in db.scalars(select(User)).all()}
++    return [{"id":item.id,"title":json.loads(item.analysis_json or "{}").get("title") or item.filename,"filename":item.filename,"size":item.size,"uploaded_at":item.uploaded_at,"uploaded_by":users.get(item.uploaded_by_id,"—"),"deletable":not bool(json.loads(item.analysis_json or "{}").get("approved_source")),"file_url":f"/api/documents/{item.id}/file"} for item in items]
++
++@app.post("/api/planimetry")
++async def upload_planimetry(project_id:int=Form(...),title:str=Form(""),file:UploadFile=File(...),db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
++    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
++    if file.size is not None and file.size>MAX_DOCUMENT_SIZE:raise HTTPException(413,"Plik przekracza limit rozmiaru")
++    if Path(file.filename or "").suffix.lower()!=".pdf":raise HTTPException(400,"Planimetria musi być plikiem PDF")
++    content=await upload_bytes(file,MAX_DOCUMENT_SIZE)
++    stored=f"db-plan-{uuid.uuid4().hex}.pdf"
++    clean_title=title.strip() or Path(file.filename or "planimetria.pdf").stem
++    analysis={"planimetry":True,"official":True,"title":clean_title,"sha256":hashlib.sha256(content).hexdigest()}
++    item=Document(project_id=project_id,filename=Path(file.filename or "planimetria.pdf").name,stored_name=stored,kind="PLANIMETRIA",size=len(content),status="oficjalna planimetria",extracted_text="",analysis_json=json.dumps(analysis,ensure_ascii=False),content_blob=content,content_type="application/pdf",uploaded_by_id=user.id);db.add(item);db.flush();audit(db,user,"upload","planimetry",item.id,clean_title);db.commit();await realtime.send("planimetry.changed",{"project_id":project_id,"id":item.id});return {"id":item.id,"title":clean_title}
++
++@app.delete("/api/planimetry/{document_id}")
++async def delete_planimetry(document_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
++    item=db.get(Document,document_id)
++    if not item or item.kind!="PLANIMETRIA":raise HTTPException(404,"Brak planimetrii")
++    if json.loads(item.analysis_json or "{}").get("approved_source"):raise HTTPException(409,"Zatwierdzony dokument źródłowy nie może zostać usunięty")
++    project_id=item.project_id
++    if item.content_blob is None:(UPLOAD_DIR/item.stored_name).unlink(missing_ok=True)
++    audit(db,user,"delete","planimetry",item.id,item.filename);db.delete(item);db.commit();await realtime.send("planimetry.changed",{"project_id":project_id});return {"ok":True}
+ 
+ @app.get("/api/instructions")
+ def instructions(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+@@ -664,26 +751,29 @@ async def upload_photo(entity_type:str,entity_id:int,file:UploadFile=File(...),d
+     if file.size is not None and file.size>MAX_PHOTO_SIZE:raise HTTPException(413,"Zdjęcie przekracza limit 25 MB")
+     mime=file.content_type or "application/octet-stream"
+     if not mime.startswith("image/"):raise HTTPException(400,"Wymagany plik zdjęcia")
+-    extension=Path(file.filename or ".jpg").suffix.lower() or ".jpg";stored=f"{uuid.uuid4().hex}{extension}"
+-    with (UPLOAD_DIR/stored).open("wb") as target:shutil.copyfileobj(file.file,target)
+-    if (UPLOAD_DIR/stored).stat().st_size>MAX_PHOTO_SIZE:
+-        (UPLOAD_DIR/stored).unlink(missing_ok=True);raise HTTPException(413,"Zdjęcie przekracza limit 25 MB")
+-    item=Attachment(entity_type=entity_type,entity_id=entity_id,filename=Path(file.filename or "zdjecie.jpg").name,stored_name=stored,mime_type=mime,uploaded_by_id=user.id);db.add(item);db.commit();await realtime.send(f"{entity_type}.photo",{"id":entity_id});return {"id":item.id}
++    content=await upload_bytes(file,MAX_PHOTO_SIZE)
++    extension=Path(file.filename or ".jpg").suffix.lower() or ".jpg";stored=f"db-{uuid.uuid4().hex}{extension}"
++    item=Attachment(entity_type=entity_type,entity_id=entity_id,filename=Path(file.filename or "zdjecie.jpg").name,stored_name=stored,mime_type=mime,content_blob=content,uploaded_by_id=user.id);db.add(item)
++    if entity_type=="row":entity.last_changed_by_id=user.id;entity.last_changed_at=utc_now()
++    db.commit();await realtime.send(f"{entity_type}.photo",{"id":entity_id});return {"id":item.id}
+ 
+ @app.get("/api/{entity_type}/{entity_id}/photos")
+ def photos(entity_type:str,entity_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+     if entity_type not in ("row","rfi","worklog"):raise HTTPException(400,"Nieznany typ obiektu")
+-    items=db.scalars(select(Attachment).where(Attachment.entity_type==entity_type,Attachment.entity_id==entity_id).order_by(Attachment.created_at.desc())).all()
+-    return [{"id":item.id,"filename":item.filename,"mime_type":item.mime_type,"created_at":item.created_at,"url":f"/api/attachments/{item.id}"} for item in items]
++    items=db.scalars(select(Attachment).where(Attachment.entity_type==entity_type,Attachment.entity_id==entity_id).order_by(Attachment.created_at.desc())).all();users={item.id:item.full_name for item in db.scalars(select(User)).all()}
++    return [{"id":item.id,"filename":item.filename,"mime_type":item.mime_type,"created_at":item.created_at,"uploaded_by":users.get(item.uploaded_by_id,"—"),"url":f"/api/attachments/{item.id}"} for item in items]
+ 
+ @app.get("/api/attachments/{attachment_id}")
+ def attachment(attachment_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+     item=db.get(Attachment,attachment_id)
+     if not item:raise HTTPException(404,"Brak załącznika")
+-    return FileResponse(UPLOAD_DIR/item.stored_name,media_type=item.mime_type,filename=item.filename)
++    if item.content_blob is not None:return stored_response(item.content_blob,item.mime_type,item.filename,inline=True)
++    path=UPLOAD_DIR/item.stored_name
++    if not path.exists():raise HTTPException(404,"Brak pliku załącznika")
++    return FileResponse(path,media_type=item.mime_type,filename=item.filename,content_disposition_type="inline")
+ 
+ @app.post("/api/deliveries")
+-async def create_delivery(data:DeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","magazynier"))):
++async def create_delivery(data:DeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+     if data.client_id:
+         existing=db.scalar(select(SiteDelivery).where(SiteDelivery.client_id==data.client_id))
+         if existing:return {"id":existing.id,"deduplicated":True}
+@@ -705,7 +795,7 @@ def project_materials(project_id:int,db:Session=Depends(get_db),user=Depends(cur
+     return [{"id":item.id,"slot_number":item.slot_number,"name":item.name,"unit":item.unit,"required_quantity":item.required_quantity} for item in db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==project_id).order_by(ProjectMaterial.slot_number))]
+ 
+ @app.put("/api/projects/{project_id}/materials")
+-async def update_project_materials(project_id:int,data:MaterialListIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","magazynier"))):
++async def update_project_materials(project_id:int,data:MaterialListIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+     if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+     if {item.slot_number for item in data.items}!={1,2,3}:raise HTTPException(400,"Lista musi zawierać dokładnie pozycje 1, 2 i 3")
+     ensure_materials(db,project_id);db.flush();by_slot={item.slot_number:item for item in db.scalars(select(ProjectMaterial).where(ProjectMaterial.project_id==project_id))}
+@@ -744,7 +834,7 @@ def bom_delivery_status(project_id:int,db:Session=Depends(get_db),user=Depends(c
+     result=bom_delivery_status_payload(db,project_id);db.commit();return result
+ 
+ @app.post("/api/bom-deliveries")
+-async def create_bom_delivery(data:BomDeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","magazynier"))):
++async def create_bom_delivery(data:BomDeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+     if not db.get(Project,data.project_id):raise HTTPException(404,"Brak projektu")
+     if not data.wz_number.strip():raise HTTPException(400,"Numer WZ jest wymagany")
+     if data.client_id:
+diff --git a/app/migrations.py b/app/migrations.py
+index 9fd9102a1af137dbf6cebef1686ce7b0254e869b..86893b3134aab700a281061f6be144872ebe1792 100644
+--- a/app/migrations.py
++++ b/app/migrations.py
+@@ -18,6 +18,15 @@ COLUMNS = {
+         "active": "BOOLEAN NOT NULL DEFAULT 1",
+         "variant_ordinal": "INTEGER NOT NULL DEFAULT 0",
+         "sort_order": "INTEGER NOT NULL DEFAULT 0",
++        "last_changed_by_id": "INTEGER NULL REFERENCES users(id)",
++        "last_changed_at": "DATETIME NULL",
++    },
++    "documents": {
++        "content_blob": "BLOB NULL",
++        "content_type": "VARCHAR(100) NULL",
++    },
++    "attachments": {
++        "content_blob": "BLOB NULL",
+     },
+     "work_logs": {
+         "qc_notes": "TEXT NOT NULL DEFAULT ''",
+@@ -39,5 +48,5 @@ def ensure_schema_columns(engine) -> None:
+                 if name not in existing:
+                     sql_definition = definition
+                     if engine.dialect.name == "postgresql":
+-                        sql_definition = sql_definition.replace("BOOLEAN NOT NULL DEFAULT 0", "BOOLEAN NOT NULL DEFAULT FALSE").replace("DATETIME", "TIMESTAMP")
++                        sql_definition = sql_definition.replace("BOOLEAN NOT NULL DEFAULT 0", "BOOLEAN NOT NULL DEFAULT FALSE").replace("DATETIME", "TIMESTAMP").replace("BLOB", "BYTEA")
+                     connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {sql_definition}")
+diff --git a/app/models.py b/app/models.py
+index 1069f86157ff72c59ddfffa3f26f17329c030790..cab303ff1e415486ebbd364f7ddf43da3945e846 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -1,5 +1,5 @@
+ from datetime import UTC, date, datetime
+-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
++from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
+ from sqlalchemy.orm import Mapped, mapped_column, relationship
+ from .database import Base
+ 
+@@ -96,10 +96,25 @@ class ConstructionRow(Base):
+     qc_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+     qc_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+     note: Mapped[str] = mapped_column(Text, default="")
++    last_changed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
++    last_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+     section: Mapped[Section] = relationship(back_populates="rows")
+     row_type: Mapped[RowType | None] = relationship()
+     built_by: Mapped[User | None] = relationship(foreign_keys=[built_by_id])
+     qc_by: Mapped[User | None] = relationship(foreign_keys=[qc_by_id])
++    last_changed_by: Mapped[User | None] = relationship(foreign_keys=[last_changed_by_id])
++    notes: Mapped[list["RowNote"]] = relationship(back_populates="row", cascade="all, delete-orphan")
++
++class RowNote(Base):
++    __tablename__ = "row_notes"
++    id: Mapped[int] = mapped_column(primary_key=True)
++    client_id: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
++    row_id: Mapped[int] = mapped_column(ForeignKey("construction_rows.id", ondelete="CASCADE"), index=True)
++    text: Mapped[str] = mapped_column(Text)
++    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
++    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
++    row: Mapped[ConstructionRow] = relationship(back_populates="notes")
++    author: Mapped[User] = relationship()
+ 
+ class Component(Base):
+     __tablename__ = "components"
+@@ -132,6 +147,8 @@ class Document(Base):
+     status: Mapped[str] = mapped_column(String(80), default="wgrany")
+     extracted_text: Mapped[str] = mapped_column(Text, default="")
+     analysis_json: Mapped[str] = mapped_column(Text, default="{}")
++    content_blob: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
++    content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+     uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+ 
+@@ -244,6 +261,7 @@ class Attachment(Base):
+     filename: Mapped[str] = mapped_column(String(255))
+     stored_name: Mapped[str] = mapped_column(String(255), unique=True)
+     mime_type: Mapped[str] = mapped_column(String(100))
++    content_blob: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+     uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+ 
+diff --git a/desktop.py b/desktop.py
+index b09b221b31b495a748fb8c52013cbfa50394515d..defe90ff30a147d5eacc626c2dd62c1747f83bf2 100644
+--- a/desktop.py
++++ b/desktop.py
+@@ -1,6 +1,8 @@
+ """Uruchamia lokalny serwer ASOLAR ESET Tracker Manager w przeglądarce."""
+ 
+ import os
++import socket
++import sys
+ import threading
+ import webbrowser
+ 
+@@ -10,7 +12,17 @@ import uvicorn
+ if __name__ == "__main__":
+     port = int(os.getenv("PORT", "8765"))
+     host = os.getenv("ASOLAR_HOST", "127.0.0.1")
++    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
++        if probe.connect_ex(("127.0.0.1", port)) == 0:
++            print(f"Port {port} jest już zajęty — prawdopodobnie działa poprzednia wersja ASOLAR.")
++            print("Zamknij wcześniejsze czarne okno programu, a następnie ponownie uruchom Uruchom-Windows.bat.")
++            if os.getenv("ASOLAR_DESKTOP_EXE"):
++                try:
++                    input("Naciśnij Enter, aby zamknąć to okno...")
++                except EOFError:
++                    pass
++            sys.exit(2)
+     threading.Timer(1.2, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
+-    print(f"ASOLAR ESET Tracker Manager działa pod adresem http://127.0.0.1:{port}")
++    print(f"ASOLAR ESET Tracker Manager v4.5.0 działa pod adresem http://127.0.0.1:{port}")
+     print("Aby zakończyć, zamknij to okno lub naciśnij Ctrl+C.")
+     uvicorn.run("app.main:app", host=host, port=port, log_level="info")
+diff --git a/docker-compose.yml b/docker-compose.yml
+index d4f84c5244726bfc05b83a41718e4f65d2d9b917..23d1f96d451a9c28fda2525df6be96a4688a6fdd 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -6,6 +6,9 @@ services:
+     environment:
+       ASOLAR_HOST: 0.0.0.0
+       ASOLAR_SECRET: ${ASOLAR_SECRET:-zmien-ten-klucz-przed-wdrozeniem}
++      ASOLAR_MANAGER_PASSWORD: ${ASOLAR_MANAGER_PASSWORD:-Asolar2026!}
++      ASOLAR_FOREMAN1_PASSWORD: ${ASOLAR_FOREMAN1_PASSWORD:-Brygada1-2026!}
++      ASOLAR_FOREMAN2_PASSWORD: ${ASOLAR_FOREMAN2_PASSWORD:-Brygada2-2026!}
+     volumes:
+       - asolar_data:/app/data
+ 
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+index 36c138722dfe8c4e695e29b39cfacad21fec6785..52baceb41dfa04a2f0fc0c5906e96a1949587386 100644
+--- a/frontend/package-lock.json
++++ b/frontend/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "asolar-eset-tracker-frontend",
+-  "version": "4.3.0",
++  "version": "4.5.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "asolar-eset-tracker-frontend",
+-      "version": "4.3.0",
++      "version": "4.5.0",
+       "dependencies": {
+         "@vitejs/plugin-react": "latest",
+         "react": "latest",
+diff --git a/frontend/package.json b/frontend/package.json
+index 5785c364ac36b6a7c9ea1de24f6ddaf4b57dfc76..b6600ee75500914417b4d7f21df943162360aa2e 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "asolar-eset-tracker-frontend",
+   "private": true,
+-  "version": "4.3.0",
++  "version": "4.5.0",
+   "type": "module",
+   "scripts": {
+     "dev": "vite --host 0.0.0.0 --port 5173",
+diff --git a/frontend/public/sw.js b/frontend/public/sw.js
+index 99c6bfb98d4725342fe6f2eec1c5089916978052..8859a8ec05d0d3ef1de475db4d903eaba1e110a4 100644
+--- a/frontend/public/sw.js
++++ b/frontend/public/sw.js
+@@ -1,4 +1,4 @@
+-const CACHE = "asolar-eset-shell-v43";
++const CACHE = "asolar-eset-shell-v45";
+ const SHELL = ["/", "/manifest.webmanifest", "/icon.svg"];
+ self.addEventListener("install", event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting())));
+ self.addEventListener("activate", event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));
+diff --git a/frontend/src/App.jsx b/frontend/src/App.jsx
+index 3f25ea4f174814b3a06037aba77b1f10e8256c9c..f9762083bc7140cbc8bbbf7cd6e38013ba52f08f 100644
+--- a/frontend/src/App.jsx
++++ b/frontend/src/App.jsx
+@@ -5,8 +5,10 @@ const NAV = [
+   ["dashboard", "Pulpit", "▦"], ["projects", "Projekty", "◆"], ["structure", "Strefy i rzędy", "▤"],
+   ["reports", "Meldunki", "◷"], ["logistics", "Zapotrzebowanie", "⌗"],
+   ["deliveries", "Dostawy na budowę", "⇩"],
++  ["map", "Mapa / Planimetria", "⌖"],
+   ["documents", "Dokumenty", "▱"], ["rfi", "RFI / problemy", "!"], ["users", "Użytkownicy", "♙"],
+ ];
++const APP_VERSION = "4.5.0";
+ const TRACKER_VARIANTS = ["1x28", "1x42", "1x56", "1x70", "1x42+1x28", "1x56+1x28", "1x56+1x42"];
+ const today = () => new Date().toISOString().slice(0, 10);
+ const uid = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+@@ -28,10 +30,9 @@ function Login({ onLogin }) {
+       setToken(result.token); onLogin(result.user);
+     } catch (err) { setError(err.message); } finally { setBusy(false); }
+   }
+-  const accounts = [["kierownik", "Asolar2026!", "Kierownik"], ["brygadzista", "Brygada2026!", "Brygadzista"], ["magazynier", "Magazyn2026!", "Magazynier"]];
+   return <main className="login-page">
+     <section className="login-brand"><div className="brand-mark large">A</div><p className="eyebrow">ASOLAR ESET</p><h1>Trackery pod kontrolą.</h1><p>Konfiguracja wariantów ESET, automatyczne zapotrzebowanie BOM, meldunki i jakość na farmie PV.</p><div className="login-feature"><span>✓</span> 4 warianty podstawowe i 3 warianty łączone</div><div className="login-feature"><span>✓</span> Zapotrzebowanie według manuali ESET</div><div className="login-feature"><span>✓</span> Praca mobilna i kolejka offline</div></section>
+-    <section className="login-panel"><form className="login-card" onSubmit={submit}><div className="mobile-brand"><div className="brand-mark">A</div><strong>ASOLAR</strong></div><p className="eyebrow">ESET TRACKER MANAGER</p><h2>Zaloguj się</h2><label>Login<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" /></label><label>Hasło<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /></label>{error && <div className="alert error">{error}</div>}<button className="primary wide" disabled={busy}>{busy ? "Logowanie…" : "Zaloguj się"}</button><div className="demo-accounts"><span>Konta startowe</span>{accounts.map(([u, p, name]) => <button type="button" key={u} onClick={() => { setUsername(u); setPassword(p); }}>{name}</button>)}</div></form></section>
++    <section className="login-panel"><form className="login-card" onSubmit={submit}><div className="mobile-brand"><div className="brand-mark">A</div><strong>ASOLAR</strong></div><p className="eyebrow">ESET TRACKER MANAGER · v{APP_VERSION}</p><h2>Zaloguj się</h2><label>Login<input required value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" /></label><label>Hasło<input required type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /></label>{error && <div className="alert error">{error}</div>}<button className="primary wide" disabled={busy}>{busy ? "Logowanie…" : "Zaloguj się"}</button><small className="login-help">Użyj danych przekazanych przez Kierownika Budowy.</small></form></section>
+   </main>;
+ }
+ 
+@@ -54,7 +55,7 @@ function PhotoGallery({ entityType, entityId, refresh = 0, notify }) {
+     return () => { active = false; urls.forEach(URL.revokeObjectURL); };
+   }, [entityType, entityId, refresh]);
+   if (!photos.length) return null;
+-  return <div className="photo-gallery">{photos.map(photo => <a href={photo.url} target="_blank" rel="noreferrer" key={photo.id}><img src={photo.url} alt={photo.filename} /><small>{fmt(photo.created_at)}</small></a>)}</div>;
++  return <div className="photo-gallery">{photos.map(photo => <a href={photo.url} target="_blank" rel="noreferrer" key={photo.id}><img src={photo.url} alt={photo.filename} /><small>{photo.uploaded_by || "—"}<br />{fmt(photo.created_at)}</small></a>)}</div>;
+ }
+ 
+ function Dashboard({ project, sync, notify, user }) {
+@@ -126,13 +127,14 @@ function ZoneConfigurationView({ project, sync, notify, user, onOpenRows }) {
+   return <><section className="card zone-guide"><div><strong>1. Utwórz strefę</strong><small>Nadaj jej własną nazwę.</small></div><i>→</i><div><strong>2. Wpisz warianty</strong><small>Ustaw liczby 4 wariantów podstawowych i 3 łączonych.</small></div><i>→</i><div><strong>3. Pracuj na rzędach</strong><small>System utworzy każdą pozycję i policzy BOM.</small></div></section>{editable && <form className="card zone-create" onSubmit={create}><label>Nazwa nowej strefy<input required placeholder="np. Strefa A — północ" value={name} onChange={e => setName(e.target.value)} /></label><button className="primary" disabled={busy}>{busy ? "Tworzenie…" : "+ Dodaj strefę"}</button></form>}<div className="zone-config-list">{zones.map(zone => <ZoneConfigurationCard key={zone.id} zone={zone} editable={editable} canDelete={user.role === "kierownik"} onChanged={load} onDeleted={load} notify={notify} />)}</div>{!zones.length && <Empty>Nie ma jeszcze stref. Dodaj pierwszą strefę i wpisz liczbę rzędów.</Empty>}{!!zones.length && <button className="open-operations primary" onClick={onOpenRows}>Przejdź do widoku operacyjnego →</button>}</>;
+ }
+ 
+-function OperationalRowCard({ row, user, onUpdate, onMove, canMoveUp, canMoveDown, canReorder, notify }) {
+-  const [open, setOpen] = useState(false); const [note, setNote] = useState(row.note || ""); const [photoRefresh, setPhotoRefresh] = useState(0); const [busy, setBusy] = useState(false);
+-  useEffect(() => setNote(row.note || ""), [row.note]);
+-  async function saveNote() { setBusy(true); await onUpdate(row.id, { note }, "Notatka rzędu zapisana"); setBusy(false); }
+-  async function photo(file) { if (!file) return; const fd = new FormData(); fd.append("file", file); try { await upload(`/api/row/${row.id}/photos`, fd); notify("Zdjęcie przypisane do rzędu"); setPhotoRefresh(value => value + 1); } catch (error) { notify(error.message, "error"); } }
+-  const canWork = user.role === "kierownik" || user.role === "brygadzista";
+-  return <article className={`operational-row card ${row.qc_checked ? "verified" : row.built ? "built" : ""}`}><div className="operational-row-main"><button className="operational-identity" onClick={() => setOpen(value => !value)}><span>RZĄD {row.code}</span><strong>{row.variant_name}</strong><small>{row.zone_name}</small></button><div className="order-controls" title={canReorder ? "Ustaw kolejność na placu" : "Sortowanie jest dostępne w widoku wszystkich statusów"}><button disabled={!canReorder || !canMoveUp} onClick={() => onMove(row.id, "up")} aria-label={`Przesuń rząd ${row.code} w górę`}>↑<small>Góra</small></button><button disabled={!canReorder || !canMoveDown} onClick={() => onMove(row.id, "down")} aria-label={`Przesuń rząd ${row.code} w dół`}>↓<small>Dół</small></button></div><button className={`operational-status ${row.built ? "done" : ""}`} disabled={!canWork} onClick={() => onUpdate(row.id, { built: !row.built }, row.built ? "Cofnięto status montażu" : "Rząd oznaczony jako zbudowany")}><i>{row.built ? "✓" : "○"}</i><span>{row.built ? "Zbudowany" : "Do zrobienia"}<small>{row.built_by || "Montaż"}</small></span></button><button className={`operational-status ${row.qc_checked ? "qc" : ""}`} disabled={user.role !== "kierownik" || !row.built} onClick={() => onUpdate(row.id, { qc_checked: !row.qc_checked }, row.qc_checked ? "Cofnięto odbiór QA/QC" : "Rząd odebrany QA/QC")}><i>{row.qc_checked ? "✓" : "○"}</i><span>{row.qc_checked ? "Sprawdzony" : "QA/QC"}<small>{row.qc_by || (row.built ? "Odbiera kierownik" : "Najpierw montaż")}</small></span></button><button className="row-detail-button" onClick={() => setOpen(value => !value)}>{open ? "Zamknij" : `Uwagi i zdjęcia${row.photos ? ` (${row.photos})` : ""}`}</button></div>{open && <div className="operational-detail"><label>Indywidualne notatki terenowe<textarea rows="3" placeholder="Uwagi, kolizje, poprawki…" value={note} disabled={!canWork} onChange={e => setNote(e.target.value)} /></label><div className="operational-detail-actions">{canWork && <button className="secondary" disabled={busy} onClick={saveNote}>{busy ? "Zapisywanie…" : "Zapisz notatkę"}</button>}{canWork && <label className="camera-button compact-camera"><input type="file" accept="image/*" capture="environment" onChange={e => photo(e.target.files[0])} /><span>▧</span>Zrób lub dodaj zdjęcie</label>}</div><PhotoGallery entityType="row" entityId={row.id} refresh={photoRefresh} notify={notify} /></div>}</article>;
++function OperationalRowCard({ row, user, onUpdate, onMove, onMemoryChanged, canMoveUp, canMoveDown, canReorder, notify }) {
++  const [open, setOpen] = useState(false); const [note, setNote] = useState(""); const [notes, setNotes] = useState([]); const [photoRefresh, setPhotoRefresh] = useState(0); const [busy, setBusy] = useState(false);
++  const loadNotes = useCallback(async () => { try { setNotes(await cachedGet(`/api/rows/${row.id}/notes`)); } catch (error) { notify(error.message, "error"); } }, [row.id]);
++  useEffect(() => { if (open) loadNotes(); }, [open, loadNotes]);
++  async function saveNote() { const text = note.trim(); if (!text) return; setBusy(true); try { const result = await mutate(`/api/rows/${row.id}/notes`, "POST", { text, client_id: uid() }); notify(result.queued ? "Notatka zapisana offline" : "Notatka dodana do historii rzędu"); if (result.queued) setNotes(current => [{ id: `offline-${Date.now()}`, text, author: user.full_name, created_at: new Date().toISOString() }, ...current]); else { await loadNotes(); onMemoryChanged(); } setNote(""); } catch (error) { notify(error.message, "error"); } finally { setBusy(false); } }
++  async function photo(file) { if (!file) return; const fd = new FormData(); fd.append("file", file); try { await upload(`/api/row/${row.id}/photos`, fd); notify("Zdjęcie przypisane do rzędu"); setPhotoRefresh(value => value + 1); onMemoryChanged(); } catch (error) { notify(error.message, "error"); } }
++  const canWork = user.role === "kierownik" || user.role === "brygadzista"; const memoryCount = (row.notes_count || 0) + (row.photos || 0);
++  return <article className={`operational-row card ${row.qc_checked ? "verified" : row.built ? "built" : ""}`}><div className="operational-row-main"><button className="operational-identity" onClick={() => setOpen(value => !value)}><span>RZĄD {row.code}</span><strong>{row.variant_name}</strong><small>{row.zone_name}</small></button><div className="order-controls" title={canReorder ? "Ustaw kolejność na placu" : "Sortowanie jest dostępne w widoku wszystkich statusów"}><button disabled={!canReorder || !canMoveUp} onClick={() => onMove(row.id, "up")} aria-label={`Przesuń rząd ${row.code} w górę`}>↑<small>Góra</small></button><button disabled={!canReorder || !canMoveDown} onClick={() => onMove(row.id, "down")} aria-label={`Przesuń rząd ${row.code} w dół`}>↓<small>Dół</small></button></div><button className={`operational-status ${row.built ? "done" : ""}`} disabled={!canWork} onClick={() => onUpdate(row.id, { built: !row.built }, row.built ? "Cofnięto status montażu" : "Rząd oznaczony jako zbudowany")}><i>{row.built ? "✓" : "○"}</i><span>{row.built ? "Zbudowany" : "Do zrobienia"}<small>{row.built_by || "Montaż"}</small></span></button><button className={`operational-status ${row.qc_checked ? "qc" : ""}`} disabled={user.role !== "kierownik" || !row.built} onClick={() => onUpdate(row.id, { qc_checked: !row.qc_checked }, row.qc_checked ? "Cofnięto odbiór QA/QC" : "Rząd odebrany QA/QC")}><i>{row.qc_checked ? "✓" : "○"}</i><span>{row.qc_checked ? "Sprawdzony" : "QA/QC"}<small>{row.qc_by || (row.built ? "Odbiera kierownik" : "Najpierw montaż")}</small></span></button><button className="row-detail-button" onClick={() => setOpen(value => !value)}>{open ? "Zamknij" : `Pamięć rzędu${memoryCount ? ` (${memoryCount})` : ""}`}</button></div>{row.last_changed_at && <div className="row-last-change">Ostatnia zmiana: <strong>{row.last_changed_by || "użytkownik"}</strong> · {fmt(row.last_changed_at)}</div>}{open && <div className="operational-detail"><div className="row-memory-compose"><label>Dodaj wpis do trwałej historii<textarea rows="3" placeholder="Uwagi, kolizje, poprawki…" value={note} disabled={!canWork} onChange={e => setNote(e.target.value)} /></label><div className="operational-detail-actions">{canWork && <button className="secondary" disabled={busy || !note.trim()} onClick={saveNote}>{busy ? "Zapisywanie…" : "Dodaj notatkę"}</button>}{canWork && <label className="camera-button compact-camera"><input type="file" accept="image/*" capture="environment" multiple onChange={async e => { for (const file of e.target.files) await photo(file); }} /><span>▧</span>Zrób lub dodaj zdjęcia</label>}</div></div><div className="row-memory-grid"><section><h3>Historia notatek</h3>{notes.map(item => <article className="row-note" key={item.id}><p>{item.text}</p><small>{item.author} · {fmt(item.created_at)}</small></article>)}{!notes.length && <small>Brak notatek dla tego rzędu.</small>}</section><section><h3>Galeria zdjęć</h3><PhotoGallery entityType="row" entityId={row.id} refresh={photoRefresh} notify={notify} /></section></div></div>}</article>;
+ }
+ 
+ function OperationalRowsView({ project, sync, notify, user }) {
+@@ -141,11 +143,11 @@ function OperationalRowsView({ project, sync, notify, user }) {
+   useEffect(() => { load(); }, [load]);
+   async function update(id, payload, message) { try { const result = await mutate(`/api/rows/${id}`, "PATCH", payload); notify(result.queued ? `${message} — zapis offline` : message); setRows(current => current.map(row => row.id === id ? { ...row, ...payload, ...(payload.built === false ? { qc_checked: false } : {}) } : row)); if (!result.queued) load(); } catch (error) { notify(error.message, "error"); } }
+   async function move(id, direction) { try { const result = await mutate(`/api/rows/${id}/move`, "POST", { direction }); setRows(current => { const selected = current.find(row => row.id === id); if (!selected) return current; const inZone = current.filter(row => row.zone_id === selected.zone_id).sort((a, b) => a.sort_order - b.sort_order); const index = inZone.findIndex(row => row.id === id); const target = direction === "up" ? index - 1 : index + 1; if (target < 0 || target >= inZone.length) return current; [inZone[index], inZone[target]] = [inZone[target], inZone[index]]; const positions = new Map(inZone.map((row, position) => [row.id, position + 1])); return current.map(row => positions.has(row.id) ? { ...row, sort_order: positions.get(row.id), code: String(positions.get(row.id)) } : row).sort((a, b) => a.zone_id - b.zone_id || a.sort_order - b.sort_order); }); notify(result.queued ? "Nowa kolejność zapisana offline" : "Kolejność rzędów zapisana"); if (!result.queued) load(); } catch (error) { notify(error.message, "error"); } }
+-  const visible = rows.filter(row => (!zoneId || row.zone_id === Number(zoneId)) && (filter === "all" || (filter === "todo" && !row.built) || (filter === "built" && row.built && !row.qc_checked) || (filter === "qc" && row.qc_checked)));
++  const visible = rows.filter(row => (!zoneId || row.zone_id === Number(zoneId)) && (filter === "all" || (filter === "todo" && !row.built) || (filter === "built" && row.built) || (filter === "memory" && ((row.notes_count || 0)>0 || (row.photos || 0)>0 || row.note))));
+   const built = rows.filter(row => row.built).length; const qc = rows.filter(row => row.qc_checked).length;
+   const position = new Map(); for (const zone of zones) { const inZone = rows.filter(row => row.zone_id === zone.id).sort((a, b) => a.sort_order - b.sort_order); inZone.forEach((row, index) => position.set(row.id, { up: index > 0, down: index < inZone.length - 1 })); }
+   const canReorder = filter === "all" && (user.role === "kierownik" || user.role === "brygadzista");
+-  return <><section className="operational-toolbar card"><label>Strefa<select value={zoneId} onChange={e => setZoneId(e.target.value)}><option value="">Wszystkie strefy</option>{zones.map(zone => <option key={zone.id} value={zone.id}>{zone.name}</option>)}</select></label><label>Status<select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">Wszystkie</option><option value="todo">Do zrobienia</option><option value="built">Zbudowane, bez QA/QC</option><option value="qc">Sprawdzone QA/QC</option></select></label><div className="operational-kpis"><span><b>{rows.length}</b> rzędów</span><span><b>{built}</b> zbudowanych</span><span><b>{qc}</b> sprawdzonych</span></div>{filter !== "all" && <small className="sorting-hint">Wybierz „Wszystkie”, aby zmieniać kolejność rzędów.</small>}</section><div className="operational-list">{visible.map(row => <OperationalRowCard key={row.id} row={row} user={user} onUpdate={update} onMove={move} canMoveUp={position.get(row.id)?.up} canMoveDown={position.get(row.id)?.down} canReorder={canReorder} notify={notify} />)}</div>{!visible.length && <Empty>{rows.length ? "Brak rzędów spełniających wybrany filtr." : "Skonfiguruj liczbę rzędów w strefie, aby wygenerować widok operacyjny."}</Empty>}</>;
++  return <><section className="operational-toolbar card"><label>Strefa<select value={zoneId} onChange={e => setZoneId(e.target.value)}><option value="">Wszystkie strefy</option>{zones.map(zone => <option key={zone.id} value={zone.id}>{zone.name}</option>)}</select></label><div className="quick-filters" role="group" aria-label="Filtry rzędów"><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>Wszystkie</button><button className={filter === "todo" ? "active" : ""} onClick={() => setFilter("todo")}>Tylko do zrobienia</button><button className={filter === "built" ? "active" : ""} onClick={() => setFilter("built")}>Zbudowane</button><button className={filter === "memory" ? "active" : ""} onClick={() => setFilter("memory")}>Notatki / zdjęcia</button></div><div className="operational-kpis"><span><b>{rows.length}</b> rzędów</span><span><b>{built}</b> zbudowanych</span><span><b>{qc}</b> sprawdzonych</span></div>{filter !== "all" && <small className="sorting-hint">Wybierz „Wszystkie”, aby zmieniać kolejność rzędów.</small>}</section><div className="operational-list">{visible.map(row => <OperationalRowCard key={row.id} row={row} user={user} onUpdate={update} onMove={move} onMemoryChanged={load} canMoveUp={position.get(row.id)?.up} canMoveDown={position.get(row.id)?.down} canReorder={canReorder} notify={notify} />)}</div>{!visible.length && <Empty>{rows.length ? "Brak rzędów spełniających wybrany filtr." : "Skonfiguruj liczbę rzędów w strefie, aby wygenerować widok operacyjny."}</Empty>}</>;
+ }
+ 
+ function TrackerConfiguration({ project, sync, notify, user }) {
+@@ -175,7 +177,7 @@ function BomDeliveries({ project, sync, notify, user }) {
+   const [status, setStatus] = useState(null); const [history, setHistory] = useState([]); const [form, setForm] = useState(blank); const [search, setSearch] = useState(""); const [showAll, setShowAll] = useState(false); const [busy, setBusy] = useState(false);
+   const load = useCallback(async () => { if (!project) return; try { const [comparison, deliveries] = await Promise.all([cachedGet(`/api/projects/${project.id}/bom-delivery-status`), cachedGet(`/api/bom-deliveries?project_id=${project.id}`)]); setStatus(comparison); setHistory(deliveries); } catch (e) { notify(e.message, "error"); } }, [project, sync]);
+   useEffect(() => { setForm(blank()); load(); }, [project?.id, sync]);
+-  const canWrite = user.role === "kierownik" || user.role === "magazynier";
++  const canWrite = user.role === "kierownik" || user.role === "brygadzista";
+   const visible = useMemo(() => (status?.items || []).filter(item => (showAll || item.required > 0) && `${item.name} ${item.key} ${item.category}`.toLowerCase().includes(search.toLowerCase())), [status, showAll, search]);
+   function updateLine(index, field, value) { setForm(current => ({ ...current, lines: current.lines.map((line, i) => i === index ? { ...line, [field]: value } : line) })); }
+   async function submit(event) { event.preventDefault(); const items = form.lines.filter(line => line.component_id && Number(line.quantity_received) > 0).map(line => ({ component_id: Number(line.component_id), quantity_received: Number(line.quantity_received), quantity_damaged: Number(line.quantity_damaged || 0) })); if (!items.length) return notify("Dodaj przynajmniej jedną pozycję i ilość dostawy", "error"); setBusy(true); try { const result = await mutate("/api/bom-deliveries", "POST", { project_id: project.id, delivery_date: form.delivery_date, wz_number: form.wz_number, supplier: form.supplier, note: form.note, client_id: uid(), items }); notify(result.queued ? "WZ zapisane offline — oczekuje na synchronizację" : "Dostawa doliczona do stanu na budowie"); setForm(blank()); if (!result.queued) load(); } catch (e) { notify(e.message, "error"); } finally { setBusy(false); } }
+@@ -188,6 +190,18 @@ function BomDeliveries({ project, sync, notify, user }) {
+     <section className="card delivery-history"><div className="card-head"><div><p className="eyebrow">HISTORIA PRZYJĘĆ</p><h2>Dokumenty WZ</h2></div></div>{history.map(item => <details className="delivery" key={item.id}><summary><div><strong>WZ {item.wz_number}</strong><small>{item.supplier || "bez dostawcy"} · dodał(a): {item.created_by}</small></div><span>{fmt(item.delivery_date)}</span></summary>{item.items.map(line => <div className="delivery-line" key={line.component_id}><span>{line.name}<small>{line.key}</small></span><strong>{qty(line.quantity_received)} {line.unit}</strong>{line.quantity_damaged > 0 && <em>uszkodzone {qty(line.quantity_damaged)}</em>}</div>)}{item.note && <p className="delivery-note">{item.note}</p>}{user.role === "kierownik" && <button className="danger-button" onClick={() => remove(item)}>Usuń WZ</button>}</details>)}{!history.length && <Empty>Stan dostaw wynosi 0. Dodaj pierwszy dokument WZ.</Empty>}</section></>;
+ }
+ 
++function PlanMap({ project, sync, notify, user }) {
++  const [items, setItems] = useState([]); const [selectedId, setSelectedId] = useState(null); const [pdfUrl, setPdfUrl] = useState(""); const [zoom, setZoom] = useState(1); const [title, setTitle] = useState(""); const [file, setFile] = useState(null); const [busy, setBusy] = useState(false);
++  const load = useCallback(async () => { if (!project) return; try { const list = await cachedGet(`/api/planimetry?project_id=${project.id}`); setItems(list); setSelectedId(current => list.some(item => item.id === current) ? current : list[0]?.id || null); } catch (error) { notify(error.message, "error"); } }, [project, sync]);
++  useEffect(() => { setSelectedId(null); load(); }, [project?.id, sync]);
++  const selected = items.find(item => item.id === selectedId);
++  useEffect(() => { let active = true; let objectUrl = ""; if (!selected) { setPdfUrl(""); return undefined; } api(selected.file_url).then(blob => { objectUrl = URL.createObjectURL(blob); if (active) setPdfUrl(objectUrl); }).catch(error => notify(error.message, "error")); return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); }; }, [selected?.id]);
++  async function submit(event) { event.preventDefault(); if (!file) return; setBusy(true); try { const form = new FormData(); form.append("project_id", project.id); form.append("title", title); form.append("file", file); await upload("/api/planimetry", form); notify("Planimetria PDF została zapisana"); setTitle(""); setFile(null); await load(); } catch (error) { notify(error.message, "error"); } finally { setBusy(false); } }
++  async function remove(item) { if (!window.confirm(`Usunąć plan „${item.title}”?`)) return; try { await api(`/api/planimetry/${item.id}`, { method: "DELETE" }); notify("Planimetria usunięta"); load(); } catch (error) { notify(error.message, "error"); } }
++  if (!project) return <Empty>Wybierz aktywny projekt.</Empty>;
++  return <><PageHead eyebrow="PLAN BUDOWY W TERENIE" title="Mapa / Planimetria"><span className="badge success">PDF · telefon i komputer</span></PageHead>{user.role === "kierownik" && <form className="card plan-upload" onSubmit={submit}><div><p className="eyebrow">OFICJALNY PLAN</p><h2>Dodaj planimetrię projektu</h2><small>Plik zostanie trwale zapisany w projekcie i udostępniony całemu zespołowi.</small></div><label>Nazwa planu<input value={title} onChange={e => setTitle(e.target.value)} placeholder="np. Planimetria wykonawcza — rewizja 03" /></label><label className="file-drop"><input required type="file" accept="application/pdf,.pdf" onChange={e => setFile(e.target.files[0])} /><span>{file?.name || "Wybierz PDF"}</span></label><button className="primary" disabled={busy}>{busy ? "Wgrywanie…" : "Wgraj planimetrię"}</button></form>}<div className="plan-layout"><aside className="card plan-list"><div className="card-head"><h2>Dostępne plany</h2><span className="badge neutral">{items.length}</span></div>{items.map(item => <button className={selectedId === item.id ? "active" : ""} key={item.id} onClick={() => { setSelectedId(item.id); setZoom(1); }}><span>PDF</span><div><strong>{item.title}</strong><small>{item.uploaded_by} · {fmt(item.uploaded_at)}</small></div></button>)}{!items.length && <Empty>Kierownik nie wgrał jeszcze planimetrii PDF.</Empty>}</aside><section className="card plan-viewer"><div className="plan-toolbar"><div><strong>{selected?.title || "Brak wybranego planu"}</strong>{selected && <small>{selected.filename}</small>}</div>{selected && <><div className="zoom-controls"><button onClick={() => setZoom(value => Math.max(.6, value - .2))} aria-label="Oddal">−</button><b>{Math.round(zoom * 100)}%</b><button onClick={() => setZoom(value => Math.min(2.4, value + .2))} aria-label="Przybliż">+</button><button onClick={() => setZoom(1)}>Dopasuj</button></div><button className="secondary" onClick={() => download(selected.file_url, selected.filename).catch(error => notify(error.message, "error"))}>↓ Pobierz PDF</button>{user.role === "kierownik" && selected.deletable && <button className="danger-button" onClick={() => remove(selected)}>Usuń</button>}</>}</div>{selected && !pdfUrl && <Loader />}{pdfUrl && <div className="plan-pdf-viewport"><iframe title={selected.title} src={`${pdfUrl}#toolbar=1&navpanes=0&view=FitH`} style={{ transform: `scale(${zoom})` }} /></div>}{!selected && <Empty>Wybierz lub wgraj planimetrię, aby otworzyć plan budowy.</Empty>}</section></div></>;
++}
++
+ function RowEditor({ row, templates, materials, sectionArchived, user, action, remove, notify }) {
+   const [open, setOpen] = useState(false); const [photoRefresh, setPhotoRefresh] = useState(0);
+   const [form, setForm] = useState({ code: row.code, template_id: row.template_id || "", variant_name: row.variant_name || "", length_m: row.length_m || 0, specification: row.specification || "", material_quantities: { ...emptyMaterials(), ...(row.material_quantities || {}) }, note: row.note || "" });
+@@ -235,7 +249,7 @@ function Logistics({ project, sync, notify, user }) {
+   async function saveDemand() { try { await api(`/api/projects/${project.id}/materials`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: demand.map(x => ({ slot_number: x.slot_number, name: x.name, unit: x.unit, required_quantity: Number(x.required_quantity || 0) })) }) }); notify("Zapotrzebowanie zapisane"); load(); } catch (e) { notify(e.message, "error"); } }
+   async function saveDelivery(e) { e.preventDefault(); const items = materials.map(item => ({ material_id: item.id, quantity_received: Number(delivery.quantities[item.slot_number] || 0), quantity_damaged: Number(delivery.damaged[item.slot_number] || 0) })).filter(x => x.quantity_received > 0); if (!items.length) return notify("Wpisz ilość przynajmniej jednej części", "error"); try { const result = await mutate("/api/deliveries", "POST", { project_id: project.id, delivery_date: delivery.delivery_date, wz_number: delivery.wz_number, supplier: delivery.supplier, note: delivery.note, client_id: uid(), items }); notify(result.queued ? "WZ zapisane offline" : "Dostawa doliczona do stanu pola"); setDelivery({ delivery_date: today(), wz_number: "", supplier: "", note: "", quantities: emptyMaterials(), damaged: emptyMaterials() }); if (!result.queued) load(); } catch (err) { notify(err.message, "error"); } }
+   if (!project) return <Empty>Wybierz projekt.</Empty>;
+-  return <><PageHead eyebrow="MAGAZYN A POLE" title="Zapotrzebowanie i fizyczne dostawy"><span className="badge neutral">dokładnie 3 części</span></PageHead><div className="logistics-explainer"><div><strong>1. Zapotrzebowanie projektu</strong><span>Ile potrzeba łącznie</span></div><i>→</i><div><strong>2. Dostawy WZ</strong><span>Co rzeczywiście przyjechało</span></div><i>→</i><div><strong>3. Stan na polu</strong><span>Dostawy minus uszkodzenia</span></div></div><section className="stock-cards">{stock.map(item => <article className="card" key={item.material_id}><span className="material-number">{item.slot_number}</span><h2>{item.name}</h2><div className="stock-values"><div><small>Potrzeba</small><strong>{item.required} {item.unit}</strong></div><div><small>Na polu</small><strong>{item.available} {item.unit}</strong></div></div><Progress value={item.required ? item.available / item.required * 100 : 0} /><span className={`balance ${item.balance < 0 ? "negative" : "positive"}`}>{item.balance < 0 ? `Brakuje ${Math.abs(item.balance)}` : `Nadwyżka ${item.balance}`} {item.unit}</span></article>)}</section><div className="split"><section className="card"><div className="card-head"><div><p className="eyebrow">LISTA PROJEKTOWA</p><h2>Edytuj trzy części i zapotrzebowanie</h2></div></div>{demand.map((item, index) => <div className="demand-line" key={item.slot_number}><span>{item.slot_number}</span><input aria-label="Nazwa części" value={item.name} onChange={e => updateDemand(index, "name", e.target.value)} /><input aria-label="Jednostka" value={item.unit} onChange={e => updateDemand(index, "unit", e.target.value)} /><input aria-label="Zapotrzebowanie" type="number" min="0" step="0.01" value={item.required_quantity} onChange={e => updateDemand(index, "required_quantity", e.target.value)} /></div>)}{(user.role === "kierownik" || user.role === "magazynier") && <button className="primary wide" onClick={saveDemand}>Zapisz zapotrzebowanie</button>}</section>{(user.role === "kierownik" || user.role === "magazynier") && <form className="card" onSubmit={saveDelivery}><div className="card-head"><div><p className="eyebrow">FIZYCZNA DOSTAWA</p><h2>Nowy dokument WZ</h2></div></div><div className="form-grid"><label>Data<input type="date" value={delivery.delivery_date} onChange={e => setDelivery({ ...delivery, delivery_date: e.target.value })} /></label><label>Numer WZ<input required value={delivery.wz_number} onChange={e => setDelivery({ ...delivery, wz_number: e.target.value })} /></label><label>Dostawca<input value={delivery.supplier} onChange={e => setDelivery({ ...delivery, supplier: e.target.value })} /></label></div>{materials.map(item => <div className="delivery-three" key={item.id}><strong>{item.name}</strong><label>Przyjechało<input type="number" min="0" step="0.01" value={delivery.quantities[item.slot_number] || 0} onChange={e => setDelivery({ ...delivery, quantities: { ...delivery.quantities, [item.slot_number]: e.target.value } })} /></label><label>Uszkodzone<input type="number" min="0" step="0.01" value={delivery.damaged[item.slot_number] || 0} onChange={e => setDelivery({ ...delivery, damaged: { ...delivery.damaged, [item.slot_number]: e.target.value } })} /></label></div>)}<label>Uwagi<textarea value={delivery.note} onChange={e => setDelivery({ ...delivery, note: e.target.value })} /></label><button className="primary wide">Dodaj dostawę do stanu pola</button></form>}</div><section className="card"><div className="card-head"><h2>Historia fizycznych dostaw</h2></div>{deliveries.map(item => <details className="delivery" key={item.id}><summary><div><strong>WZ {item.wz_number}</strong><small>{item.supplier || "bez dostawcy"}</small></div><span>{fmt(item.delivery_date)}</span></summary>{item.items.map(line => <div className="delivery-line" key={line.material_id}><span>{line.name}</span><strong>{line.quantity_received} {line.unit}</strong>{line.quantity_damaged > 0 && <em>uszkodzone {line.quantity_damaged}</em>}</div>)}</details>)}{!deliveries.length && <Empty>Stan pola wynosi 0. Dodaj pierwszy dokument WZ.</Empty>}</section></>;
++  return <><PageHead eyebrow="MAGAZYN A POLE" title="Zapotrzebowanie i fizyczne dostawy"><span className="badge neutral">dokładnie 3 części</span></PageHead><div className="logistics-explainer"><div><strong>1. Zapotrzebowanie projektu</strong><span>Ile potrzeba łącznie</span></div><i>→</i><div><strong>2. Dostawy WZ</strong><span>Co rzeczywiście przyjechało</span></div><i>→</i><div><strong>3. Stan na polu</strong><span>Dostawy minus uszkodzenia</span></div></div><section className="stock-cards">{stock.map(item => <article className="card" key={item.material_id}><span className="material-number">{item.slot_number}</span><h2>{item.name}</h2><div className="stock-values"><div><small>Potrzeba</small><strong>{item.required} {item.unit}</strong></div><div><small>Na polu</small><strong>{item.available} {item.unit}</strong></div></div><Progress value={item.required ? item.available / item.required * 100 : 0} /><span className={`balance ${item.balance < 0 ? "negative" : "positive"}`}>{item.balance < 0 ? `Brakuje ${Math.abs(item.balance)}` : `Nadwyżka ${item.balance}`} {item.unit}</span></article>)}</section><div className="split"><section className="card"><div className="card-head"><div><p className="eyebrow">LISTA PROJEKTOWA</p><h2>Edytuj trzy części i zapotrzebowanie</h2></div></div>{demand.map((item, index) => <div className="demand-line" key={item.slot_number}><span>{item.slot_number}</span><input aria-label="Nazwa części" value={item.name} onChange={e => updateDemand(index, "name", e.target.value)} /><input aria-label="Jednostka" value={item.unit} onChange={e => updateDemand(index, "unit", e.target.value)} /><input aria-label="Zapotrzebowanie" type="number" min="0" step="0.01" value={item.required_quantity} onChange={e => updateDemand(index, "required_quantity", e.target.value)} /></div>)}{(user.role === "kierownik" || user.role === "brygadzista") && <button className="primary wide" onClick={saveDemand}>Zapisz zapotrzebowanie</button>}</section>{(user.role === "kierownik" || user.role === "brygadzista") && <form className="card" onSubmit={saveDelivery}><div className="card-head"><div><p className="eyebrow">FIZYCZNA DOSTAWA</p><h2>Nowy dokument WZ</h2></div></div><div className="form-grid"><label>Data<input type="date" value={delivery.delivery_date} onChange={e => setDelivery({ ...delivery, delivery_date: e.target.value })} /></label><label>Numer WZ<input required value={delivery.wz_number} onChange={e => setDelivery({ ...delivery, wz_number: e.target.value })} /></label><label>Dostawca<input value={delivery.supplier} onChange={e => setDelivery({ ...delivery, supplier: e.target.value })} /></label></div>{materials.map(item => <div className="delivery-three" key={item.id}><strong>{item.name}</strong><label>Przyjechało<input type="number" min="0" step="0.01" value={delivery.quantities[item.slot_number] || 0} onChange={e => setDelivery({ ...delivery, quantities: { ...delivery.quantities, [item.slot_number]: e.target.value } })} /></label><label>Uszkodzone<input type="number" min="0" step="0.01" value={delivery.damaged[item.slot_number] || 0} onChange={e => setDelivery({ ...delivery, damaged: { ...delivery.damaged, [item.slot_number]: e.target.value } })} /></label></div>)}<label>Uwagi<textarea value={delivery.note} onChange={e => setDelivery({ ...delivery, note: e.target.value })} /></label><button className="primary wide">Dodaj dostawę do stanu pola</button></form>}</div><section className="card"><div className="card-head"><h2>Historia fizycznych dostaw</h2></div>{deliveries.map(item => <details className="delivery" key={item.id}><summary><div><strong>WZ {item.wz_number}</strong><small>{item.supplier || "bez dostawcy"}</small></div><span>{fmt(item.delivery_date)}</span></summary>{item.items.map(line => <div className="delivery-line" key={line.material_id}><span>{line.name}</span><strong>{line.quantity_received} {line.unit}</strong>{line.quantity_damaged > 0 && <em>uszkodzone {line.quantity_damaged}</em>}</div>)}</details>)}{!deliveries.length && <Empty>Stan pola wynosi 0. Dodaj pierwszy dokument WZ.</Empty>}</section></>;
+ }
+ 
+ function Reports({ project, sync, notify, user }) {
+@@ -290,21 +304,21 @@ function Users({ notify, user }) {
+   const [items, setItems] = useState([]); const [form, setForm] = useState({ username: "", full_name: "", role: "brygadzista", password: "" }); const load = useCallback(() => { if (user.role === "kierownik") cachedGet("/api/users").then(setItems).catch(e => notify(e.message, "error")); }, [user]); useEffect(() => { load(); }, [load]);
+   async function submit(e) { e.preventDefault(); try { await api("/api/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) }); notify("Konto utworzone"); setForm({ username: "", full_name: "", role: "brygadzista", password: "" }); load(); } catch (err) { notify(err.message, "error"); } }
+   if (user.role !== "kierownik") return <Empty>Tylko kierownik zarządza użytkownikami.</Empty>;
+-  return <><PageHead eyebrow="TRZY ROLE" title="Użytkownicy" /><div className="split"><section className="card">{items.map(item => <div className="user-row" key={item.id}><div className="avatar">{item.full_name.split(" ").map(x => x[0]).slice(0, 2).join("")}</div><div><strong>{item.full_name}</strong><small>@{item.username}</small></div><span className="badge neutral">{roleName(item.role)}</span></div>)}</section><form className="card" onSubmit={submit}><h2>Nowe konto</h2><label>Imię i nazwisko<input required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} /></label><label>Login<input required value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} /></label><label>Rola<select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}><option value="kierownik">Kierownik Budowy</option><option value="brygadzista">Brygadzista</option><option value="magazynier">Magazynier</option></select></label><label>Hasło<input type="password" minLength="8" required value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></label><button className="primary wide">Utwórz konto</button></form></div></>;
++  return <><PageHead eyebrow="WSPÓLNA PRACA ONLINE" title="Użytkownicy" /><div className="split"><section className="card">{items.map(item => <div className="user-row" key={item.id}><div className="avatar">{item.full_name.split(" ").map(x => x[0]).slice(0, 2).join("")}</div><div><strong>{item.full_name}</strong><small>@{item.username}</small></div><span className="badge neutral">{roleName(item.role)}</span></div>)}</section><form className="card" onSubmit={submit}><h2>Nowe konto</h2><label>Imię i nazwisko<input required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} /></label><label>Login<input required value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} /></label><label>Rola<select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}><option value="kierownik">Kierownik Budowy</option><option value="brygadzista">Brygadzista</option></select></label><label>Hasło<input type="password" minLength="8" required value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></label><button className="primary wide">Utwórz konto</button></form></div></>;
+ }
+ 
+ export default function App() {
+-  const [user, setUser] = useState(null); const [loading, setLoading] = useState(!!getToken()); const [projects, setProjects] = useState([]); const [projectId, setProjectIdState] = useState(Number(localStorage.getItem("asolar_project")) || null); const [page, setPage] = useState("dashboard"); const [sync, setSync] = useState(0); const [online, setOnline] = useState(navigator.onLine); const [queue, setQueue] = useState(queuedCount()); const [toast, setToast] = useState(null); const [preselectedRow, setPreselectedRow] = useState(null);
++  const [user, setUser] = useState(null); const [loading, setLoading] = useState(!!getToken()); const [projects, setProjects] = useState([]); const [projectId, setProjectIdState] = useState(Number(localStorage.getItem("asolar_project")) || null); const [page, setPage] = useState("dashboard"); const [sync, setSync] = useState(0); const [online, setOnline] = useState(navigator.onLine); const [live, setLive] = useState(false); const [queue, setQueue] = useState(queuedCount()); const [toast, setToast] = useState(null); const [preselectedRow, setPreselectedRow] = useState(null);
+   const notify = useCallback((message, type = "success") => { setToast({ message, type }); setTimeout(() => setToast(null), 4200); }, []);
+   function setProjectId(id) { setProjectIdState(id); if (id) localStorage.setItem("asolar_project", id); else localStorage.removeItem("asolar_project"); setSync(x => x + 1); }
+   const loadProjects = useCallback(async () => { try { const result = await api("/api/projects?include_archived=true"); setProjects(result); const active = result.filter(x => !x.archived); const selected = active.find(x => x.id === projectId) || active[0]; if (selected && selected.id !== projectId) setProjectId(selected.id); } catch (e) { notify(e.message, "error"); } }, [projectId]);
+   useEffect(() => { if (!getToken()) { setLoading(false); return; } api("/api/auth/me").then(setUser).catch(() => setUser(null)).finally(() => setLoading(false)); }, []);
+   useEffect(() => { if (user) loadProjects(); }, [user]);
+   useEffect(() => { const update = async () => { setOnline(navigator.onLine); if (navigator.onLine && user) { const sent = await flushQueue(); if (sent) { notify(`Zsynchronizowano ${sent} zapisów`); setSync(x => x + 1); } } setQueue(queuedCount()); }; const unauthorized = () => setUser(null); window.addEventListener("online", update); window.addEventListener("offline", update); window.addEventListener("asolar:queue", update); window.addEventListener("asolar:unauthorized", unauthorized); update(); return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); window.removeEventListener("asolar:queue", update); window.removeEventListener("asolar:unauthorized", unauthorized); }; }, [user]);
+-  useEffect(() => { if (!user || !getToken()) return; const protocol = location.protocol === "https:" ? "wss" : "ws"; const ws = new WebSocket(`${protocol}://${location.host}/ws?token=${encodeURIComponent(getToken())}`); ws.onmessage = () => setSync(x => x + 1); const keepalive = setInterval(() => { if (ws.readyState === 1) ws.send("ping"); }, 30000); return () => { clearInterval(keepalive); ws.close(); }; }, [user]);
++  useEffect(() => { if (!user || !getToken()) return; let ws; let retry; let stopped = false; const protocol = location.protocol === "https:" ? "wss" : "ws"; const connect = () => { if (stopped || !navigator.onLine) return; ws = new WebSocket(`${protocol}://${location.host}/ws?token=${encodeURIComponent(getToken())}`); ws.onopen = () => setLive(true); ws.onmessage = () => setSync(x => x + 1); ws.onerror = () => ws.close(); ws.onclose = () => { setLive(false); if (!stopped) retry = setTimeout(connect, 3000); }; }; connect(); const keepalive = setInterval(() => { if (ws?.readyState === 1) ws.send("ping"); }, 30000); const fallback = setInterval(() => { if (navigator.onLine) setSync(x => x + 1); }, 15000); return () => { stopped = true; setLive(false); clearTimeout(retry); clearInterval(keepalive); clearInterval(fallback); ws?.close(); }; }, [user]);
+   const activeProjects = projects.filter(x => !x.archived); const project = activeProjects.find(x => x.id === projectId) || activeProjects[0];
+   function navigate(target, rowId = null) { setPage(target); if (rowId) setPreselectedRow(rowId); window.scrollTo({ top: 0, behavior: "smooth" }); }
+   if (loading) return <Loader />; if (!user) return <Login onLogin={setUser} />;
+   const visible = NAV.filter(([id]) => id !== "users" || user.role === "kierownik"); const common = { project, sync, notify, user };
+-  return <div className="app-shell"><aside className="sidebar"><div className="logo"><div className="brand-mark">A</div><div><strong>ASOLAR</strong><small>ESET Tracker</small></div></div><nav>{visible.map(([id, label, icon]) => <button key={id} className={page === id ? "active" : ""} onClick={() => navigate(id)}><span>{icon}</span>{label}</button>)}</nav><div className="sidebar-foot"><div className="user-mini"><div className="avatar">{user.full_name.split(" ").map(x => x[0]).slice(0, 2).join("")}</div><div><strong>{user.full_name}</strong><small>{roleName(user.role)}</small></div></div><button className="logout" onClick={() => { setToken(null); setUser(null); }}>Wyloguj</button></div></aside><header className="topbar"><div className="mobile-logo"><div className="brand-mark">A</div><strong>ASOLAR</strong></div><label className="project-select"><span>Aktywny projekt</span><select value={project?.id || ""} onChange={e => setProjectId(Number(e.target.value))}>{activeProjects.map(item => <option key={item.id} value={item.id}>{item.name} · {item.capacity_mw} MW</option>)}</select></label><div className={`connection ${online ? "online" : "offline"}`}><i />{online ? "Online" : "Offline"}{queue > 0 && <b>{queue}</b>}</div><button className="avatar top-avatar" onClick={() => { setToken(null); setUser(null); }}>{user.full_name.split(" ").map(x => x[0]).slice(0, 2).join("")}</button></header><main className="content">{page === "dashboard" && <Dashboard {...common} />}{page === "projects" && <Projects projects={projects} reloadProjects={loadProjects} notify={notify} user={user} setProjectId={setProjectId} projectId={projectId} />}{page === "structure" && <TrackerConfiguration {...common} />}{page === "reports" && <Reports {...common} />}{page === "logistics" && <ProjectDemand {...common} />}{page === "deliveries" && <BomDeliveries {...common} />}{page === "documents" && <Documents {...common} />}{page === "rfi" && <RfiPage {...common} preselectedRow={preselectedRow} clearPreselected={() => setPreselectedRow(null)} />}{page === "users" && <Users {...common} />}</main><nav className="bottom-nav">{visible.map(([id, label, icon]) => <button key={id} className={page === id ? "active" : ""} onClick={() => navigate(id)}><span>{icon}</span><small>{label.split(" ")[0]}</small></button>)}</nav>{toast && <div className={`toast ${toast.type}`}>{toast.type === "error" ? "!" : "✓"}<span>{toast.message}</span></div>}</div>;
++  return <div className="app-shell"><aside className="sidebar"><div className="logo"><div className="brand-mark">A</div><div><strong>ASOLAR</strong><small>ESET Tracker · v{APP_VERSION}</small></div></div><nav>{visible.map(([id, label, icon]) => <button key={id} className={page === id ? "active" : ""} onClick={() => navigate(id)}><span>{icon}</span>{label}</button>)}</nav><div className="sidebar-foot"><div className="user-mini"><div className="avatar">{user.full_name.split(" ").map(x => x[0]).slice(0, 2).join("")}</div><div><strong>{user.full_name}</strong><small>{roleName(user.role)}</small></div></div><button className="logout" onClick={() => { setToken(null); setUser(null); }}>Wyloguj</button></div></aside><header className="topbar"><div className="mobile-logo"><div className="brand-mark">A</div><strong>ASOLAR <small>v{APP_VERSION}</small></strong></div><label className="project-select"><span>Aktywny projekt</span><select value={project?.id || ""} onChange={e => setProjectId(Number(e.target.value))}>{activeProjects.map(item => <option key={item.id} value={item.id}>{item.name} · {item.capacity_mw} MW</option>)}</select></label><div className={`connection ${online ? "online" : "offline"}`}><i />{online ? (live ? "Na żywo" : "Łączenie…") : "Offline"}{queue > 0 && <b>{queue}</b>}</div><button className="avatar top-avatar" onClick={() => { setToken(null); setUser(null); }}>{user.full_name.split(" ").map(x => x[0]).slice(0, 2).join("")}</button></header><main className="content">{page === "dashboard" && <Dashboard {...common} />}{page === "projects" && <Projects projects={projects} reloadProjects={loadProjects} notify={notify} user={user} setProjectId={setProjectId} projectId={projectId} />}{page === "structure" && <TrackerConfiguration {...common} />}{page === "reports" && <Reports {...common} />}{page === "logistics" && <ProjectDemand {...common} />}{page === "deliveries" && <BomDeliveries {...common} />}{page === "map" && <PlanMap {...common} />}{page === "documents" && <Documents {...common} />}{page === "rfi" && <RfiPage {...common} preselectedRow={preselectedRow} clearPreselected={() => setPreselectedRow(null)} />}{page === "users" && <Users {...common} />}</main><nav className="bottom-nav">{visible.map(([id, label, icon]) => <button key={id} className={page === id ? "active" : ""} onClick={() => navigate(id)}><span>{icon}</span><small>{label.split(" ")[0]}</small></button>)}</nav>{toast && <div className={`toast ${toast.type}`}>{toast.type === "error" ? "!" : "✓"}<span>{toast.message}</span></div>}</div>;
+ }
+diff --git a/frontend/src/styles.css b/frontend/src/styles.css
+index 69e81a73deb546cc7329313658e816094fdff4b7..22bad994a830ffe8b70667784cd1a2ce85bea2d8 100644
+--- a/frontend/src/styles.css
++++ b/frontend/src/styles.css
+@@ -547,8 +547,11 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
+ .module-reference.compact { margin: 0; border-width: 1px 0 0; border-radius: 0; }
+ .module-reference.compact > div { padding: .8rem 1.2rem; }
+ .open-operations { display: block; margin: 1rem 0 0 auto; min-height: 44px; }
+-.operational-toolbar { display: grid; grid-template-columns: 220px 220px 1fr; gap: 1rem; align-items: end; margin-bottom: 1rem; }
++.operational-toolbar { display: grid; grid-template-columns: 210px minmax(420px,1fr) auto; gap: 1rem; align-items: end; margin-bottom: 1rem; }
+ .operational-toolbar label { margin: 0; }
++.quick-filters { display: flex; gap: .35rem; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: #f4f7f5; overflow-x: auto; }
++.quick-filters button { flex: 1 0 auto; min-height: 36px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); padding: .45rem .65rem; font-size: .62rem; font-weight: 700; white-space: nowrap; }
++.quick-filters button.active { color: white; background: var(--green-900); }
+ .operational-kpis { display: flex; justify-content: flex-end; gap: .6rem; }
+ .operational-kpis span { border-radius: 8px; background: var(--green-50); padding: .65rem .75rem; color: var(--muted); font-size: .62rem; }
+ .operational-kpis b { color: var(--green-900); font-size: .9rem; margin-right: .2rem; }
+@@ -578,13 +581,47 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
+ .operational-status.qc i { color: white; background: var(--green-500); border-color: var(--green-500); }
+ .operational-status:disabled { cursor: not-allowed; opacity: .58; }
+ .row-detail-button { color: var(--green-700); font-size: .63rem; font-weight: 700; padding: .7rem; }
++.row-last-change { padding: .35rem 1rem; border-top: 1px solid #eef2ef; background: #fbfcfb; color: var(--muted); font-size: .55rem; text-align: right; }
+ .operational-detail { padding: 1rem 1.2rem; border-top: 1px solid var(--line); background: #fafcfb; }
+ .operational-detail label { margin-bottom: .65rem; }
+ .operational-detail-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+ .compact-camera { width: fit-content; min-height: 40px; margin: 0; padding: .55rem .75rem; }
+ .operational-detail .photo-gallery { max-width: 700px; }
++.row-memory-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
++.row-memory-grid h3 { margin-bottom: .65rem; }
++.row-note { border-left: 3px solid var(--green-500); border-radius: 0 8px 8px 0; background: white; padding: .65rem .75rem; margin-bottom: .5rem; box-shadow: 0 2px 8px rgba(18,62,48,.04); }
++.row-note p { margin: 0 0 .35rem; font-size: .67rem; line-height: 1.5; white-space: pre-wrap; }
++.row-note small { font-size: .52rem; }
+ .sorting-hint { grid-column: 1 / -1; color: #8c6a20; font-size: .59rem; }
+ 
++/* Planimetry PDF */
++.plan-upload { display: grid; grid-template-columns: minmax(250px,1fr) minmax(220px,.8fr) minmax(200px,.8fr) auto; align-items: end; gap: 1rem; margin-bottom: 1rem; }
++.plan-upload h2 { margin-bottom: .25rem; }
++.plan-upload label { margin: 0; }
++.plan-upload .file-drop { min-height: 43px; }
++.plan-upload button { min-height: 43px; }
++.plan-layout { display: grid; grid-template-columns: 280px minmax(0,1fr); gap: 1rem; align-items: start; }
++.plan-list { position: sticky; top: 90px; padding: .8rem; max-height: 78vh; overflow-y: auto; }
++.plan-list .card-head { padding: .25rem .3rem .7rem; margin: 0; }
++.plan-list h2 { margin: 0; }
++.plan-list > button { width: 100%; display: grid; grid-template-columns: 42px 1fr; align-items: center; gap: .65rem; border: 1px solid transparent; border-radius: 9px; background: transparent; padding: .65rem; text-align: left; }
++.plan-list > button > span { width: 38px; height: 42px; display: grid; place-items: center; border-radius: 6px; background: var(--red-bg); color: var(--red); font-size: .58rem; font-weight: 800; }
++.plan-list > button strong, .plan-list > button small { display: block; }
++.plan-list > button strong { font-size: .67rem; line-height: 1.35; }
++.plan-list > button small { margin-top: .2rem; font-size: .5rem; }
++.plan-list > button.active { border-color: #bdd8cb; background: var(--green-50); }
++.plan-viewer { padding: 0; overflow: hidden; min-height: 70vh; }
++.plan-toolbar { min-height: 62px; display: flex; align-items: center; gap: .65rem; padding: .7rem 1rem; border-bottom: 1px solid var(--line); background: white; }
++.plan-toolbar > div:first-child { min-width: 160px; margin-right: auto; }
++.plan-toolbar strong, .plan-toolbar small { display: block; }
++.plan-toolbar strong { font-size: .72rem; }
++.plan-toolbar small { margin-top: .14rem; font-size: .51rem; }
++.zoom-controls { display: flex; align-items: center; gap: .3rem; }
++.zoom-controls button { min-width: 34px; min-height: 34px; border: 1px solid var(--line); border-radius: 7px; background: white; color: var(--green-700); font-weight: 800; }
++.zoom-controls b { min-width: 44px; text-align: center; font-size: .62rem; }
++.plan-pdf-viewport { height: 76vh; overflow: auto; background: #46504b; }
++.plan-pdf-viewport iframe { width: 100%; height: 76vh; border: 0; transform-origin: top left; background: white; }
++
+ @media (max-width: 1180px) {
+   .kpi-grid { grid-template-columns: repeat(3, 1fr); }
+   .hero-kpi { grid-column: span 2; }
+@@ -596,6 +633,8 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
+   .zone-variant-grid { grid-template-columns: repeat(2,1fr); }
+   .operational-row-main { grid-template-columns: minmax(170px,1fr) 74px minmax(145px,.8fr) minmax(145px,.8fr); }
+   .row-detail-button { grid-column: 1 / -1; min-height: 40px !important; border-top: 1px solid var(--line) !important; }
++  .plan-upload { grid-template-columns: 1fr 1fr; }
++  .plan-upload > div { grid-column: 1 / -1; }
+ }
+ 
+ @media (max-width: 900px) {
+@@ -735,6 +774,8 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
+   .zone-totals button { grid-column: 1 / -1; width: 100%; margin: 0; min-height: 44px; }
+   .module-reference { grid-template-columns: 1fr; }
+   .operational-toolbar { grid-template-columns: 1fr 1fr; gap: .65rem; }
++  .operational-toolbar > label, .quick-filters, .operational-kpis { grid-column: 1 / -1; }
++  .quick-filters { margin-inline: -.25rem; }
+   .operational-kpis { display: grid; grid-template-columns: repeat(3,1fr); gap: .4rem; }
+   .operational-kpis span { display: grid; padding: .55rem; }
+   .operational-row-main { grid-template-columns: 1fr 1fr; }
+@@ -745,6 +786,20 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
+   .operational-detail { padding: .85rem; }
+   .operational-detail-actions { display: grid; }
+   .compact-camera { width: 100%; }
++  .row-memory-grid { grid-template-columns: 1fr; }
++  .row-last-change { text-align: left; line-height: 1.4; }
++  .plan-upload { grid-template-columns: 1fr; }
++  .plan-upload > div { grid-column: auto; }
++  .plan-layout { grid-template-columns: 1fr; }
++  .plan-list { position: static; display: flex; gap: .45rem; max-height: none; overflow-x: auto; }
++  .plan-list .card-head { min-width: 125px; }
++  .plan-list > button { flex: 0 0 220px; }
++  .plan-viewer { min-height: 68vh; }
++  .plan-toolbar { flex-wrap: wrap; }
++  .plan-toolbar > div:first-child { width: 100%; }
++  .plan-toolbar .secondary, .plan-toolbar .danger-button { flex: 1; }
++  .zoom-controls { order: 3; width: 100%; justify-content: center; }
++  .plan-pdf-viewport, .plan-pdf-viewport iframe { height: 68vh; }
+   .toast { left: .8rem; right: .8rem; bottom: calc(74px + env(safe-area-inset-bottom)); }
+ }
+ 
+diff --git a/render.yaml b/render.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..0399dd4182c608c607a68bd8f5715120732dc282
+--- /dev/null
++++ b/render.yaml
+@@ -0,0 +1,29 @@
++databases:
++  - name: asolar-postgres
++    plan: free
++    databaseName: asolar
++    user: asolar
++
++services:
++  - type: web
++    name: asolar-eset-tracker
++    runtime: docker
++    plan: free
++    dockerfilePath: ./Dockerfile
++    healthCheckPath: /api/health
++    autoDeploy: true
++    envVars:
++      - key: DATABASE_URL
++        fromDatabase:
++          name: asolar-postgres
++          property: connectionString
++      - key: ASOLAR_SECRET
++        generateValue: true
++      - key: ASOLAR_HOST
++        value: 0.0.0.0
++      - key: ASOLAR_MANAGER_PASSWORD
++        sync: false
++      - key: ASOLAR_FOREMAN1_PASSWORD
++        sync: false
++      - key: ASOLAR_FOREMAN2_PASSWORD
++        sync: false
+diff --git a/requirements.txt b/requirements.txt
+index 87d66bf412c55380308349067e88ba9b8b810014..75015f703167359420e25af826afad6ac75ae219 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,6 +1,7 @@
+ fastapi>=0.115,<1
+ uvicorn[standard]>=0.32,<1
+ SQLAlchemy>=2.0,<3
++psycopg[binary]>=3.2,<4
+ python-multipart>=0.0.12,<1
+ openpyxl>=3.1,<4
+ pypdf>=6.0,<7
+diff --git a/server-url.txt.example b/server-url.txt.example
+new file mode 100644
+index 0000000000000000000000000000000000000000..9b2d29be0dc5417631b28f80934889a423601fb5
+--- /dev/null
++++ b/server-url.txt.example
+@@ -0,0 +1 @@
++https://twoja-aplikacja.onrender.com
+diff --git a/tests/test_api.py b/tests/test_api.py
+index d38025158aa77877864ece3617d5c5a958373005..1baed3d9fdc7bf009e28862ac80bc055f82559e8 100644
+--- a/tests/test_api.py
++++ b/tests/test_api.py
+@@ -14,6 +14,7 @@ from openpyxl import Workbook
+ 
+ from app.database import SessionLocal
+ from app.main import app
++from app.models import Attachment, Document
+ from app.services.parser import analyze
+ 
+ VARIANT_CODES = ("1x28", "1x42", "1x56", "1x70", "1x42+1x28", "1x56+1x28", "1x56+1x42")
+@@ -24,8 +25,8 @@ class UniversalWorkflowTest(unittest.TestCase):
+     def setUpClass(cls):
+         cls.client = TestClient(app)
+         cls.manager = cls.login("kierownik", "Asolar2026!")
+-        cls.foreman = cls.login("brygadzista", "Brygada2026!")
+-        cls.warehouse = cls.login("magazynier", "Magazyn2026!")
++        cls.foreman = cls.login("brygadzista1", "Brygada1-2026!")
++        cls.warehouse = cls.login("brygadzista2", "Brygada2-2026!")
+ 
+     @classmethod
+     def login(cls, username, password):
+@@ -219,6 +220,18 @@ class UniversalWorkflowTest(unittest.TestCase):
+         self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
+ 
+     def test_only_ten_approved_files_drive_sources_templates_and_module_data(self):
++        team = self.client.get("/api/users", headers=self.manager)
++        self.assertEqual(team.status_code, 200, team.text)
++        self.assertEqual(
++            {item["username"] for item in team.json()},
++            {"kierownik", "brygadzista1", "brygadzista2"},
++        )
++        self.assertEqual({item["role"] for item in team.json()}, {"kierownik", "brygadzista"})
++        health = self.client.get("/api/health").json()
++        self.assertEqual(health["version"], "4.5.0")
++        self.assertEqual(health["file_storage"], "database")
++        self.assertEqual(health["realtime"], "websocket")
++
+         projects = self.client.get("/api/projects", headers=self.manager).json()
+         source_project = next(item for item in projects if item["name"] == "RF-GIULIETTA")
+         project_id = source_project["id"]
+@@ -241,6 +254,18 @@ class UniversalWorkflowTest(unittest.TestCase):
+             downloaded = self.client.get(f"/api/documents/{item['id']}/file", headers=self.manager)
+             self.assertEqual(hashlib.sha256(downloaded.content).hexdigest(), item["sha256"])
+ 
++        source_plans = self.client.get(f"/api/planimetry?project_id={project_id}", headers=self.foreman)
++        self.assertEqual(source_plans.status_code, 200, source_plans.text)
++        self.assertEqual(
++            {item["filename"] for item in source_plans.json()},
++            {"planimetria.pdf", "planimetria - warianty i BOM.pdf", "planimetria 6,5mw.pdf"},
++        )
++        self.assertTrue(all(not item["deletable"] for item in source_plans.json()))
++        self.assertEqual(
++            self.client.delete(f"/api/planimetry/{source_plans.json()[0]['id']}", headers=self.manager).status_code,
++            409,
++        )
++
+         templates = self.client.get(f"/api/material-templates?project_id={project_id}", headers=self.manager).json()
+         source_templates = {item["name"]: item for item in templates if item["source_based"]}
+         self.assertEqual(source_templates["1x28"]["materials"], {"1": 5, "2": 30, "3": 30})
+@@ -304,8 +329,7 @@ class UniversalWorkflowTest(unittest.TestCase):
+         self.assertEqual([row["variant_name"] for row in rows_a], ["1x28", "1x28", "1x42"])
+         first_id, second_id, third_id = rows_a[0]["id"], rows_a[1]["id"], rows_a[2]["id"]
+ 
+-        self.assertEqual(self.client.post(f"/api/rows/{third_id}/move", headers=self.warehouse, json={"direction": "up"}).status_code, 403)
+-        moved = self.client.post(f"/api/rows/{third_id}/move", headers=self.foreman, json={"direction": "up"})
++        moved = self.client.post(f"/api/rows/{third_id}/move", headers=self.warehouse, json={"direction": "up"})
+         self.assertEqual(moved.status_code, 200, moved.text)
+         self.assertTrue(moved.json()["moved"])
+         rows_a = self.client.get(f"/api/projects/{project_id}/operational-rows?zone_id={zone_a_id}", headers=self.manager).json()
+@@ -396,8 +420,7 @@ class UniversalWorkflowTest(unittest.TestCase):
+                 {"component_id": catalogue["MODULE-JINKO-JKM710-735"]["component_id"], "quantity_received": 40, "quantity_damaged": 1},
+             ],
+         }
+-        self.assertEqual(self.client.post("/api/bom-deliveries", headers=self.foreman, json=payload).status_code, 403)
+-        delivery = self.client.post("/api/bom-deliveries", headers=self.warehouse, json=payload)
++        delivery = self.client.post("/api/bom-deliveries", headers=self.foreman, json=payload)
+         self.assertEqual(delivery.status_code, 200, delivery.text)
+         duplicate = self.client.post("/api/bom-deliveries", headers=self.warehouse, json=payload)
+         self.assertTrue(duplicate.json()["deduplicated"])
+@@ -422,6 +445,93 @@ class UniversalWorkflowTest(unittest.TestCase):
+         self.assertTrue(all(item["delivered"] == 0 for item in cleared["items"]))
+         self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
+ 
++    def test_row_memory_history_and_planimetry_pdf_are_persistent(self):
++        created = self.client.post(
++            "/api/projects", headers=self.manager,
++            json={"name": "ESET pamięć i mapa", "location": "Teren", "capacity_mw": 1.0, "structure_type": "Tracker ESET 1P"},
++        )
++        self.assertEqual(created.status_code, 200, created.text)
++        project_id = created.json()["id"]
++        zone = self.client.post("/api/tracker-zones", headers=self.foreman, json={"project_id": project_id, "name": "Strefa pamięci"}).json()
++        configured = self.client.put(
++            f"/api/tracker-zones/{zone['id']}/config", headers=self.foreman,
++            json={"items": [{"variant_code": code, "row_count": 1 if code == "1x28" else 0} for code in VARIANT_CODES]},
++        )
++        self.assertEqual(configured.status_code, 200, configured.text)
++        row = self.client.get(f"/api/projects/{project_id}/operational-rows", headers=self.foreman).json()[0]
++        row_id = row["id"]
++        self.assertEqual(row["notes_count"], 0)
++        self.assertEqual(row["photos"], 0)
++
++        first_note = {"text": "Kolizja przy obudowie łożyska — sprawdzić przed montażem.", "client_id": "row-memory-1"}
++        note = self.client.post(f"/api/rows/{row_id}/notes", headers=self.foreman, json=first_note)
++        self.assertEqual(note.status_code, 200, note.text)
++        duplicate = self.client.post(f"/api/rows/{row_id}/notes", headers=self.foreman, json=first_note)
++        self.assertTrue(duplicate.json()["deduplicated"])
++        self.assertEqual(self.client.post(f"/api/rows/{row_id}/notes", headers=self.manager, json={"text": "Kontrola wykonana — można kontynuować.", "client_id": "row-memory-2"}).status_code, 200)
++        notes = self.client.get(f"/api/rows/{row_id}/notes", headers=self.warehouse).json()
++        self.assertEqual(len(notes), 2)
++        self.assertEqual(notes[0]["author"], "Kierownik Budowy")
++        self.assertIn("Kontrola wykonana", notes[0]["text"])
++        self.assertEqual(notes[1]["author"], "Brygadzista 1")
++
++        for index in range(2):
++            photo = self.client.post(
++                f"/api/row/{row_id}/photos", headers=self.foreman,
++                files={"file": (f"rząd-{index}.jpg", f"photo-{index}".encode(), "image/jpeg")},
++            )
++            self.assertEqual(photo.status_code, 200, photo.text)
++        photos = self.client.get(f"/api/row/{row_id}/photos", headers=self.warehouse).json()
++        self.assertEqual(len(photos), 2)
++        self.assertTrue(all(item["uploaded_by"] == "Brygadzista 1" for item in photos))
++        with SessionLocal() as db:
++            self.assertTrue(all(db.get(Attachment, item["id"]).content_blob for item in photos))
++        photo_view = self.client.get(photos[0]["url"], headers=self.manager)
++        self.assertEqual(photo_view.status_code, 200, photo_view.text)
++        self.assertIn("filename*=UTF-8''", photo_view.headers["content-disposition"])
++
++        persisted = self.client.get(f"/api/projects/{project_id}/operational-rows", headers=self.manager).json()[0]
++        self.assertEqual(persisted["notes_count"], 2)
++        self.assertEqual(persisted["photos"], 2)
++        self.assertEqual(persisted["last_changed_by"], "Brygadzista 1")
++        self.assertIsNotNone(persisted["last_changed_at"])
++        token = self.foreman["Authorization"].split(" ", 1)[1]
++        with self.client.websocket_connect(f"/ws?token={token}") as socket:
++            changed = self.client.patch(f"/api/rows/{row_id}", headers=self.foreman, json={"built": True})
++            self.assertEqual(changed.status_code, 200, changed.text)
++            event = socket.receive_json()
++            self.assertEqual(event["event"], "row.changed")
++            self.assertEqual(event["payload"]["id"], row_id)
++        after_status = self.client.get(f"/api/projects/{project_id}/operational-rows", headers=self.manager).json()[0]
++        self.assertTrue(after_status["built"])
++        self.assertEqual(after_status["last_changed_by"], "Brygadzista 1")
++
++        fake_pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF"
++        blocked = self.client.post(
++            "/api/planimetry", headers=self.foreman, data={"project_id": str(project_id), "title": "Plan z terenu"},
++            files={"file": ("plan.pdf", fake_pdf, "application/pdf")},
++        )
++        self.assertEqual(blocked.status_code, 403)
++        uploaded = self.client.post(
++            "/api/planimetry", headers=self.manager, data={"project_id": str(project_id), "title": "Planimetria oficjalna R03"},
++            files={"file": ("planimetria-R03.pdf", fake_pdf, "application/pdf")},
++        )
++        self.assertEqual(uploaded.status_code, 200, uploaded.text)
++        plan_id = uploaded.json()["id"]
++        with SessionLocal() as db:
++            self.assertEqual(db.get(Document, plan_id).content_blob, fake_pdf)
++        plans = self.client.get(f"/api/planimetry?project_id={project_id}", headers=self.foreman).json()
++        self.assertEqual(len(plans), 1)
++        self.assertEqual(plans[0]["title"], "Planimetria oficjalna R03")
++        self.assertEqual(plans[0]["uploaded_by"], "Kierownik Budowy")
++        viewed = self.client.get(plans[0]["file_url"], headers=self.warehouse)
++        self.assertEqual(viewed.status_code, 200, viewed.text)
++        self.assertEqual(viewed.content, fake_pdf)
++        self.assertEqual(self.client.delete(f"/api/planimetry/{plan_id}", headers=self.foreman).status_code, 403)
++        self.assertEqual(self.client.delete(f"/api/planimetry/{plan_id}", headers=self.manager).status_code, 200)
++        self.assertEqual(self.client.get(f"/api/planimetry?project_id={project_id}", headers=self.manager).json(), [])
++        self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/windows/asolar-launcher.c b/windows/asolar-launcher.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..f4f6fbb1c29d244273638b20116ff828da537c1b
+--- /dev/null
++++ b/windows/asolar-launcher.c
+@@ -0,0 +1,137 @@
++#include <windows.h>
++#include <shellapi.h>
++#include <string.h>
++#include <wchar.h>
++
++#define BUFFER_SIZE 32768
++
++static int run_and_wait(const wchar_t *command, DWORD flags, DWORD *exit_code) {
++    STARTUPINFOW startup = {0};
++    PROCESS_INFORMATION process = {0};
++    wchar_t mutable_command[BUFFER_SIZE];
++    startup.cb = sizeof(startup);
++    wcsncpy(mutable_command, command, BUFFER_SIZE - 1);
++    mutable_command[BUFFER_SIZE - 1] = L'\0';
++    if (!CreateProcessW(NULL, mutable_command, NULL, NULL, FALSE, flags, NULL, NULL, &startup, &process)) {
++        return 0;
++    }
++    WaitForSingleObject(process.hProcess, INFINITE);
++    GetExitCodeProcess(process.hProcess, exit_code);
++    CloseHandle(process.hThread);
++    CloseHandle(process.hProcess);
++    return 1;
++}
++
++static int start_process(const wchar_t *command) {
++    STARTUPINFOW startup = {0};
++    PROCESS_INFORMATION process = {0};
++    wchar_t mutable_command[BUFFER_SIZE];
++    startup.cb = sizeof(startup);
++    wcsncpy(mutable_command, command, BUFFER_SIZE - 1);
++    mutable_command[BUFFER_SIZE - 1] = L'\0';
++    if (!CreateProcessW(NULL, mutable_command, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &startup, &process)) {
++        return 0;
++    }
++    CloseHandle(process.hThread);
++    CloseHandle(process.hProcess);
++    return 1;
++}
++
++static void show_error(const wchar_t *message) {
++    MessageBoxW(NULL, message, L"ASOLAR ESET Tracker Manager", MB_OK | MB_ICONERROR | MB_TOPMOST);
++}
++
++static int open_cloud_client(void) {
++    HANDLE file = CreateFileW(L"server-url.txt", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
++    char input[2048];
++    wchar_t url[2048];
++    DWORD read = 0;
++    size_t length;
++    if (file == INVALID_HANDLE_VALUE) return 0;
++    if (!ReadFile(file, input, sizeof(input) - 1, &read, NULL)) {
++        CloseHandle(file);
++        show_error(L"Nie można odczytać pliku server-url.txt.");
++        return -1;
++    }
++    CloseHandle(file);
++    input[read] = '\0';
++    while (read > 0 && (input[read - 1] == '\r' || input[read - 1] == '\n' || input[read - 1] == ' ' || input[read - 1] == '\t')) input[--read] = '\0';
++    length = strlen(input);
++    if (!length || (strncmp(input, "https://", 8) != 0 && strncmp(input, "http://", 7) != 0)) {
++        show_error(L"Plik server-url.txt musi zawierać pełny adres zaczynający się od https:// lub http://.");
++        return -1;
++    }
++    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, input, -1, url, 2048)) {
++        show_error(L"Adres w server-url.txt nie jest prawidłowym tekstem UTF-8.");
++        return -1;
++    }
++    if ((INT_PTR)ShellExecuteW(NULL, L"open", url, NULL, NULL, SW_SHOWNORMAL) <= 32) {
++        show_error(L"Nie udało się otworzyć adresu aplikacji chmurowej.");
++        return -1;
++    }
++    return 1;
++}
++
++int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR arguments, int show) {
++    wchar_t executable_path[BUFFER_SIZE];
++    wchar_t *last_separator;
++    DWORD exit_code = 1;
++    (void)instance; (void)previous; (void)arguments; (void)show;
++
++    if (!GetModuleFileNameW(NULL, executable_path, BUFFER_SIZE)) {
++        show_error(L"Nie można ustalić folderu programu.");
++        return 1;
++    }
++    last_separator = wcsrchr(executable_path, L'\\');
++    if (!last_separator) {
++        show_error(L"Nieprawidłowa ścieżka programu.");
++        return 1;
++    }
++    *last_separator = L'\0';
++    if (!SetCurrentDirectoryW(executable_path)) {
++        show_error(L"Nie można otworzyć folderu programu.");
++        return 1;
++    }
++
++    int cloud_client = open_cloud_client();
++    if (cloud_client > 0) return 0;
++    if (cloud_client < 0) return 6;
++
++    if (!run_and_wait(L"py -3.11 --version", CREATE_NO_WINDOW, &exit_code) || exit_code != 0) {
++        show_error(L"Nie znaleziono Pythona 3.11. Zainstaluj Python 3.11 z python.org razem z programem Python Launcher (py), a następnie ponownie uruchom ASOLAR.exe.");
++        return 2;
++    }
++    if (GetFileAttributesW(L"frontend\\dist\\index.html") == INVALID_FILE_ATTRIBUTES) {
++        show_error(L"Brak zbudowanego interfejsu. Rozpakuj pełną paczkę ASOLAR do nowego folderu.");
++        return 3;
++    }
++
++    if (GetFileAttributesW(L"runtime-packages\\.asolar-deps-v3") == INVALID_FILE_ATTRIBUTES) {
++        CreateDirectoryW(L"runtime-packages", NULL);
++        MessageBoxW(NULL, L"Pierwsze uruchomienie przygotuje wymagane składniki. Może to potrwać kilka minut i wymaga połączenia z Internetem.", L"ASOLAR — pierwsze uruchomienie", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
++        if (!run_and_wait(L"py -3.11 -m pip install --upgrade --target runtime-packages -r requirements.txt", CREATE_NEW_CONSOLE, &exit_code) || exit_code != 0) {
++            show_error(L"Nie udało się zainstalować składników programu. Sprawdź Internet oraz instalację Pythona 3.11.");
++            return 4;
++        }
++        HANDLE marker = CreateFileW(L"runtime-packages\\.asolar-deps-v3", GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_HIDDEN, NULL);
++        if (marker != INVALID_HANDLE_VALUE) CloseHandle(marker);
++    }
++
++    wchar_t runtime_path[BUFFER_SIZE];
++    wchar_t previous_python_path[BUFFER_SIZE];
++    DWORD previous_length = GetEnvironmentVariableW(L"PYTHONPATH", previous_python_path, BUFFER_SIZE);
++    if (previous_length > 0 && previous_length < BUFFER_SIZE) {
++        _snwprintf(runtime_path, BUFFER_SIZE - 1, L"%ls\\runtime-packages;%ls", executable_path, previous_python_path);
++    } else {
++        _snwprintf(runtime_path, BUFFER_SIZE - 1, L"%ls\\runtime-packages", executable_path);
++    }
++    runtime_path[BUFFER_SIZE - 1] = L'\0';
++    SetEnvironmentVariableW(L"PYTHONPATH", runtime_path);
++    SetEnvironmentVariableW(L"ASOLAR_DESKTOP_EXE", L"1");
++
++    if (!start_process(L"py -3.11 desktop.py")) {
++        show_error(L"Nie udało się uruchomić aplikacji. Użyj awaryjnie pliku Uruchom-Windows.bat.");
++        return 5;
++    }
++    return 0;
++}
+diff --git a/windows/asolar-launcher.rc b/windows/asolar-launcher.rc
+new file mode 100644
+index 0000000000000000000000000000000000000000..f47e169208823b49fcbe5c33e63e76a5403124e6
+--- /dev/null
++++ b/windows/asolar-launcher.rc
+@@ -0,0 +1,29 @@
++1 ICON "assets/asolar.ico"
++
++1 VERSIONINFO
++FILEVERSION 4,5,0,0
++PRODUCTVERSION 4,5,0,0
++FILEFLAGSMASK 0x3fL
++FILEFLAGS 0x0L
++FILEOS 0x40004L
++FILETYPE 0x1L
++FILESUBTYPE 0x0L
++BEGIN
++    BLOCK "StringFileInfo"
++    BEGIN
++        BLOCK "041504b0"
++        BEGIN
++            VALUE "CompanyName", "ASOLAR\0"
++            VALUE "FileDescription", "ASOLAR ESET Tracker Manager\0"
++            VALUE "FileVersion", "4.5.0\0"
++            VALUE "InternalName", "ASOLAR.exe\0"
++            VALUE "OriginalFilename", "ASOLAR.exe\0"
++            VALUE "ProductName", "ASOLAR ESET Tracker Manager\0"
++            VALUE "ProductVersion", "4.5.0\0"
++        END
++    END
++    BLOCK "VarFileInfo"
++    BEGIN
++        VALUE "Translation", 0x415, 1200
++    END
++END
+diff --git a/windows/build_icon.py b/windows/build_icon.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..fb7006c1912919372e3717022a2c927b78e0513b
+--- /dev/null
++++ b/windows/build_icon.py
+@@ -0,0 +1,26 @@
++"""Buduje wielorozmiarową ikonę Windows z firmowego znaku ASOLAR."""
++
++from pathlib import Path
++from PIL import Image, ImageDraw
++
++
++SIZE = 256
++image = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
++draw = ImageDraw.Draw(image)
++draw.rounded_rectangle((0, 0, SIZE - 1, SIZE - 1), radius=55, fill="#123e30")
++
++panel = [(48, 156), (208, 156), (178, 76), (78, 76)]
++draw.polygon(panel, fill="#f5c84c")
++for y in (102, 130):
++    left = 78 - (y - 76) * 30 / 80
++    right = 178 + (y - 76) * 30 / 80
++    draw.line((left, y, right, y), fill="#123e30", width=9)
++draw.line((104, 76, 90, 156), fill="#123e30", width=9)
++draw.line((152, 76, 166, 156), fill="#123e30", width=9)
++draw.line((128, 158, 128, 208), fill="white", width=13)
++draw.line((90, 210, 166, 210), fill="white", width=13)
++
++target = Path(__file__).resolve().parents[1] / "assets" / "asolar.ico"
++target.parent.mkdir(exist_ok=True)
++image.save(target, format="ICO", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
++print(target)
+diff --git a/windows/build_launcher.sh b/windows/build_launcher.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..3e5dac1aa567bb79b882d6bf98148c8048bdcb98
+--- /dev/null
++++ b/windows/build_launcher.sh
+@@ -0,0 +1,14 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++cd "$ROOT_DIR"
++
++python3 windows/build_icon.py
++x86_64-w64-mingw32-windres windows/asolar-launcher.rc -O coff -o windows/asolar-launcher.res
++x86_64-w64-mingw32-gcc \
++  -municode -mwindows -Os -s \
++  windows/asolar-launcher.c windows/asolar-launcher.res \
++  -lshell32 -o ASOLAR.exe
++
++file ASOLAR.exe

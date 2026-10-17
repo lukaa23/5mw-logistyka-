@@ -1,0 +1,29 @@
+1 ICON "assets/asolar.ico"
+
+1 VERSIONINFO
+FILEVERSION 4,5,0,0
+PRODUCTVERSION 4,5,0,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS 0x40004L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "041504b0"
+        BEGIN
+            VALUE "CompanyName", "ASOLAR\0"
+            VALUE "FileDescription", "ASOLAR ESET Tracker Manager\0"
+            VALUE "FileVersion", "4.5.0\0"
+            VALUE "InternalName", "ASOLAR.exe\0"
+            VALUE "OriginalFilename", "ASOLAR.exe\0"
+            VALUE "ProductName", "ASOLAR ESET Tracker Manager\0"
+            VALUE "ProductVersion", "4.5.0\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x415, 1200
+    END
+END

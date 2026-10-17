@@ -6,6 +6,9 @@ services:
     environment:
       ASOLAR_HOST: 0.0.0.0
       ASOLAR_SECRET: ${ASOLAR_SECRET:-zmien-ten-klucz-przed-wdrozeniem}
+      ASOLAR_MANAGER_PASSWORD: ${ASOLAR_MANAGER_PASSWORD:-Asolar2026!}
+      ASOLAR_FOREMAN1_PASSWORD: ${ASOLAR_FOREMAN1_PASSWORD:-Brygada1-2026!}
+      ASOLAR_FOREMAN2_PASSWORD: ${ASOLAR_FOREMAN2_PASSWORD:-Brygada2-2026!}
     volumes:
       - asolar_data:/app/data
 

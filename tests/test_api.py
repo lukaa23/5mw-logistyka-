@@ -14,6 +14,7 @@ from openpyxl import Workbook
 
 from app.database import SessionLocal
 from app.main import app
+from app.models import Attachment, Document
 from app.services.parser import analyze
 
 VARIANT_CODES = ("1x28", "1x42", "1x56", "1x70", "1x42+1x28", "1x56+1x28", "1x56+1x42")
@@ -24,8 +25,8 @@ class UniversalWorkflowTest(unittest.TestCase):
     def setUpClass(cls):
         cls.client = TestClient(app)
         cls.manager = cls.login("kierownik", "Asolar2026!")
-        cls.foreman = cls.login("brygadzista", "Brygada2026!")
-        cls.warehouse = cls.login("magazynier", "Magazyn2026!")
+        cls.foreman = cls.login("brygadzista1", "Brygada1-2026!")
+        cls.warehouse = cls.login("brygadzista2", "Brygada2-2026!")
 
     @classmethod
     def login(cls, username, password):
@@ -219,6 +220,18 @@ class UniversalWorkflowTest(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
 
     def test_only_ten_approved_files_drive_sources_templates_and_module_data(self):
+        team = self.client.get("/api/users", headers=self.manager)
+        self.assertEqual(team.status_code, 200, team.text)
+        self.assertEqual(
+            {item["username"] for item in team.json()},
+            {"kierownik", "brygadzista1", "brygadzista2"},
+        )
+        self.assertEqual({item["role"] for item in team.json()}, {"kierownik", "brygadzista"})
+        health = self.client.get("/api/health").json()
+        self.assertEqual(health["version"], "4.5.0")
+        self.assertEqual(health["file_storage"], "database")
+        self.assertEqual(health["realtime"], "websocket")
+
         projects = self.client.get("/api/projects", headers=self.manager).json()
         source_project = next(item for item in projects if item["name"] == "RF-GIULIETTA")
         project_id = source_project["id"]
@@ -240,6 +253,18 @@ class UniversalWorkflowTest(unittest.TestCase):
         for item in approved:
             downloaded = self.client.get(f"/api/documents/{item['id']}/file", headers=self.manager)
             self.assertEqual(hashlib.sha256(downloaded.content).hexdigest(), item["sha256"])
+
+        source_plans = self.client.get(f"/api/planimetry?project_id={project_id}", headers=self.foreman)
+        self.assertEqual(source_plans.status_code, 200, source_plans.text)
+        self.assertEqual(
+            {item["filename"] for item in source_plans.json()},
+            {"planimetria.pdf", "planimetria - warianty i BOM.pdf", "planimetria 6,5mw.pdf"},
+        )
+        self.assertTrue(all(not item["deletable"] for item in source_plans.json()))
+        self.assertEqual(
+            self.client.delete(f"/api/planimetry/{source_plans.json()[0]['id']}", headers=self.manager).status_code,
+            409,
+        )
 
         templates = self.client.get(f"/api/material-templates?project_id={project_id}", headers=self.manager).json()
         source_templates = {item["name"]: item for item in templates if item["source_based"]}
@@ -304,8 +329,7 @@ class UniversalWorkflowTest(unittest.TestCase):
         self.assertEqual([row["variant_name"] for row in rows_a], ["1x28", "1x28", "1x42"])
         first_id, second_id, third_id = rows_a[0]["id"], rows_a[1]["id"], rows_a[2]["id"]
 
-        self.assertEqual(self.client.post(f"/api/rows/{third_id}/move", headers=self.warehouse, json={"direction": "up"}).status_code, 403)
-        moved = self.client.post(f"/api/rows/{third_id}/move", headers=self.foreman, json={"direction": "up"})
+        moved = self.client.post(f"/api/rows/{third_id}/move", headers=self.warehouse, json={"direction": "up"})
         self.assertEqual(moved.status_code, 200, moved.text)
         self.assertTrue(moved.json()["moved"])
         rows_a = self.client.get(f"/api/projects/{project_id}/operational-rows?zone_id={zone_a_id}", headers=self.manager).json()
@@ -396,8 +420,7 @@ class UniversalWorkflowTest(unittest.TestCase):
                 {"component_id": catalogue["MODULE-JINKO-JKM710-735"]["component_id"], "quantity_received": 40, "quantity_damaged": 1},
             ],
         }
-        self.assertEqual(self.client.post("/api/bom-deliveries", headers=self.foreman, json=payload).status_code, 403)
-        delivery = self.client.post("/api/bom-deliveries", headers=self.warehouse, json=payload)
+        delivery = self.client.post("/api/bom-deliveries", headers=self.foreman, json=payload)
         self.assertEqual(delivery.status_code, 200, delivery.text)
         duplicate = self.client.post("/api/bom-deliveries", headers=self.warehouse, json=payload)
         self.assertTrue(duplicate.json()["deduplicated"])
@@ -420,6 +443,93 @@ class UniversalWorkflowTest(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/bom-deliveries/{delivery.json()['id']}", headers=self.manager).status_code, 200)
         cleared = self.client.get(f"/api/projects/{project_id}/bom-delivery-status", headers=self.manager).json()
         self.assertTrue(all(item["delivered"] == 0 for item in cleared["items"]))
+        self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
+
+    def test_row_memory_history_and_planimetry_pdf_are_persistent(self):
+        created = self.client.post(
+            "/api/projects", headers=self.manager,
+            json={"name": "ESET pamięć i mapa", "location": "Teren", "capacity_mw": 1.0, "structure_type": "Tracker ESET 1P"},
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        project_id = created.json()["id"]
+        zone = self.client.post("/api/tracker-zones", headers=self.foreman, json={"project_id": project_id, "name": "Strefa pamięci"}).json()
+        configured = self.client.put(
+            f"/api/tracker-zones/{zone['id']}/config", headers=self.foreman,
+            json={"items": [{"variant_code": code, "row_count": 1 if code == "1x28" else 0} for code in VARIANT_CODES]},
+        )
+        self.assertEqual(configured.status_code, 200, configured.text)
+        row = self.client.get(f"/api/projects/{project_id}/operational-rows", headers=self.foreman).json()[0]
+        row_id = row["id"]
+        self.assertEqual(row["notes_count"], 0)
+        self.assertEqual(row["photos"], 0)
+
+        first_note = {"text": "Kolizja przy obudowie łożyska — sprawdzić przed montażem.", "client_id": "row-memory-1"}
+        note = self.client.post(f"/api/rows/{row_id}/notes", headers=self.foreman, json=first_note)
+        self.assertEqual(note.status_code, 200, note.text)
+        duplicate = self.client.post(f"/api/rows/{row_id}/notes", headers=self.foreman, json=first_note)
+        self.assertTrue(duplicate.json()["deduplicated"])
+        self.assertEqual(self.client.post(f"/api/rows/{row_id}/notes", headers=self.manager, json={"text": "Kontrola wykonana — można kontynuować.", "client_id": "row-memory-2"}).status_code, 200)
+        notes = self.client.get(f"/api/rows/{row_id}/notes", headers=self.warehouse).json()
+        self.assertEqual(len(notes), 2)
+        self.assertEqual(notes[0]["author"], "Kierownik Budowy")
+        self.assertIn("Kontrola wykonana", notes[0]["text"])
+        self.assertEqual(notes[1]["author"], "Brygadzista 1")
+
+        for index in range(2):
+            photo = self.client.post(
+                f"/api/row/{row_id}/photos", headers=self.foreman,
+                files={"file": (f"rząd-{index}.jpg", f"photo-{index}".encode(), "image/jpeg")},
+            )
+            self.assertEqual(photo.status_code, 200, photo.text)
+        photos = self.client.get(f"/api/row/{row_id}/photos", headers=self.warehouse).json()
+        self.assertEqual(len(photos), 2)
+        self.assertTrue(all(item["uploaded_by"] == "Brygadzista 1" for item in photos))
+        with SessionLocal() as db:
+            self.assertTrue(all(db.get(Attachment, item["id"]).content_blob for item in photos))
+        photo_view = self.client.get(photos[0]["url"], headers=self.manager)
+        self.assertEqual(photo_view.status_code, 200, photo_view.text)
+        self.assertIn("filename*=UTF-8''", photo_view.headers["content-disposition"])
+
+        persisted = self.client.get(f"/api/projects/{project_id}/operational-rows", headers=self.manager).json()[0]
+        self.assertEqual(persisted["notes_count"], 2)
+        self.assertEqual(persisted["photos"], 2)
+        self.assertEqual(persisted["last_changed_by"], "Brygadzista 1")
+        self.assertIsNotNone(persisted["last_changed_at"])
+        token = self.foreman["Authorization"].split(" ", 1)[1]
+        with self.client.websocket_connect(f"/ws?token={token}") as socket:
+            changed = self.client.patch(f"/api/rows/{row_id}", headers=self.foreman, json={"built": True})
+            self.assertEqual(changed.status_code, 200, changed.text)
+            event = socket.receive_json()
+            self.assertEqual(event["event"], "row.changed")
+            self.assertEqual(event["payload"]["id"], row_id)
+        after_status = self.client.get(f"/api/projects/{project_id}/operational-rows", headers=self.manager).json()[0]
+        self.assertTrue(after_status["built"])
+        self.assertEqual(after_status["last_changed_by"], "Brygadzista 1")
+
+        fake_pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF"
+        blocked = self.client.post(
+            "/api/planimetry", headers=self.foreman, data={"project_id": str(project_id), "title": "Plan z terenu"},
+            files={"file": ("plan.pdf", fake_pdf, "application/pdf")},
+        )
+        self.assertEqual(blocked.status_code, 403)
+        uploaded = self.client.post(
+            "/api/planimetry", headers=self.manager, data={"project_id": str(project_id), "title": "Planimetria oficjalna R03"},
+            files={"file": ("planimetria-R03.pdf", fake_pdf, "application/pdf")},
+        )
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        plan_id = uploaded.json()["id"]
+        with SessionLocal() as db:
+            self.assertEqual(db.get(Document, plan_id).content_blob, fake_pdf)
+        plans = self.client.get(f"/api/planimetry?project_id={project_id}", headers=self.foreman).json()
+        self.assertEqual(len(plans), 1)
+        self.assertEqual(plans[0]["title"], "Planimetria oficjalna R03")
+        self.assertEqual(plans[0]["uploaded_by"], "Kierownik Budowy")
+        viewed = self.client.get(plans[0]["file_url"], headers=self.warehouse)
+        self.assertEqual(viewed.status_code, 200, viewed.text)
+        self.assertEqual(viewed.content, fake_pdf)
+        self.assertEqual(self.client.delete(f"/api/planimetry/{plan_id}", headers=self.foreman).status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/planimetry/{plan_id}", headers=self.manager).status_code, 200)
+        self.assertEqual(self.client.get(f"/api/planimetry?project_id={project_id}", headers=self.manager).json(), [])
         self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
 
 

@@ -1,0 +1,29 @@
+databases:
+  - name: asolar-postgres
+    plan: free
+    databaseName: asolar
+    user: asolar
+
+services:
+  - type: web
+    name: asolar-eset-tracker
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: asolar-postgres
+          property: connectionString
+      - key: ASOLAR_SECRET
+        generateValue: true
+      - key: ASOLAR_HOST
+        value: 0.0.0.0
+      - key: ASOLAR_MANAGER_PASSWORD
+        sync: false
+      - key: ASOLAR_FOREMAN1_PASSWORD
+        sync: false
+      - key: ASOLAR_FOREMAN2_PASSWORD
+        sync: false
