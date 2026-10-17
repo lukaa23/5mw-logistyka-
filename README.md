@@ -102,7 +102,7 @@ Zdjęcia, notatki i cała baza zapisują się wtedy w folderze `data` na laptopi
 3. Telefon musi być w **tej samej sieci Wi-Fi** (router na budowie albo hotspot z telefonu). Laptop musi być włączony i nie może usypiać.
 4. Zalecany jest stały adres laptopa (rezerwacja DHCP w routerze), żeby nie zmieniał się między dniami.
 
-Połączenie w sieci lokalnej to zwykłe HTTP, bez szyfrowania — używaj prywatnej sieci, nie publicznej. Bez HTTPS przeglądarka nie zainstaluje PWA, dlatego na telefony jest osobna aplikacja Android.
+Połączenie w sieci lokalnej to zwykłe HTTP, bez szyfrowania — używaj prywatnej sieci, nie publicznej. Bez HTTPS przeglądarka nie zainstaluje PWA, dlatego w sieci lokalnej jest osobna aplikacja Android; przy dostępie z internetu (rozdział niżej) wystarczy PWA.
 
 **Kopia zapasowa:** zatrzymaj program i skopiuj folder `data` (albo sam plik `data/asolar.db`) na dysk zewnętrzny lub do chmury.
 
@@ -116,6 +116,24 @@ Folder `android-app` to cienka otoczka (Capacitor): przy pierwszym uruchomieniu 
 4. Wpisz adres laptopa (wystarczy `192.168.0.15`, port 8765 jest domyślny). Aby zmienić adres później, odinstaluj i zainstaluj aplikację albo wyczyść jej dane.
 
 Workflow i konfiguracja Android nie zostały jeszcze uruchomione — pierwszy przebieg może wymagać poprawek. Wersje Capacitora są ustawione na `latest`; po pierwszym udanym buildzie warto je przypiąć.
+
+## Dostęp z internetu (laptop jako serwer, bez Render)
+
+Gdy telefon pracuje w terenie poza zasięgiem Wi-Fi laptopa, laptop wystawia aplikację przez **Tailscale Funnel**. Dane (baza, zdjęcia, notatki) nadal leżą tylko na laptopie, w folderze `data`. Adres jest stały i ma **HTTPS**, więc na telefonie działa zwykła instalacja PWA („Dodaj do ekranu głównego”) — APK nie jest potrzebny.
+
+Jednorazowa konfiguracja:
+1. Zainstaluj Tailscale na laptopie (tailscale.com/download) i zaloguj się.
+2. W panelu administracyjnym Tailscale (login.tailscale.com → DNS) włącz **MagicDNS** i **HTTPS Certificates**, a w ustawieniach dostępu zezwól na **Funnel** dla tego urządzenia. Dokładne kroki: dokumentacja „Tailscale Funnel”.
+3. Ustaw długie, unikalne hasła w `ASOLAR_MANAGER_PASSWORD`, `ASOLAR_FOREMAN1_PASSWORD`, `ASOLAR_FOREMAN2_PASSWORD` — adres będzie publiczny.
+
+Codzienne użycie: uruchom **`Uruchom-Windows-Internet.bat`**. Skrypt włącza Funnel dla portu 8765, wypisuje adres w postaci `https://nazwa-laptopa.nazwa-sieci.ts.net` i startuje aplikację nasłuchującą tylko lokalnie (`127.0.0.1`). Ten adres wpisz w telefonie. Po zamknięciu aplikacji skrypt wyłącza Funnel.
+
+Wymagania i uwagi:
+- Laptop musi być włączony, online i **nie może się usypiać** (Ustawienia → System → Zasilanie).
+- Funnel wystawia port publicznie, dlatego aplikacja ogranicza liczbę nieudanych logowań (domyślnie 8 na 10 minut z jednego adresu, `ASOLAR_LOGIN_MAX_FAILURES`) i generuje losowy klucz sesji w `data/secret.key`, jeśli `ASOLAR_SECRET` nie jest ustawiony.
+- Skrypt nie był sprawdzony na prawdziwym laptopie z Tailscale (środowisko, w którym powstał, nie ma Windows ani dostępu do Tailscale) — pierwszy start może wymagać poprawek.
+
+**Zdjęcia bez zasięgu.** Zdjęcie zrobione bez połączenia (lub gdy połączenie padnie w trakcie wysyłki) jest zmniejszane do 1600 px, zapisywane w pamięci telefonu i wysyłane automatycznie po powrocie zasięgu. W nagłówku pojawia się licznik 📷 oczekujących zdjęć. Ponowna wysyłka nie tworzy duplikatów (identyfikator zdjęcia). Zdjęcie dla meldunku lub RFI utworzonego offline trzeba dodać po synchronizacji — te rekordy nie mają jeszcze numeru na serwerze. Zdjęcia czekają tylko w danej przeglądarce telefonu: wyczyszczenie danych strony je usunie.
 
 ## PostgreSQL i trwałość danych
 

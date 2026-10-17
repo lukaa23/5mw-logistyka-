@@ -3,7 +3,7 @@ from urllib.parse import quote
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 from .auth import STARTER_ACCOUNTS, create_token, current_user, decode_token, hash_password, initial_password, roles, verify_password
 from .database import Base, SessionLocal, UPLOAD_DIR, engine, get_db
 from .lan import lan_urls
+from .throttle import LoginThrottle, client_ip
 from .migrations import ensure_schema_columns
 from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, MaterialTemplate, Project, ProjectMaterial, ProjectVariantConfig, RFI, RowType, RowTypeComponent, Section, SiteDelivery, SiteDeliveryItem, User, WorkLog, Zone, ZoneVariantConfig
 from .services.report import daily_report
@@ -289,10 +290,17 @@ def server_info(user=Depends(roles("kierownik"))):
 @app.get("/api/health")
 def health(): return {"status":"ok","version":APP_VERSION,"time":utc_now()}
 
+login_throttle=LoginThrottle(max_failures=int(os.getenv("ASOLAR_LOGIN_MAX_FAILURES","8")),window_seconds=600)
+
 @app.post("/api/auth/login")
-def login(data:LoginIn,db:Session=Depends(get_db)):
+def login(data:LoginIn,request:Request,db:Session=Depends(get_db)):
+    key=client_ip(request.client.host if request.client else None,request.headers.get("x-forwarded-for"))
+    wait=login_throttle.retry_after(key)
+    if wait:raise HTTPException(429,f"Zbyt wiele nieudanych prób logowania. Spróbuj ponownie za {max(1,wait//60)} min.",headers={"Retry-After":str(wait)})
     user=db.scalar(select(User).where(User.username==data.username))
-    if not user or not verify_password(data.password,user.password_hash): raise HTTPException(401,"Nieprawidłowy login lub hasło")
+    if not user or not user.active or not verify_password(data.password,user.password_hash):
+        login_throttle.failure(key);raise HTTPException(401,"Nieprawidłowy login lub hasło")
+    login_throttle.success(key)
     return {"token":create_token(user),"user":user_dict(user)}
 
 @app.get("/api/auth/me")
@@ -746,17 +754,21 @@ async def update_rfi(rfi_id:int,data:RFIUpdate,db:Session=Depends(get_db),user=D
     audit(db,user,"update","rfi",item.id,item.status);db.commit();await realtime.send("rfi.changed",{"id":item.id});return {"ok":True}
 
 @app.post("/api/{entity_type}/{entity_id}/photos")
-async def upload_photo(entity_type:str,entity_id:int,file:UploadFile=File(...),db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+async def upload_photo(entity_type:str,entity_id:int,file:UploadFile=File(...),client_id:str|None=Form(None),db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
     entity_models={"row":ConstructionRow,"rfi":RFI,"worklog":WorkLog}
     if entity_type not in entity_models:raise HTTPException(400,"Zdjęcie można przypisać do rzędu, RFI lub meldunku")
     entity=db.get(entity_models[entity_type],entity_id)
     if not entity:raise HTTPException(404,"Nie znaleziono wskazanego obiektu")
+    client_id=(client_id or "").strip()[:80] or None
+    if client_id:
+        duplicate=db.scalar(select(Attachment).where(Attachment.client_id==client_id,Attachment.entity_type==entity_type,Attachment.entity_id==entity_id))
+        if duplicate:return {"id":duplicate.id,"duplicate":True}
     mime=(file.content_type or "").lower()
     if mime not in ALLOWED_PHOTO_MIME:raise HTTPException(400,"Wymagane zdjęcie w formacie JPEG, PNG, WebP, GIF lub HEIC")
     data=read_upload_limited(file,MAX_PHOTO_SIZE,"Zdjęcie przekracza limit 25 MB")
     if not data:raise HTTPException(400,"Plik zdjęcia jest pusty")
     extension=Path(file.filename or ".jpg").suffix.lower() or ".jpg"
-    item=Attachment(entity_type=entity_type,entity_id=entity_id,filename=Path(file.filename or "zdjecie.jpg").name,stored_name=f"db-{uuid.uuid4().hex}{extension}",mime_type=mime,data=data,size=len(data),uploaded_by_id=user.id);db.add(item);db.commit();await realtime.send(f"{entity_type}.photo",{"id":entity_id});return {"id":item.id}
+    item=Attachment(entity_type=entity_type,entity_id=entity_id,filename=Path(file.filename or "zdjecie.jpg").name,stored_name=f"db-{uuid.uuid4().hex}{extension}",mime_type=mime,data=data,size=len(data),client_id=client_id,uploaded_by_id=user.id);db.add(item);db.commit();await realtime.send(f"{entity_type}.photo",{"id":entity_id});return {"id":item.id}
 
 @app.get("/api/{entity_type}/{entity_id}/photos")
 def photos(entity_type:str,entity_id:int,db:Session=Depends(get_db),user=Depends(current_user)):

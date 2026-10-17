@@ -248,6 +248,7 @@ class Attachment(Base):
     mime_type: Mapped[str] = mapped_column(String(100))
     data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
     size: Mapped[int] = mapped_column(Integer, default=0)
+    client_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 

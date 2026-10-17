@@ -13,7 +13,9 @@ async function parseResponse(response) {
   if (!response.ok) {
     let message = `Błąd ${response.status}`;
     try { message = (await response.json()).detail || message; } catch { /* response has no JSON */ }
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
   if (response.status === 204) return null;
   const type = response.headers.get("content-type") || "";

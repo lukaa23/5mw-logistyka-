@@ -22,6 +22,8 @@ def load_module(name, relative):
 
 dburl = load_module("asolar_dburl", "app/dburl.py")
 lan = load_module("asolar_lan", "app/lan.py")
+throttle = load_module("asolar_throttle", "app/throttle.py")
+secrets_store = load_module("asolar_secrets_store", "app/secrets_store.py")
 
 
 def load_auth_functions():
@@ -64,6 +66,63 @@ class LanAddressTest(unittest.TestCase):
     def test_urls_use_the_given_port(self):
         self.assertEqual(lan.lan_urls(8765, ["192.168.1.20", "127.0.0.1"]), ["http://192.168.1.20:8765"])
         self.assertEqual(lan.lan_urls(8765, []), [])
+
+
+class LoginThrottleTest(unittest.TestCase):
+    def make(self, **kwargs):
+        self.now = 1000.0
+        return throttle.LoginThrottle(clock=lambda: self.now, **kwargs)
+
+    def test_blocks_after_max_failures_and_releases_after_window(self):
+        limiter = self.make(max_failures=3, window_seconds=600)
+        for _ in range(2):
+            limiter.failure("1.1.1.1")
+        self.assertEqual(limiter.retry_after("1.1.1.1"), 0)
+        limiter.failure("1.1.1.1")
+        self.assertGreater(limiter.retry_after("1.1.1.1"), 0)
+        self.assertEqual(limiter.retry_after("2.2.2.2"), 0)
+        self.now += 601
+        self.assertEqual(limiter.retry_after("1.1.1.1"), 0)
+
+    def test_success_clears_failures(self):
+        limiter = self.make(max_failures=2)
+        limiter.failure("a"); limiter.success("a"); limiter.failure("a")
+        self.assertEqual(limiter.retry_after("a"), 0)
+
+    def test_memory_is_bounded(self):
+        limiter = self.make(max_keys=5)
+        for index in range(50):
+            self.now += 1
+            limiter.failure(f"ip-{index}")
+        self.assertLessEqual(len(limiter._failures), 5)
+
+    def test_forwarded_header_is_trusted_only_from_local_proxy(self):
+        self.assertEqual(throttle.client_ip("127.0.0.1", "9.9.9.9, 5.6.7.8"), "5.6.7.8")
+        self.assertEqual(throttle.client_ip("::1", "5.6.7.8"), "5.6.7.8")
+        self.assertEqual(throttle.client_ip("203.0.113.5", "1.2.3.4"), "203.0.113.5")
+        self.assertEqual(throttle.client_ip(None, None), "unknown")
+
+
+class SessionSecretTest(unittest.TestCase):
+    def test_strong_environment_secret_is_used(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(secrets_store.load_secret({"ASOLAR_SECRET": "x" * 32}, folder), "x" * 32)
+            self.assertFalse((Path(folder) / "secret.key").exists())
+
+    def test_missing_short_or_placeholder_secret_gets_random_persistent_key(self):
+        import os
+        import tempfile
+        for configured in ({}, {"ASOLAR_SECRET": "krotki"}, {"ASOLAR_SECRET": "zmien-ten-klucz-przed-wdrozeniem"}, {"ASOLAR_SECRET": "asolar-local-change-me"}):
+            with tempfile.TemporaryDirectory() as folder:
+                first = secrets_store.load_secret(configured, folder)
+                self.assertGreaterEqual(len(first), 32)
+                self.assertNotIn(first, secrets_store.PLACEHOLDER_SECRETS)
+                self.assertEqual(secrets_store.load_secret(configured, folder), first)
+                if os.name == "posix":
+                    self.assertEqual((Path(folder) / "secret.key").stat().st_mode & 0o077, 0)
+        with tempfile.TemporaryDirectory() as one, tempfile.TemporaryDirectory() as two:
+            self.assertNotEqual(secrets_store.load_secret({}, one), secrets_store.load_secret({}, two))
 
 
 class StarterPasswordTest(unittest.TestCase):

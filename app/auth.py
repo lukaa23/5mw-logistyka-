@@ -2,10 +2,11 @@ import base64, hashlib, hmac, json, os, secrets, time
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
-from .database import get_db
+from .database import DATA_DIR, get_db
+from .secrets_store import load_secret
 from .models import User
 
-SECRET = os.getenv("ASOLAR_SECRET", "asolar-local-change-me")
+SECRET = load_secret(os.environ, DATA_DIR)
 TOKEN_TTL = 60 * 60 * 24 * 7
 security = HTTPBearer(auto_error=False)
 

@@ -521,6 +521,21 @@ class PlanimetriaAccountsAndStorageTest(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/plans/{target['id']}", headers=self.manager).status_code, 403)
         self.assertEqual(self.client.get(target["file_url"], headers=self.manager).status_code, 200)
 
+    def test_offline_photo_retry_with_same_client_id_is_not_duplicated(self):
+        project_id = self.new_project("Projekt zdjęć offline")
+        worklog = self.client.post("/api/worklogs", headers=self.foreman, json={"project_id": project_id, "team": "Zespół A", "stage": "Montaż", "people": 3, "hours": 8, "rows_completed": 1})
+        worklog_id = worklog.json()["id"]
+        files = {"file": ("teren.jpg", b"\xff\xd8\xff\xe0 offline", "image/jpeg")}
+        first = self.client.post(f"/api/worklog/{worklog_id}/photos", headers=self.foreman, files=files, data={"client_id": "phone-photo-1"})
+        again = self.client.post(f"/api/worklog/{worklog_id}/photos", headers=self.foreman, files=files, data={"client_id": "phone-photo-1"})
+        other = self.client.post(f"/api/worklog/{worklog_id}/photos", headers=self.foreman, files=files, data={"client_id": "phone-photo-2"})
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(again.json()["id"], first.json()["id"])
+        self.assertTrue(again.json().get("duplicate"))
+        self.assertNotEqual(other.json()["id"], first.json()["id"])
+        self.assertEqual(len(self.client.get(f"/api/worklog/{worklog_id}/photos", headers=self.manager).json()), 2)
+        self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
+
     def test_photos_are_stored_in_database_and_restricted_to_images(self):
         from app.database import UPLOAD_DIR
         project_id = self.new_project("Projekt zdjęć w bazie")

@@ -25,6 +25,7 @@ COLUMNS = {
     "attachments": {
         "data": "BLOB NULL",
         "size": "INTEGER NOT NULL DEFAULT 0",
+        "client_id": "VARCHAR(80) NULL",
     },
     "work_logs": {
         "qc_notes": "TEXT NOT NULL DEFAULT ''",
