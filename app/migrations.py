@@ -30,6 +30,10 @@ COLUMNS = {
         "content_blob": "BLOB NULL",
         "client_id": "VARCHAR(80) NULL",
     },
+    "deliveries": {
+        "updated_by_id": "INTEGER NULL REFERENCES users(id)",
+        "updated_at": "DATETIME NULL",
+    },
     "work_logs": {
         "qc_notes": "TEXT NOT NULL DEFAULT ''",
         "row_id": "INTEGER NULL REFERENCES construction_rows(id) ON DELETE SET NULL",

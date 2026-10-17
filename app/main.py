@@ -71,6 +71,7 @@ class WorkLogUpdate(BaseModel): work_date:date|None=None; team:str|None=None; st
 class DeliveryItemIn(BaseModel): material_id:int; quantity_received:float=Field(gt=0); quantity_damaged:float=Field(ge=0,default=0)
 class DeliveryIn(BaseModel): project_id:int; delivery_date:date=Field(default_factory=date.today); wz_number:str; supplier:str=""; note:str=""; client_id:str|None=None; items:list[DeliveryItemIn]
 class BomDeliveryItemIn(BaseModel): component_id:int; quantity_received:float=Field(gt=0); quantity_damaged:float=Field(ge=0,default=0)
+class BomDeliveryUpdate(BaseModel): delivery_date:date; wz_number:str=Field(min_length=1,max_length=100); supplier:str=""; note:str=""; items:list["BomDeliveryItemIn"]=Field(min_length=1)
 class BomDeliveryIn(BaseModel): project_id:int; delivery_date:date=Field(default_factory=date.today); wz_number:str=Field(min_length=1,max_length=100); supplier:str=""; note:str=""; client_id:str|None=None; items:list[BomDeliveryItemIn]=Field(min_length=1)
 class MaterialIn(BaseModel): slot_number:int=Field(ge=1,le=3); name:str=Field(min_length=1,max_length=180); unit:str="szt."; required_quantity:float=Field(ge=0)
 class MaterialListIn(BaseModel): items:list[MaterialIn]=Field(min_length=3,max_length=3)
@@ -1021,6 +1022,12 @@ def bom_delivery_status(project_id:int,db:Session=Depends(get_db),user=Depends(c
     if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
     result=bom_delivery_status_payload(db,project_id);db.commit();return result
 
+def validate_bom_delivery_items(db,items):
+    if len({line.component_id for line in items})!=len(items):raise HTTPException(400,"Każdy element BOM może wystąpić tylko raz w jednym WZ")
+    if any(line.quantity_damaged>line.quantity_received for line in items):raise HTTPException(400,"Ilość uszkodzona nie może przekraczać ilości dostarczonej")
+    ensure_bom_components(db);db.flush();approved={item.id for item in db.scalars(select(Component).where(Component.sku.in_(list(bom_catalogue()))))}
+    if any(line.component_id not in approved for line in items):raise HTTPException(400,"Pozycja nie należy do zatwierdzonej listy BOM")
+
 @app.post("/api/bom-deliveries")
 async def create_bom_delivery(data:BomDeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
     if not db.get(Project,data.project_id):raise HTTPException(404,"Brak projektu")
@@ -1028,10 +1035,7 @@ async def create_bom_delivery(data:BomDeliveryIn,db:Session=Depends(get_db),user
     if data.client_id:
         existing=db.scalar(select(Delivery).where(Delivery.client_id==data.client_id))
         if existing:return {"id":existing.id,"deduplicated":True}
-    if len({line.component_id for line in data.items})!=len(data.items):raise HTTPException(400,"Każdy element BOM może wystąpić tylko raz w jednym WZ")
-    if any(line.quantity_damaged>line.quantity_received for line in data.items):raise HTTPException(400,"Ilość uszkodzona nie może przekraczać ilości dostarczonej")
-    ensure_bom_components(db);db.flush();approved={item.id for item in db.scalars(select(Component).where(Component.sku.in_(list(bom_catalogue()))))}
-    if any(line.component_id not in approved for line in data.items):raise HTTPException(400,"Pozycja nie należy do zatwierdzonej listy BOM")
+    validate_bom_delivery_items(db,data.items)
     payload=data.model_dump(exclude={"items"});payload["wz_number"]=payload["wz_number"].strip()
     item=Delivery(**payload,created_by_id=user.id);db.add(item);db.flush()
     for line in data.items:db.add(DeliveryItem(delivery_id=item.id,**line.model_dump()))
@@ -1042,7 +1046,22 @@ def bom_deliveries(project_id:int,db:Session=Depends(get_db),user=Depends(curren
     if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
     items=db.scalars(select(Delivery).where(Delivery.project_id==project_id).options(selectinload(Delivery.items).selectinload(DeliveryItem.component)).order_by(Delivery.delivery_date.desc(),Delivery.created_at.desc())).all()
     users={item.id:item.full_name for item in db.scalars(select(User)).all()}
-    return [{"id":item.id,"delivery_date":item.delivery_date,"wz_number":item.wz_number,"supplier":item.supplier,"note":item.note,"created_at":item.created_at,"created_by":users.get(item.created_by_id,"—"),"items":[{"component_id":line.component_id,"key":line.component.sku,"name":line.component.name,"unit":line.component.unit,"quantity_received":line.quantity_received,"quantity_damaged":line.quantity_damaged} for line in item.items]} for item in items]
+    return [{"id":item.id,"delivery_date":item.delivery_date,"wz_number":item.wz_number,"supplier":item.supplier,"note":item.note,"created_at":item.created_at,"created_by":users.get(item.created_by_id,"—"),"updated_at":item.updated_at,"updated_by":users.get(item.updated_by_id) if item.updated_by_id else None,"items":[{"component_id":line.component_id,"key":line.component.sku,"name":line.component.name,"unit":line.component.unit,"quantity_received":line.quantity_received,"quantity_damaged":line.quantity_damaged} for line in item.items]} for item in items]
+
+@app.put("/api/bom-deliveries/{delivery_id}")
+async def update_bom_delivery(delivery_id:int,data:BomDeliveryUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    """Edycja przyjętego WZ (kierownik). Pozycje są zastępowane w całości; bilans liczy się na bieżąco z pozycji."""
+    item=db.scalar(select(Delivery).where(Delivery.id==delivery_id).options(selectinload(Delivery.items)))
+    if not item:raise HTTPException(404,"Brak dostawy")
+    if not data.wz_number.strip():raise HTTPException(400,"Numer WZ jest wymagany")
+    validate_bom_delivery_items(db,data.items)
+    before={"wz":item.wz_number,"items":{line.component_id:[line.quantity_received,line.quantity_damaged] for line in item.items}}
+    item.delivery_date=data.delivery_date;item.wz_number=data.wz_number.strip();item.supplier=data.supplier;item.note=data.note
+    item.items.clear();db.flush()
+    for line in data.items:item.items.append(DeliveryItem(**line.model_dump()))
+    item.updated_by_id=user.id;item.updated_at=utc_now()
+    audit(db,user,"update","bom_delivery",item.id,json.dumps({"przed":before,"po":{line.component_id:[line.quantity_received,line.quantity_damaged] for line in data.items}},ensure_ascii=False))
+    db.commit();await realtime.send("bom-delivery.changed",{"project_id":item.project_id});return {"id":item.id}
 
 @app.delete("/api/bom-deliveries/{delivery_id}")
 async def delete_bom_delivery(delivery_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):

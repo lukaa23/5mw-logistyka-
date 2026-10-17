@@ -856,3 +856,26 @@ button.connection { border: 0; cursor: pointer; font: inherit; font-size: .7rem;
 .rescue-screen h2 { color: #9f3029; }
 .rescue-screen.full { max-width: 620px; margin: 10vh auto; }
 .pending-photo { position: relative; opacity: .85; outline: 2px dashed var(--amber); }
+
+/* 4.6.1 — formularz WZ z wyszukiwarką BOM */
+.delivery-form-line { display: grid; grid-template-columns: 1.6rem minmax(0, 1fr) 8.5rem 8.5rem 2.4rem; gap: .55rem; align-items: start; }
+.delivery-form-line .line-number { font-weight: 700; color: var(--muted); padding-top: .7rem; text-align: center; }
+.delivery-form-line .qty-field { margin: 0; font-size: .66rem; }
+.delivery-form-line .remove-line { margin-top: 1.1rem; }
+.bom-picker { position: relative; min-width: 0; }
+.bom-picker input { width: 100%; }
+.bom-picker-meta { display: block; margin-top: .25rem; font-size: .64rem; overflow-wrap: anywhere; }
+.bom-picker-list { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px); max-height: 320px; overflow: auto; margin: 0; padding: .3rem; list-style: none; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
+.bom-picker-list li { display: grid; gap: .1rem; padding: .5rem .6rem; border-radius: 8px; cursor: pointer; }
+.bom-picker-list li small { overflow-wrap: anywhere; }
+.bom-picker-list li.active { background: var(--green-50); }
+.bom-picker-list li.taken { opacity: .45; cursor: not-allowed; }
+.bom-picker-list li.empty-option { cursor: default; color: var(--muted); }
+.bom-delivery-form.editing { border: 2px solid var(--amber); }
+.draft-note { margin: 0 0 .8rem; }
+@media (max-width: 720px) {
+  .delivery-form-line { grid-template-columns: 1.4rem minmax(0, 1fr) 2.4rem; }
+  .delivery-form-line .bom-picker { grid-column: 2 / 4; }
+  .delivery-form-line .qty-field { grid-column: 2 / 3; }
+  .delivery-form-line .remove-line { grid-column: 3; grid-row: 1; margin-top: 0; }
+}
