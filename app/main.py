@@ -12,6 +12,7 @@ from sqlalchemy import Integer, delete, func, select
 from sqlalchemy.orm import Session, selectinload
 from .auth import STARTER_ACCOUNTS, create_token, current_user, decode_token, hash_password, initial_password, roles, verify_password
 from .database import Base, SessionLocal, UPLOAD_DIR, engine, get_db
+from .lan import lan_urls
 from .migrations import ensure_schema_columns
 from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, MaterialTemplate, Project, ProjectMaterial, ProjectVariantConfig, RFI, RowType, RowTypeComponent, Section, SiteDelivery, SiteDeliveryItem, User, WorkLog, Zone, ZoneVariantConfig
 from .services.report import daily_report
@@ -276,6 +277,14 @@ def seed():
         seed_source_documents(db,project.id,manager.id)
         db.commit()
 seed()
+
+LAN_MODE=os.getenv("ASOLAR_LAN")=="1"
+
+@app.get("/api/server-info")
+def server_info(user=Depends(roles("kierownik"))):
+    """Adresy, pod którymi telefony w tej samej sieci Wi-Fi otworzą aplikację (tryb sieciowy)."""
+    port=int(os.getenv("PORT","8765"))
+    return {"version":APP_VERSION,"lan_enabled":LAN_MODE,"urls":lan_urls(port) if LAN_MODE else []}
 
 @app.get("/api/health")
 def health(): return {"status":"ok","version":APP_VERSION,"time":utc_now()}
@@ -890,3 +899,7 @@ if FRONTEND.exists():
         if full_path and target.is_file() and target.is_relative_to(FRONTEND.resolve()):return FileResponse(target)
         if Path(full_path).suffix:raise HTTPException(404,"Nie znaleziono pliku")
         return FileResponse(FRONTEND/"index.html")
+
+if LAN_MODE:
+    for _url in lan_urls(int(os.getenv("PORT","8765"))) or ["(nie wykryto adresu sieci lokalnej)"]:
+        print(f"[ASOLAR] Adres dla telefonów w tej samej sieci Wi-Fi: {_url}",flush=True)

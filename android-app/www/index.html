@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ASOLAR</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b2b21; color: #18251f; padding: 16px; box-sizing: border-box; }
+    main { width: 100%; max-width: 420px; background: #fff; border-radius: 16px; padding: 22px; box-sizing: border-box; }
+    h1 { margin: 0 0 4px; font-size: 1.3rem; color: #123e30; }
+    p { margin: 0 0 14px; color: #52645b; font-size: .9rem; line-height: 1.5; }
+    label { display: block; font-weight: 600; font-size: .85rem; margin-bottom: 6px; }
+    input { width: 100%; box-sizing: border-box; font-size: 1rem; padding: .8rem; border: 1px solid #dce4df; border-radius: 10px; }
+    button { width: 100%; margin-top: 12px; padding: .85rem; font-size: 1rem; font-weight: 700; border: 0; border-radius: 10px; background: #217158; color: #fff; }
+    button:disabled { opacity: .6; }
+    #status { margin-top: 12px; min-height: 1.2em; font-size: .85rem; }
+    #status.error { color: #c94f45; }
+    small { color: #68766f; display: block; margin-top: 14px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ASOLAR ESET Tracker</h1>
+    <p>Połącz się z laptopem, na którym działa aplikacja. Telefon musi być w tej samej sieci Wi-Fi.</p>
+    <form id="form">
+      <label for="address">Adres laptopa</label>
+      <input id="address" inputmode="url" autocapitalize="none" autocomplete="off" placeholder="np. 192.168.0.15" required>
+      <button id="connect">Połącz</button>
+    </form>
+    <div id="status" role="status"></div>
+    <small>Adres zobaczysz w czarnym oknie programu na laptopie (uruchomionym przez Uruchom-Windows-Siec.bat) oraz w aplikacji: Użytkownicy → „Adres dla telefonów”.</small>
+  </main>
+  <script src="connect-logic.js"></script>
+  <script>
+    (function () {
+      var KEY = "asolar_server_url";
+      var form = document.getElementById("form");
+      var input = document.getElementById("address");
+      var button = document.getElementById("connect");
+      var status = document.getElementById("status");
+      function read() { try { return localStorage.getItem(KEY) || ""; } catch (e) { return ""; } }
+      function write(value) { try { localStorage.setItem(KEY, value); } catch (e) { /* brak pamięci lokalnej */ } }
+      function say(text, isError) { status.textContent = text; status.className = isError ? "error" : ""; }
+
+      async function probe(base) {
+        var controller = new AbortController();
+        var timer = setTimeout(function () { controller.abort(); }, 5000);
+        try {
+          var response = await fetch(base + "/api/health", { signal: controller.signal, cache: "no-store" });
+          if (!response.ok) throw new Error("status " + response.status);
+          var data = await response.json();
+          if (!data || data.status !== "ok") throw new Error("to nie jest serwer ASOLAR");
+        } finally { clearTimeout(timer); }
+      }
+
+      async function connect(raw, remember) {
+        var parsed = AsolarConnect.normalizeServerUrl(raw);
+        if (!parsed.ok) { say(parsed.error, true); return; }
+        button.disabled = true; say("Łączenie z " + parsed.url + "…");
+        try {
+          await probe(parsed.url);
+          if (remember) write(parsed.url);
+          window.location.replace(parsed.url);
+        } catch (error) {
+          say("Nie udało się połączyć z " + parsed.url + ". Sprawdź, czy laptop jest włączony, program działa w trybie sieciowym i telefon jest w tej samej sieci Wi-Fi.", true);
+          button.disabled = false;
+        }
+      }
+
+      form.addEventListener("submit", function (event) { event.preventDefault(); connect(input.value, true); });
+      var saved = read();
+      if (saved) { input.value = saved.replace(/^https?:\/\//, ""); if (location.hash !== "#zmien") connect(saved, false); }
+    })();
+  </script>
+</body>
+</html>

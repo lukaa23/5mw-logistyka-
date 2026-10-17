@@ -93,6 +93,30 @@ Dokumentacja OpenAPI jest dostępna pod `/docs`. Na Windows użyj `Uruchom-Windo
 
 > Katalog `frontend/dist` w repozytorium jest wynikiem ostatniego pełnego buildu. Po zmianach w `frontend/src` trzeba go odtworzyć poleceniem `npm run build` (Docker i Render robią to automatycznie).
 
+## Laptop jako serwer + telefony z Androidem (bez Render i bez Google Play)
+
+Zdjęcia, notatki i cała baza zapisują się wtedy w folderze `data` na laptopie (`data/asolar.db`).
+
+1. Uruchom **`Uruchom-Windows-Siec.bat`** (zamiast zwykłego). Przy pierwszym starcie Zapora Windows zapyta o dostęp — zezwól w sieciach **prywatnych**.
+2. W czarnym oknie pojawi się adres dla telefonów, np. `http://192.168.0.15:8765`. Kierownik zobaczy go też w aplikacji: Użytkownicy → „Adres dla telefonów”.
+3. Telefon musi być w **tej samej sieci Wi-Fi** (router na budowie albo hotspot z telefonu). Laptop musi być włączony i nie może usypiać.
+4. Zalecany jest stały adres laptopa (rezerwacja DHCP w routerze), żeby nie zmieniał się między dniami.
+
+Połączenie w sieci lokalnej to zwykłe HTTP, bez szyfrowania — używaj prywatnej sieci, nie publicznej. Bez HTTPS przeglądarka nie zainstaluje PWA, dlatego na telefony jest osobna aplikacja Android.
+
+**Kopia zapasowa:** zatrzymaj program i skopiuj folder `data` (albo sam plik `data/asolar.db`) na dysk zewnętrzny lub do chmury.
+
+### Aplikacja Android (APK)
+
+Folder `android-app` to cienka otoczka (Capacitor): przy pierwszym uruchomieniu pytasz o adres laptopa, aplikacja go zapamiętuje i ładuje interfejs z laptopa — zmiany w aplikacji nie wymagają nowego APK.
+
+1. Na GitHubie: **Actions → „Android APK” → Run workflow**.
+2. Po zakończeniu pobierz artefakt `asolar-debug-apk` (plik `app-debug.apk`).
+3. Na telefonie włącz „Instaluj nieznane aplikacje” dla przeglądarki/menedżera plików i zainstaluj plik.
+4. Wpisz adres laptopa (wystarczy `192.168.0.15`, port 8765 jest domyślny). Aby zmienić adres później, odinstaluj i zainstaluj aplikację albo wyczyść jej dane.
+
+Workflow i konfiguracja Android nie zostały jeszcze uruchomione — pierwszy przebieg może wymagać poprawek. Wersje Capacitora są ustawione na `latest`; po pierwszym udanym buildzie warto je przypiąć.
+
 ## PostgreSQL i trwałość danych
 
 Ustaw `DATABASE_URL`. Adresy `postgres://` i `postgresql://` są zamieniane na `postgresql+psycopg://` (psycopg 3). Brakujące kolumny są dodawane automatycznie, bez kasowania danych.

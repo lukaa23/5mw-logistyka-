@@ -552,6 +552,14 @@ class PlanimetriaAccountsAndStorageTest(unittest.TestCase):
         self.assertEqual(route.status_code, 200)
         self.assertIn("text/html", route.headers["content-type"])
 
+    def test_server_info_is_for_manager_and_empty_without_lan_mode(self):
+        self.assertEqual(self.client.get("/api/server-info", headers=self.foreman).status_code, 403)
+        self.assertEqual(self.client.get("/api/server-info").status_code, 401)
+        info = self.client.get("/api/server-info", headers=self.manager).json()
+        self.assertEqual(info["version"], "4.4.0")
+        self.assertFalse(info["lan_enabled"])
+        self.assertEqual(info["urls"], [])
+
     def test_health_reports_current_version(self):
         self.assertEqual(self.client.get("/api/health").json()["version"], "4.4.0")
 

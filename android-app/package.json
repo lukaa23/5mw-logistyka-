@@ -1,0 +1,14 @@
+{
+  "name": "asolar-android",
+  "private": true,
+  "version": "4.4.0",
+  "description": "Otoczka Android (APK) dla ASOLAR ESET Tracker Manager — łączy się z serwerem na laptopie",
+  "scripts": {
+    "test": "node --test \"tests/*.test.mjs\""
+  },
+  "dependencies": {
+    "@capacitor/android": "latest",
+    "@capacitor/cli": "latest",
+    "@capacitor/core": "latest"
+  }
+}

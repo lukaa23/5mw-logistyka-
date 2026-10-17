@@ -21,6 +21,7 @@ def load_module(name, relative):
 
 
 dburl = load_module("asolar_dburl", "app/dburl.py")
+lan = load_module("asolar_lan", "app/lan.py")
 
 
 def load_auth_functions():
@@ -53,6 +54,16 @@ class DatabaseUrlTest(unittest.TestCase):
     def test_missing_default_is_an_error(self):
         with self.assertRaises(ValueError):
             dburl.normalize_database_url(None)
+
+
+class LanAddressTest(unittest.TestCase):
+    def test_keeps_only_private_ipv4_without_loopback_and_link_local(self):
+        found = lan.private_ipv4(["127.0.0.1", "169.254.10.2", "192.168.0.15", "10.0.0.7", "8.8.8.8", "::1", "fe80::1", "0.0.0.0", "nie-ip", "192.168.0.15", "172.16.4.9"])
+        self.assertEqual(found, ["10.0.0.7", "172.16.4.9", "192.168.0.15"])
+
+    def test_urls_use_the_given_port(self):
+        self.assertEqual(lan.lan_urls(8765, ["192.168.1.20", "127.0.0.1"]), ["http://192.168.1.20:8765"])
+        self.assertEqual(lan.lan_urls(8765, []), [])
 
 
 class StarterPasswordTest(unittest.TestCase):

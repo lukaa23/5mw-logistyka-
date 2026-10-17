@@ -1,0 +1,12 @@
+{
+  "appId": "pl.asolar.tracker",
+  "appName": "ASOLAR",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true,
+    "allowNavigation": [
+      "*"
+    ]
+  }
+}
