@@ -70,6 +70,7 @@ a { color: inherit; }
 .connection i { width: 7px; height: 7px; border-radius: 50%; }
 .connection.online i { background: #4ba77f; box-shadow: 0 0 0 3px #dff1e8; }
 .connection.offline i { background: var(--amber); }
+.connection.connecting i { background: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
 .connection b { color: white; background: var(--red); border-radius: 99px; padding: .08rem .37rem; }
 .top-avatar { cursor: pointer; }
 .content { max-width: 1600px; margin: 0 auto; padding: clamp(1.4rem, 3vw, 2.8rem); }
@@ -749,3 +750,28 @@ button.secondary, .secondary { background: white; color: var(--green-900); borde
 }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; } }
+
+/* Planimetria */
+.plan-layout { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 1rem; align-items: start; }
+.plan-item { display: flex; gap: .5rem; align-items: center; border: 1px solid var(--line); border-radius: 11px; padding: .55rem; margin-bottom: .5rem; background: var(--surface); }
+.plan-item.active { border-color: var(--green-500); background: var(--green-50); }
+.plan-select { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: .2rem; display: grid; gap: .15rem; color: var(--ink); }
+.plan-select strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-select small { color: var(--muted); font-size: .68rem; }
+.plan-actions { display: flex; gap: .35rem; align-items: center; }
+.plan-upload { display: grid; gap: .6rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.plan-upload h3 { margin: 0; font-size: .9rem; }
+.plan-viewer { min-height: 70vh; }
+.plan-toolbar { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: center; margin-bottom: .8rem; }
+.zoom-controls { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+.zoom-controls button, .zoom-controls .open-tab { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: .4rem .7rem; font-size: .78rem; color: var(--ink); text-decoration: none; }
+.zoom-controls button:disabled { opacity: .45; cursor: default; }
+.zoom-controls span { min-width: 3.6rem; text-align: center; font-weight: 700; font-size: .78rem; }
+.plan-frame { width: 100%; height: 72vh; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.plan-notice { border-radius: 10px; padding: .7rem .9rem; font-size: .82rem; margin: .5rem 0; }
+.plan-notice.error { background: var(--red-bg); color: var(--red); }
+.plan-notice.neutral { background: var(--blue-bg); color: var(--blue); }
+@media (max-width: 860px) {
+  .plan-layout { grid-template-columns: 1fr; }
+  .plan-frame { height: 60vh; }
+}

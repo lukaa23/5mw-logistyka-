@@ -1,3 +1,5 @@
+# Lokalnie: SQLite w wolumenie asolar_data.
+# Wspólny serwer z PostgreSQL: docker compose --profile postgres up --build
 services:
   asolar:
     build: .
@@ -5,9 +7,24 @@ services:
       - "8765:8765"
     environment:
       ASOLAR_HOST: 0.0.0.0
-      ASOLAR_SECRET: ${ASOLAR_SECRET:-zmien-ten-klucz-przed-wdrozeniem}
+      ASOLAR_SECRET: ${ASOLAR_SECRET:?ustaw ASOLAR_SECRET (długi, losowy klucz)}
+      ASOLAR_MANAGER_PASSWORD: ${ASOLAR_MANAGER_PASSWORD:?ustaw hasło kierownika}
+      ASOLAR_FOREMAN1_PASSWORD: ${ASOLAR_FOREMAN1_PASSWORD:?ustaw hasło brygadzisty 1}
+      ASOLAR_FOREMAN2_PASSWORD: ${ASOLAR_FOREMAN2_PASSWORD:?ustaw hasło brygadzisty 2}
+      DATABASE_URL: ${DATABASE_URL:-}
     volumes:
       - asolar_data:/app/data
 
+  db:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: asolar
+      POSTGRES_USER: asolar
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ustaw POSTGRES_PASSWORD}
+    volumes:
+      - asolar_pg:/var/lib/postgresql/data
+
 volumes:
   asolar_data:
+  asolar_pg:

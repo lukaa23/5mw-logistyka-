@@ -9,6 +9,28 @@ SECRET = os.getenv("ASOLAR_SECRET", "asolar-local-change-me")
 TOKEN_TTL = 60 * 60 * 24 * 7
 security = HTTPBearer(auto_error=False)
 
+MIN_PASSWORD_LENGTH = 8
+# login → (nazwa zmiennej środowiskowej z hasłem, imię i nazwisko, rola)
+STARTER_ACCOUNTS = (
+    ("kierownik", "ASOLAR_MANAGER_PASSWORD", "Kierownik Budowy", "kierownik"),
+    ("brygadzista1", "ASOLAR_FOREMAN1_PASSWORD", "Brygadzista 1", "brygadzista"),
+    ("brygadzista2", "ASOLAR_FOREMAN2_PASSWORD", "Brygadzista 2", "brygadzista"),
+)
+
+
+def initial_password(env_name: str, environ=None) -> tuple[str, bool]:
+    """Zwraca (hasło, wygenerowane).
+
+    Hasło pochodzi ze zmiennej środowiskowej. Gdy jej brak lub jest za krótka,
+    generowane jest losowe hasło — w kodzie i we frontendzie nie ma haseł produkcyjnych.
+    """
+    source = os.environ if environ is None else environ
+    value = (source.get(env_name) or "").strip()
+    if len(value) >= MIN_PASSWORD_LENGTH:
+        return value, False
+    return secrets.token_urlsafe(12), True
+
+
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 240_000)

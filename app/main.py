@@ -1,28 +1,45 @@
-import json, math, mimetypes, os, shutil, uuid
+import hashlib, json, math, mimetypes, os, shutil, uuid
+from urllib.parse import quote
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import Integer, delete, func, select
 from sqlalchemy.orm import Session, selectinload
-from .auth import create_token, current_user, decode_token, hash_password, roles, verify_password
+from .auth import STARTER_ACCOUNTS, create_token, current_user, decode_token, hash_password, initial_password, roles, verify_password
 from .database import Base, SessionLocal, UPLOAD_DIR, engine, get_db
 from .migrations import ensure_schema_columns
 from .models import Attachment, AuditEvent, Component, ConstructionRow, Delivery, DeliveryItem, Document, MaterialTemplate, Project, ProjectMaterial, ProjectVariantConfig, RFI, RowType, RowTypeComponent, Section, SiteDelivery, SiteDeliveryItem, User, WorkLog, Zone, ZoneVariantConfig
 from .services.report import daily_report
 from .services.source_basis import SOURCE_DIR, build_eset_demand, load_eset_bom, load_source_manifest, sha256_file, source_analysis, source_entry_by_hash
 
-app=FastAPI(title="ASOLAR ESET Tracker Manager",version="4.3.0")
+APP_VERSION="4.4.0"
+app=FastAPI(title="ASOLAR ESET Tracker Manager",version=APP_VERSION)
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024
 MAX_PHOTO_SIZE=25*1024*1024
 
 def utc_now():
     return datetime.now(UTC).replace(tzinfo=None)
+
+ALLOWED_PHOTO_MIME={"image/jpeg","image/jpg","image/png","image/webp","image/gif","image/heic","image/heif"}
+DOCUMENT_MIME={".pdf":"application/pdf",".xlsx":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",".xlsm":"application/vnd.ms-excel.sheet.macroEnabled.12",".dwg":"application/octet-stream",".dxf":"application/octet-stream"}
+
+def read_upload_limited(file,limit,message):
+    """Czyta przesłany plik do pamięci i odrzuca go po przekroczeniu limitu."""
+    data=file.file.read(limit+1)
+    if len(data)>limit:raise HTTPException(413,message)
+    return data
+
+def content_disposition(filename,kind="attachment"):
+    return f"{kind}; filename*=utf-8''{quote(filename or 'plik')}"
+
+def binary_response(data,media_type,filename,kind="attachment"):
+    return Response(content=data,media_type=media_type,headers={"Content-Disposition":content_disposition(filename,kind),"X-Content-Type-Options":"nosniff"})
 
 class LoginIn(BaseModel): username:str; password:str
 class UserIn(BaseModel): username:str; full_name:str; role:str; password:str=Field(min_length=8)
@@ -218,16 +235,32 @@ def seed_source_documents(db,project_id,user_id):
         else:
             db.add(Document(project_id=project_id,filename=entry["filename"],stored_name=stored,kind="PDF",size=target.stat().st_size,status="zatwierdzone źródło",extracted_text="",analysis_json=json.dumps(analysis,ensure_ascii=False),uploaded_by_id=user_id))
 
+def ensure_starter_users(db):
+    """Tworzy brakujące konta startowe. Istniejące konta i ich hasła nigdy nie są zmieniane."""
+    generated={}
+    for username,env_name,full_name,role in STARTER_ACCOUNTS:
+        if db.scalar(select(User).where(User.username==username)):continue
+        password,was_generated=initial_password(env_name)
+        db.add(User(username=username,full_name=full_name,role=role,password_hash=hash_password(password)))
+        if was_generated:generated[username]=password
+    db.flush()
+    if generated:store_generated_passwords(generated)
+
+def store_generated_passwords(passwords):
+    """Hasła wylosowane przy braku zmiennych ASOLAR_*_PASSWORD trafiają do lokalnego pliku (nie do logów)."""
+    path=UPLOAD_DIR.parent/"initial-passwords.txt"
+    with path.open("a",encoding="utf8") as target:
+        for username,password in passwords.items():target.write(f"{username}: {password}\n")
+    try:path.chmod(0o600)
+    except OSError:pass
+    print(f"[ASOLAR] Brak ustawionych haseł startowych — wylosowano je i zapisano w {path}. Na serwerze ustaw ASOLAR_MANAGER_PASSWORD, ASOLAR_FOREMAN1_PASSWORD i ASOLAR_FOREMAN2_PASSWORD.",flush=True)
+
 def seed():
     Base.metadata.create_all(engine)
     ensure_schema_columns(engine)
     with SessionLocal() as db:
-        if not db.scalar(select(func.count(User.id))):
-            db.add_all([
-                User(username="kierownik",full_name="Kierownik Budowy",role="kierownik",password_hash=hash_password("Asolar2026!")),
-                User(username="brygadzista",full_name="Brygadzista",role="brygadzista",password_hash=hash_password("Brygada2026!")),
-                User(username="magazynier",full_name="Magazynier",role="magazynier",password_hash=hash_password("Magazyn2026!"))])
-        db.flush();manager=db.scalar(select(User).where(User.username=="kierownik"))
+        ensure_starter_users(db)
+        manager=db.scalar(select(User).where(User.username=="kierownik")) or db.scalar(select(User).where(User.role=="kierownik"))
         project=db.scalar(select(Project).limit(1))
         if not project:
             details=SOURCE_MANIFEST["project"]
@@ -245,7 +278,7 @@ def seed():
 seed()
 
 @app.get("/api/health")
-def health(): return {"status":"ok","version":"4.3.0","time":utc_now()}
+def health(): return {"status":"ok","version":APP_VERSION,"time":utc_now()}
 
 @app.post("/api/auth/login")
 def login(data:LoginIn,db:Session=Depends(get_db)):
@@ -563,29 +596,77 @@ def documents(project_id:int|None=None,db:Session=Depends(get_db),user=Depends(c
 @app.post("/api/documents")
 async def upload_document(project_id:int=Form(...),file:UploadFile=File(...),db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista","magazynier"))):
     if not db.get(Project,project_id): raise HTTPException(404,"Brak projektu")
-    if file.size is not None and file.size>MAX_DOCUMENT_SIZE: raise HTTPException(413,"Plik przekracza limit rozmiaru")
     extension=Path(file.filename or "").suffix.lower()
     if extension not in (".pdf",".dwg",".dxf",".xlsx",".xlsm"): raise HTTPException(400,"Dozwolone: PDF, DWG, DXF, XLSX")
-    stored=f"{uuid.uuid4().hex}{extension}";path=UPLOAD_DIR/stored
-    with path.open("wb") as target: shutil.copyfileobj(file.file,target)
-    if path.stat().st_size>MAX_DOCUMENT_SIZE:
-        path.unlink(missing_ok=True);raise HTTPException(413,"Plik przekracza limit rozmiaru")
-    digest=sha256_file(path);source=source_entry_by_hash(digest)
+    data=read_upload_limited(file,MAX_DOCUMENT_SIZE,"Plik przekracza limit rozmiaru")
+    if not data: raise HTTPException(400,"Plik jest pusty")
+    digest=hashlib.sha256(data).hexdigest();source=source_entry_by_hash(digest)
     if source:
         existing=next((item for item in db.scalars(select(Document).where(Document.project_id==project_id)).all() if json.loads(item.analysis_json or "{}").get("sha256")==digest),None)
-        if existing:
-            path.unlink(missing_ok=True);return {"id":existing.id,"status":existing.status,"analysis":json.loads(existing.analysis_json or "{}"),"deduplicated":True}
+        if existing:return {"id":existing.id,"status":existing.status,"analysis":json.loads(existing.analysis_json or "{}"),"deduplicated":True}
         result=source_analysis(source);status="zatwierdzone źródło";filename=source["filename"]
     else:
         result={"approved_source":False,"sha256":digest,"summary":{"source_policy":"plik pomocniczy"},"warnings":["Plik zapisano, ale nie należy do dziesięciu zatwierdzonych źródeł. Nie zmienia instrukcji ani bazy BOM."]};status="pomocniczy — poza bazą źródłową";filename=Path(file.filename or "dokument").name
-    item=Document(project_id=project_id,filename=filename,stored_name=stored,kind=extension[1:].upper(),size=path.stat().st_size,status=status,extracted_text="",analysis_json=json.dumps(result,ensure_ascii=False),uploaded_by_id=user.id)
+    item=Document(project_id=project_id,filename=filename,stored_name=f"db-{uuid.uuid4().hex}{extension}",kind=extension[1:].upper(),size=len(data),data=data,status=status,extracted_text="",analysis_json=json.dumps(result,ensure_ascii=False),uploaded_by_id=user.id)
     db.add(item);db.flush();audit(db,user,"upload","document",item.id,item.filename);db.commit();await realtime.send("document.changed",{"id":item.id});return {"id":item.id,"status":status,"analysis":result}
 
 @app.get("/api/documents/{document_id}/file")
 def document_file(document_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
     item=db.get(Document,document_id)
     if not item: raise HTTPException(404,"Brak dokumentu")
-    return FileResponse(UPLOAD_DIR/item.stored_name,filename=item.filename)
+    media_type=DOCUMENT_MIME.get(Path(item.filename).suffix.lower(),"application/octet-stream")
+    if item.data is not None:return binary_response(item.data,media_type,item.filename)
+    path=UPLOAD_DIR/item.stored_name
+    if not path.is_file():raise HTTPException(404,"Plik dokumentu nie jest dostępny na serwerze")
+    return FileResponse(path,filename=item.filename,media_type=media_type)
+
+def document_is_plan(item):
+    analysis=json.loads(item.analysis_json or "{}")
+    if analysis.get("plan"):return True
+    return bool(analysis.get("approved_source")) and item.kind=="PDF" and "planimetria" in item.filename.lower()
+
+def plan_dict(item,users):
+    analysis=json.loads(item.analysis_json or "{}");approved=bool(analysis.get("approved_source"))
+    return {"id":item.id,"title":analysis.get("title") or item.filename,"filename":item.filename,"size":item.size,"approved_source":approved,"deletable":bool(analysis.get("plan")) and not approved,"uploaded_by":users.get(item.uploaded_by_id,"—"),"uploaded_at":item.uploaded_at,"file_url":f"/api/documents/{item.id}/file"}
+
+@app.get("/api/plans")
+def plans(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    users={person.id:person.full_name for person in db.scalars(select(User)).all()}
+    items=[item for item in db.scalars(select(Document).where(Document.project_id==project_id)).all() if document_is_plan(item)]
+    result=[plan_dict(item,users) for item in items]
+    result.sort(key=lambda plan:(0,plan["filename"].lower()) if plan["approved_source"] else (1,"",-(plan["uploaded_at"].timestamp() if plan["uploaded_at"] else 0)))
+    return result
+
+@app.post("/api/plans")
+async def upload_plan(project_id:int=Form(...),title:str=Form(""),file:UploadFile=File(...),db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    if not db.get(Project,project_id):raise HTTPException(404,"Brak projektu")
+    filename=Path(file.filename or "plan.pdf").name
+    if Path(filename).suffix.lower()!=".pdf":raise HTTPException(400,"Plan musi być plikiem PDF")
+    data=read_upload_limited(file,MAX_DOCUMENT_SIZE,"Plik przekracza limit rozmiaru")
+    if not data.startswith(b"%PDF-"):raise HTTPException(400,"Plik nie jest poprawnym dokumentem PDF")
+    digest=hashlib.sha256(data).hexdigest()
+    if any(json.loads(item.analysis_json or "{}").get("sha256")==digest for item in db.scalars(select(Document).where(Document.project_id==project_id)).all()):
+        raise HTTPException(409,"Ten plik jest już dodany w projekcie")
+    source=source_entry_by_hash(digest)
+    if source:
+        if "planimetria" not in source["filename"].lower():raise HTTPException(400,"To zatwierdzone źródło techniczne, a nie plan. Dodaj je w zakładce Dokumenty.")
+        analysis=source_analysis(source);status="zatwierdzone źródło";filename=source["filename"]
+    else:
+        clean_title=(title or "").strip()[:180] or Path(filename).stem
+        analysis={"approved_source":False,"plan":True,"title":clean_title,"sha256":digest,"summary":{"source_policy":"plan dodatkowy"},"warnings":[]};status="plan dodatkowy"
+    item=Document(project_id=project_id,filename=filename,stored_name=f"db-{uuid.uuid4().hex}.pdf",kind="PDF",size=len(data),data=data,status=status,extracted_text="",analysis_json=json.dumps(analysis,ensure_ascii=False),uploaded_by_id=user.id)
+    db.add(item);db.flush();audit(db,user,"upload","plan",item.id,item.filename);result={"id":item.id}
+    db.commit();await realtime.send("plan.changed",{"project_id":project_id});return result
+
+@app.delete("/api/plans/{plan_id}")
+async def delete_plan(plan_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    item=db.get(Document,plan_id)
+    if not item or not document_is_plan(item):raise HTTPException(404,"Brak planu")
+    analysis=json.loads(item.analysis_json or "{}")
+    if analysis.get("approved_source") or not analysis.get("plan"):raise HTTPException(403,"Zatwierdzone źródła są chronione przed usunięciem")
+    project_id=item.project_id;(UPLOAD_DIR/item.stored_name).unlink(missing_ok=True)
+    audit(db,user,"delete","plan",item.id,item.filename);db.delete(item);db.commit();await realtime.send("plan.changed",{"project_id":project_id});return {"ok":True}
 
 @app.get("/api/instructions")
 def instructions(project_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
@@ -661,29 +742,31 @@ async def upload_photo(entity_type:str,entity_id:int,file:UploadFile=File(...),d
     if entity_type not in entity_models:raise HTTPException(400,"Zdjęcie można przypisać do rzędu, RFI lub meldunku")
     entity=db.get(entity_models[entity_type],entity_id)
     if not entity:raise HTTPException(404,"Nie znaleziono wskazanego obiektu")
-    if file.size is not None and file.size>MAX_PHOTO_SIZE:raise HTTPException(413,"Zdjęcie przekracza limit 25 MB")
-    mime=file.content_type or "application/octet-stream"
-    if not mime.startswith("image/"):raise HTTPException(400,"Wymagany plik zdjęcia")
-    extension=Path(file.filename or ".jpg").suffix.lower() or ".jpg";stored=f"{uuid.uuid4().hex}{extension}"
-    with (UPLOAD_DIR/stored).open("wb") as target:shutil.copyfileobj(file.file,target)
-    if (UPLOAD_DIR/stored).stat().st_size>MAX_PHOTO_SIZE:
-        (UPLOAD_DIR/stored).unlink(missing_ok=True);raise HTTPException(413,"Zdjęcie przekracza limit 25 MB")
-    item=Attachment(entity_type=entity_type,entity_id=entity_id,filename=Path(file.filename or "zdjecie.jpg").name,stored_name=stored,mime_type=mime,uploaded_by_id=user.id);db.add(item);db.commit();await realtime.send(f"{entity_type}.photo",{"id":entity_id});return {"id":item.id}
+    mime=(file.content_type or "").lower()
+    if mime not in ALLOWED_PHOTO_MIME:raise HTTPException(400,"Wymagane zdjęcie w formacie JPEG, PNG, WebP, GIF lub HEIC")
+    data=read_upload_limited(file,MAX_PHOTO_SIZE,"Zdjęcie przekracza limit 25 MB")
+    if not data:raise HTTPException(400,"Plik zdjęcia jest pusty")
+    extension=Path(file.filename or ".jpg").suffix.lower() or ".jpg"
+    item=Attachment(entity_type=entity_type,entity_id=entity_id,filename=Path(file.filename or "zdjecie.jpg").name,stored_name=f"db-{uuid.uuid4().hex}{extension}",mime_type=mime,data=data,size=len(data),uploaded_by_id=user.id);db.add(item);db.commit();await realtime.send(f"{entity_type}.photo",{"id":entity_id});return {"id":item.id}
 
 @app.get("/api/{entity_type}/{entity_id}/photos")
 def photos(entity_type:str,entity_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
     if entity_type not in ("row","rfi","worklog"):raise HTTPException(400,"Nieznany typ obiektu")
     items=db.scalars(select(Attachment).where(Attachment.entity_type==entity_type,Attachment.entity_id==entity_id).order_by(Attachment.created_at.desc())).all()
-    return [{"id":item.id,"filename":item.filename,"mime_type":item.mime_type,"created_at":item.created_at,"url":f"/api/attachments/{item.id}"} for item in items]
+    authors={person.id:person.full_name for person in db.scalars(select(User)).all()}
+    return [{"id":item.id,"filename":item.filename,"mime_type":item.mime_type,"created_at":item.created_at,"author":authors.get(item.uploaded_by_id,"—"),"url":f"/api/attachments/{item.id}"} for item in items]
 
 @app.get("/api/attachments/{attachment_id}")
 def attachment(attachment_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
     item=db.get(Attachment,attachment_id)
     if not item:raise HTTPException(404,"Brak załącznika")
-    return FileResponse(UPLOAD_DIR/item.stored_name,media_type=item.mime_type,filename=item.filename)
+    if item.data is not None:return binary_response(item.data,item.mime_type,item.filename,"inline")
+    path=UPLOAD_DIR/item.stored_name
+    if not path.is_file():raise HTTPException(404,"Plik zdjęcia nie jest dostępny na serwerze")
+    return FileResponse(path,media_type=item.mime_type,filename=item.filename)
 
 @app.post("/api/deliveries")
-async def create_delivery(data:DeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","magazynier"))):
+async def create_delivery(data:DeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista","magazynier"))):
     if data.client_id:
         existing=db.scalar(select(SiteDelivery).where(SiteDelivery.client_id==data.client_id))
         if existing:return {"id":existing.id,"deduplicated":True}
@@ -744,7 +827,7 @@ def bom_delivery_status(project_id:int,db:Session=Depends(get_db),user=Depends(c
     result=bom_delivery_status_payload(db,project_id);db.commit();return result
 
 @app.post("/api/bom-deliveries")
-async def create_bom_delivery(data:BomDeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","magazynier"))):
+async def create_bom_delivery(data:BomDeliveryIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista","magazynier"))):
     if not db.get(Project,data.project_id):raise HTTPException(404,"Brak projektu")
     if not data.wz_number.strip():raise HTTPException(400,"Numer WZ jest wymagany")
     if data.client_id:
@@ -803,6 +886,7 @@ if FRONTEND.exists():
     app.mount("/assets",StaticFiles(directory=FRONTEND/"assets"),name="assets")
     @app.get("/{full_path:path}",include_in_schema=False)
     def spa(full_path:str):
-        target=FRONTEND/full_path
-        if full_path and target.is_file():return FileResponse(target)
+        target=(FRONTEND/full_path).resolve()
+        if full_path and target.is_file() and target.is_relative_to(FRONTEND.resolve()):return FileResponse(target)
+        if Path(full_path).suffix:raise HTTPException(404,"Nie znaleziono pliku")
         return FileResponse(FRONTEND/"index.html")

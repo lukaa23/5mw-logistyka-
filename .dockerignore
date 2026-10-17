@@ -1,0 +1,9 @@
+.git
+.venv
+data
+runtime-packages
+frontend/node_modules
+frontend/dist
+Logistyka-Struktury.zip
+__pycache__
+*.pyc

@@ -1,0 +1,31 @@
+# Render Blueprint dla ASOLAR ESET Tracker Manager.
+# Nazwy i ceny planów Render zmieniają się — przed wdrożeniem sprawdź aktualną ofertę.
+# Trwałość danych wymaga bazy PostgreSQL w płatnym planie albo własnego, trwałego dysku:
+# darmowe instancje i bazy mogą wygasać lub być usuwane, a lokalny dysk usługi jest tymczasowy.
+# Zdjęcia i nowe dokumenty są zapisywane w bazie, więc kopie zapasowe bazy obejmują także pliki.
+databases:
+  - name: asolar-db
+    databaseName: asolar
+    plan: basic-256mb
+
+services:
+  - type: web
+    name: asolar-eset-tracker
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: asolar-db
+          property: connectionString
+      - key: ASOLAR_HOST
+        value: 0.0.0.0
+      - key: ASOLAR_SECRET
+        generateValue: true
+      - key: ASOLAR_MANAGER_PASSWORD
+        sync: false
+      - key: ASOLAR_FOREMAN1_PASSWORD
+        sync: false
+      - key: ASOLAR_FOREMAN2_PASSWORD
+        sync: false

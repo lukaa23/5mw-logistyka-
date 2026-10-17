@@ -19,6 +19,13 @@ COLUMNS = {
         "variant_ordinal": "INTEGER NOT NULL DEFAULT 0",
         "sort_order": "INTEGER NOT NULL DEFAULT 0",
     },
+    "documents": {
+        "data": "BLOB NULL",
+    },
+    "attachments": {
+        "data": "BLOB NULL",
+        "size": "INTEGER NOT NULL DEFAULT 0",
+    },
     "work_logs": {
         "qc_notes": "TEXT NOT NULL DEFAULT ''",
         "row_id": "INTEGER NULL REFERENCES construction_rows(id) ON DELETE SET NULL",
@@ -39,5 +46,5 @@ def ensure_schema_columns(engine) -> None:
                 if name not in existing:
                     sql_definition = definition
                     if engine.dialect.name == "postgresql":
-                        sql_definition = sql_definition.replace("BOOLEAN NOT NULL DEFAULT 0", "BOOLEAN NOT NULL DEFAULT FALSE").replace("DATETIME", "TIMESTAMP")
+                        sql_definition = sql_definition.replace("BOOLEAN NOT NULL DEFAULT 0", "BOOLEAN NOT NULL DEFAULT FALSE").replace("DATETIME", "TIMESTAMP").replace("BLOB", "BYTEA")
                     connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {sql_definition}")

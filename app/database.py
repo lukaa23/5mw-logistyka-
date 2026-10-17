@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from .dburl import database_url_from_env
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
@@ -9,7 +10,7 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 DATA_DIR.mkdir(exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR / 'asolar.db'}")
+DATABASE_URL = database_url_from_env(DATA_DIR / "asolar.db")
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, connect_args=connect_args, pool_pre_ping=True)
 if DATABASE_URL.startswith("sqlite"):

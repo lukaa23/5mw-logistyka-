@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, cachedGet, download, flushQueue, getToken, mutate, queuedCount, setToken, upload } from "./api";
+import Planimetria from "./Planimetria";
 
 const NAV = [
   ["dashboard", "Pulpit", "▦"], ["projects", "Projekty", "◆"], ["structure", "Strefy i rzędy", "▤"],
   ["reports", "Meldunki", "◷"], ["logistics", "Zapotrzebowanie", "⌗"],
   ["deliveries", "Dostawy na budowę", "⇩"],
-  ["documents", "Dokumenty", "▱"], ["rfi", "RFI / problemy", "!"], ["users", "Użytkownicy", "♙"],
+  ["documents", "Dokumenty", "▱"], ["plans", "Planimetria", "▭"], ["rfi", "RFI / problemy", "!"], ["users", "Użytkownicy", "♙"],
 ];
 const TRACKER_VARIANTS = ["1x28", "1x42", "1x56", "1x70", "1x42+1x28", "1x56+1x28", "1x56+1x42"];
 const today = () => new Date().toISOString().slice(0, 10);
@@ -17,8 +18,8 @@ const emptyMaterials = () => ({ "1": 0, "2": 0, "3": 0 });
 const roleName = role => ({ kierownik: "Kierownik budowy", brygadzista: "Brygadzista", magazynier: "Magazynier" }[role] || role);
 
 function Login({ onLogin }) {
-  const [username, setUsername] = useState("kierownik");
-  const [password, setPassword] = useState("Asolar2026!");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   async function submit(event) {
@@ -28,10 +29,9 @@ function Login({ onLogin }) {
       setToken(result.token); onLogin(result.user);
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   }
-  const accounts = [["kierownik", "Asolar2026!", "Kierownik"], ["brygadzista", "Brygada2026!", "Brygadzista"], ["magazynier", "Magazyn2026!", "Magazynier"]];
   return <main className="login-page">
     <section className="login-brand"><div className="brand-mark large">A</div><p className="eyebrow">ASOLAR ESET</p><h1>Trackery pod kontrolą.</h1><p>Konfiguracja wariantów ESET, automatyczne zapotrzebowanie BOM, meldunki i jakość na farmie PV.</p><div className="login-feature"><span>✓</span> 4 warianty podstawowe i 3 warianty łączone</div><div className="login-feature"><span>✓</span> Zapotrzebowanie według manuali ESET</div><div className="login-feature"><span>✓</span> Praca mobilna i kolejka offline</div></section>
-    <section className="login-panel"><form className="login-card" onSubmit={submit}><div className="mobile-brand"><div className="brand-mark">A</div><strong>ASOLAR</strong></div><p className="eyebrow">ESET TRACKER MANAGER</p><h2>Zaloguj się</h2><label>Login<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" /></label><label>Hasło<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /></label>{error && <div className="alert error">{error}</div>}<button className="primary wide" disabled={busy}>{busy ? "Logowanie…" : "Zaloguj się"}</button><div className="demo-accounts"><span>Konta startowe</span>{accounts.map(([u, p, name]) => <button type="button" key={u} onClick={() => { setUsername(u); setPassword(p); }}>{name}</button>)}</div></form></section>
+    <section className="login-panel"><form className="login-card" onSubmit={submit}><div className="mobile-brand"><div className="brand-mark">A</div><strong>ASOLAR</strong></div><p className="eyebrow">ESET TRACKER MANAGER</p><h2>Zaloguj się</h2><label>Login<input required value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" autoCapitalize="none" /></label><label>Hasło<input required type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /></label>{error && <div className="alert error">{error}</div>}<button className="primary wide" disabled={busy}>{busy ? "Logowanie…" : "Zaloguj się"}</button><p className="hint">Dane logowania otrzymasz od kierownika budowy.</p></form></section>
   </main>;
 }
 
@@ -294,17 +294,35 @@ function Users({ notify, user }) {
 }
 
 export default function App() {
-  const [user, setUser] = useState(null); const [loading, setLoading] = useState(!!getToken()); const [projects, setProjects] = useState([]); const [projectId, setProjectIdState] = useState(Number(localStorage.getItem("asolar_project")) || null); const [page, setPage] = useState("dashboard"); const [sync, setSync] = useState(0); const [online, setOnline] = useState(navigator.onLine); const [queue, setQueue] = useState(queuedCount()); const [toast, setToast] = useState(null); const [preselectedRow, setPreselectedRow] = useState(null);
+  const [user, setUser] = useState(null); const [loading, setLoading] = useState(!!getToken()); const [projects, setProjects] = useState([]); const [projectId, setProjectIdState] = useState(Number(localStorage.getItem("asolar_project")) || null); const [page, setPage] = useState("dashboard"); const [sync, setSync] = useState(0); const [online, setOnline] = useState(navigator.onLine); const [live, setLive] = useState("connecting"); const [queue, setQueue] = useState(queuedCount()); const [toast, setToast] = useState(null); const [preselectedRow, setPreselectedRow] = useState(null);
   const notify = useCallback((message, type = "success") => { setToast({ message, type }); setTimeout(() => setToast(null), 4200); }, []);
   function setProjectId(id) { setProjectIdState(id); if (id) localStorage.setItem("asolar_project", id); else localStorage.removeItem("asolar_project"); setSync(x => x + 1); }
   const loadProjects = useCallback(async () => { try { const result = await api("/api/projects?include_archived=true"); setProjects(result); const active = result.filter(x => !x.archived); const selected = active.find(x => x.id === projectId) || active[0]; if (selected && selected.id !== projectId) setProjectId(selected.id); } catch (e) { notify(e.message, "error"); } }, [projectId]);
   useEffect(() => { if (!getToken()) { setLoading(false); return; } api("/api/auth/me").then(setUser).catch(() => setUser(null)).finally(() => setLoading(false)); }, []);
   useEffect(() => { if (user) loadProjects(); }, [user]);
   useEffect(() => { const update = async () => { setOnline(navigator.onLine); if (navigator.onLine && user) { const sent = await flushQueue(); if (sent) { notify(`Zsynchronizowano ${sent} zapisów`); setSync(x => x + 1); } } setQueue(queuedCount()); }; const unauthorized = () => setUser(null); window.addEventListener("online", update); window.addEventListener("offline", update); window.addEventListener("asolar:queue", update); window.addEventListener("asolar:unauthorized", unauthorized); update(); return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); window.removeEventListener("asolar:queue", update); window.removeEventListener("asolar:unauthorized", unauthorized); }; }, [user]);
-  useEffect(() => { if (!user || !getToken()) return; const protocol = location.protocol === "https:" ? "wss" : "ws"; const ws = new WebSocket(`${protocol}://${location.host}/ws?token=${encodeURIComponent(getToken())}`); ws.onmessage = () => setSync(x => x + 1); const keepalive = setInterval(() => { if (ws.readyState === 1) ws.send("ping"); }, 30000); return () => { clearInterval(keepalive); ws.close(); }; }, [user]);
+  useEffect(() => {
+    if (!user || !getToken()) return undefined;
+    let ws = null; let stopped = false; let retry = 0; let reconnectTimer = null; let keepalive = null;
+    const connect = () => {
+      if (stopped) return;
+      setLive("connecting");
+      const protocol = location.protocol === "https:" ? "wss" : "ws";
+      try { ws = new WebSocket(`${protocol}://${location.host}/ws?token=${encodeURIComponent(getToken() || "")}`); } catch { schedule(); return; }
+      ws.onopen = () => { retry = 0; setLive("live"); setSync(x => x + 1); };
+      ws.onmessage = () => setSync(x => x + 1);
+      ws.onerror = () => { try { ws.close(); } catch { /* połączenie już zamknięte */ } };
+      ws.onclose = () => { clearInterval(keepalive); if (!stopped) { setLive(navigator.onLine ? "connecting" : "offline"); schedule(); } };
+      keepalive = setInterval(() => { if (ws && ws.readyState === 1) ws.send("ping"); }, 25000);
+    };
+    const schedule = () => { retry = Math.min(retry + 1, 6); reconnectTimer = setTimeout(connect, Math.min(30000, 1000 * 2 ** retry)); };
+    connect();
+    const poll = setInterval(() => setSync(x => x + 1), 15000);
+    return () => { stopped = true; clearInterval(poll); clearInterval(keepalive); clearTimeout(reconnectTimer); if (ws) { ws.onclose = null; ws.close(); } };
+  }, [user]);
   const activeProjects = projects.filter(x => !x.archived); const project = activeProjects.find(x => x.id === projectId) || activeProjects[0];
   function navigate(target, rowId = null) { setPage(target); if (rowId) setPreselectedRow(rowId); window.scrollTo({ top: 0, behavior: "smooth" }); }
   if (loading) return <Loader />; if (!user) return <Login onLogin={setUser} />;
   const visible = NAV.filter(([id]) => id !== "users" || user.role === "kierownik"); const common = { project, sync, notify, user };
-  return <div className="app-shell"><aside className="sidebar"><div className="logo"><div className="brand-mark">A</div><div><strong>ASOLAR</strong><small>ESET Tracker</small></div></div><nav>{visible.map(([id, label, icon]) => <button key={id} className={page === id ? "active" : ""} onClick={() => navigate(id)}><span>{icon}</span>{label}</button>)}</nav><div className="sidebar-foot"><div className="user-mini"><div className="avatar">{user.full_name.split(" ").map(x => x[0]).slice(0, 2).join("")}</div><div><strong>{user.full_name}</strong><small>{roleName(user.role)}</small></div></div><button className="logout" onClick={() => { setToken(null); setUser(null); }}>Wyloguj</button></div></aside><header className="topbar"><div className="mobile-logo"><div className="brand-mark">A</div><strong>ASOLAR</strong></div><label className="project-select"><span>Aktywny projekt</span><select value={project?.id || ""} onChange={e => setProjectId(Number(e.target.value))}>{activeProjects.map(item => <option key={item.id} value={item.id}>{item.name} · {item.capacity_mw} MW</option>)}</select></label><div className={`connection ${online ? "online" : "offline"}`}><i />{online ? "Online" : "Offline"}{queue > 0 && <b>{queue}</b>}</div><button className="avatar top-avatar" onClick={() => { setToken(null); setUser(null); }}>{user.full_name.split(" ").map(x => x[0]).slice(0, 2).join("")}</button></header><main className="content">{page === "dashboard" && <Dashboard {...common} />}{page === "projects" && <Projects projects={projects} reloadProjects={loadProjects} notify={notify} user={user} setProjectId={setProjectId} projectId={projectId} />}{page === "structure" && <TrackerConfiguration {...common} />}{page === "reports" && <Reports {...common} />}{page === "logistics" && <ProjectDemand {...common} />}{page === "deliveries" && <BomDeliveries {...common} />}{page === "documents" && <Documents {...common} />}{page === "rfi" && <RfiPage {...common} preselectedRow={preselectedRow} clearPreselected={() => setPreselectedRow(null)} />}{page === "users" && <Users {...common} />}</main><nav className="bottom-nav">{visible.map(([id, label, icon]) => <button key={id} className={page === id ? "active" : ""} onClick={() => navigate(id)}><span>{icon}</span><small>{label.split(" ")[0]}</small></button>)}</nav>{toast && <div className={`toast ${toast.type}`}>{toast.type === "error" ? "!" : "✓"}<span>{toast.message}</span></div>}</div>;
+  return <div className="app-shell"><aside className="sidebar"><div className="logo"><div className="brand-mark">A</div><div><strong>ASOLAR</strong><small>ESET Tracker</small></div></div><nav>{visible.map(([id, label, icon]) => <button key={id} className={page === id ? "active" : ""} onClick={() => navigate(id)}><span>{icon}</span>{label}</button>)}</nav><div className="sidebar-foot"><div className="user-mini"><div className="avatar">{user.full_name.split(" ").map(x => x[0]).slice(0, 2).join("")}</div><div><strong>{user.full_name}</strong><small>{roleName(user.role)}</small></div></div><button className="logout" onClick={() => { setToken(null); setUser(null); }}>Wyloguj</button></div></aside><header className="topbar"><div className="mobile-logo"><div className="brand-mark">A</div><strong>ASOLAR</strong></div><label className="project-select"><span>Aktywny projekt</span><select value={project?.id || ""} onChange={e => setProjectId(Number(e.target.value))}>{activeProjects.map(item => <option key={item.id} value={item.id}>{item.name} · {item.capacity_mw} MW</option>)}</select></label><div className={`connection ${online && live === "live" ? "online" : online ? "connecting" : "offline"}`}><i />{!online ? "Offline" : live === "live" ? "Na żywo" : "Łączenie"}{queue > 0 && <b>{queue}</b>}</div><button className="avatar top-avatar" onClick={() => { setToken(null); setUser(null); }}>{user.full_name.split(" ").map(x => x[0]).slice(0, 2).join("")}</button></header><main className="content">{page === "dashboard" && <Dashboard {...common} />}{page === "projects" && <Projects projects={projects} reloadProjects={loadProjects} notify={notify} user={user} setProjectId={setProjectId} projectId={projectId} />}{page === "structure" && <TrackerConfiguration {...common} />}{page === "reports" && <Reports {...common} />}{page === "logistics" && <ProjectDemand {...common} />}{page === "deliveries" && <BomDeliveries {...common} />}{page === "documents" && <Documents {...common} />}{page === "plans" && <Planimetria {...common} />}{page === "rfi" && <RfiPage {...common} preselectedRow={preselectedRow} clearPreselected={() => setPreselectedRow(null)} />}{page === "users" && <Users {...common} />}</main><nav className="bottom-nav">{visible.map(([id, label, icon]) => <button key={id} className={page === id ? "active" : ""} onClick={() => navigate(id)}><span>{icon}</span><small>{label.split(" ")[0]}</small></button>)}</nav>{toast && <div className={`toast ${toast.type}`}>{toast.type === "error" ? "!" : "✓"}<span>{toast.message}</span></div>}</div>;
 }

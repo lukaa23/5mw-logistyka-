@@ -8,6 +8,13 @@ TEST_DB = Path(tempfile.gettempdir()) / "asolar-universal-test.db"
 TEST_DB.unlink(missing_ok=True)
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB}"
 os.environ["ASOLAR_SECRET"] = "test-only-secret"
+MANAGER_PASSWORD = "Test-Kierownik-1"
+FOREMAN1_PASSWORD = "Test-Brygada-1"
+FOREMAN2_PASSWORD = "Test-Brygada-2"
+WAREHOUSE_PASSWORD = "Test-Magazyn-1"
+os.environ["ASOLAR_MANAGER_PASSWORD"] = MANAGER_PASSWORD
+os.environ["ASOLAR_FOREMAN1_PASSWORD"] = FOREMAN1_PASSWORD
+os.environ["ASOLAR_FOREMAN2_PASSWORD"] = FOREMAN2_PASSWORD
 
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
@@ -23,9 +30,11 @@ class UniversalWorkflowTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(app)
-        cls.manager = cls.login("kierownik", "Asolar2026!")
-        cls.foreman = cls.login("brygadzista", "Brygada2026!")
-        cls.warehouse = cls.login("magazynier", "Magazyn2026!")
+        cls.manager = cls.login("kierownik", MANAGER_PASSWORD)
+        cls.foreman = cls.login("brygadzista1", FOREMAN1_PASSWORD)
+        created = cls.client.post("/api/users", headers=cls.manager, json={"username": "magazynier", "full_name": "Magazynier", "role": "magazynier", "password": WAREHOUSE_PASSWORD})
+        assert created.status_code in (200, 409), created.text
+        cls.warehouse = cls.login("magazynier", WAREHOUSE_PASSWORD)
 
     @classmethod
     def login(cls, username, password):
@@ -396,8 +405,7 @@ class UniversalWorkflowTest(unittest.TestCase):
                 {"component_id": catalogue["MODULE-JINKO-JKM710-735"]["component_id"], "quantity_received": 40, "quantity_damaged": 1},
             ],
         }
-        self.assertEqual(self.client.post("/api/bom-deliveries", headers=self.foreman, json=payload).status_code, 403)
-        delivery = self.client.post("/api/bom-deliveries", headers=self.warehouse, json=payload)
+        delivery = self.client.post("/api/bom-deliveries", headers=self.foreman, json=payload)
         self.assertEqual(delivery.status_code, 200, delivery.text)
         duplicate = self.client.post("/api/bom-deliveries", headers=self.warehouse, json=payload)
         self.assertTrue(duplicate.json()["deduplicated"])
@@ -417,10 +425,135 @@ class UniversalWorkflowTest(unittest.TestCase):
         overall_after = self.client.get(f"/api/projects/{project_id}/tracker-config", headers=self.manager).json()
         self.assertEqual(overall_after["grand_total"], overall_before["grand_total"])
         self.assertEqual(self.client.delete(f"/api/bom-deliveries/{delivery.json()['id']}", headers=self.warehouse).status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/bom-deliveries/{delivery.json()['id']}", headers=self.foreman).status_code, 403)
         self.assertEqual(self.client.delete(f"/api/bom-deliveries/{delivery.json()['id']}", headers=self.manager).status_code, 200)
         cleared = self.client.get(f"/api/projects/{project_id}/bom-delivery-status", headers=self.manager).json()
         self.assertTrue(all(item["delivered"] == 0 for item in cleared["items"]))
         self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
+
+
+class PlanimetriaAccountsAndStorageTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(app)
+        cls.manager = cls.login("kierownik", MANAGER_PASSWORD)
+        cls.foreman = cls.login("brygadzista1", FOREMAN1_PASSWORD)
+        cls.foreman2 = cls.login("brygadzista2", FOREMAN2_PASSWORD)
+
+    @classmethod
+    def login(cls, username, password):
+        response = cls.client.post("/api/auth/login", json={"username": username, "password": password})
+        assert response.status_code == 200, response.text
+        return {"Authorization": f"Bearer {response.json()['token']}"}
+
+    def new_project(self, name="Projekt testowy planów"):
+        response = self.client.post("/api/projects", headers=self.manager, json={"name": name, "location": "Test", "capacity_mw": 1})
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()["id"]
+
+    def test_three_starter_accounts_use_environment_passwords_only(self):
+        users = {item["username"]: item["role"] for item in self.client.get("/api/users", headers=self.manager).json()}
+        self.assertEqual(users["kierownik"], "kierownik")
+        self.assertEqual(users["brygadzista1"], "brygadzista")
+        self.assertEqual(users["brygadzista2"], "brygadzista")
+        for username, password in (("kierownik", "Asolar2026!"), ("brygadzista", "Brygada2026!"), ("brygadzista1", "Brygada2026!")):
+            self.assertEqual(self.client.post("/api/auth/login", json={"username": username, "password": password}).status_code, 401)
+
+    def test_restart_does_not_reset_existing_passwords(self):
+        from app.main import ensure_starter_users
+        previous = os.environ["ASOLAR_MANAGER_PASSWORD"]
+        os.environ["ASOLAR_MANAGER_PASSWORD"] = "Zupelnie-Nowe-Haslo-9"
+        try:
+            with SessionLocal() as db:
+                ensure_starter_users(db)
+                db.commit()
+        finally:
+            os.environ["ASOLAR_MANAGER_PASSWORD"] = previous
+        self.assertEqual(self.client.post("/api/auth/login", json={"username": "kierownik", "password": MANAGER_PASSWORD}).status_code, 200)
+        self.assertEqual(self.client.post("/api/auth/login", json={"username": "kierownik", "password": "Zupelnie-Nowe-Haslo-9"}).status_code, 401)
+
+    def test_manager_uploads_plan_and_roles_are_enforced(self):
+        project_id = self.new_project()
+        pdf = b"%PDF-1.4\n% plan testowy\n"
+        data = {"project_id": str(project_id), "title": "Plan testowy v1"}
+        self.assertEqual(self.client.post("/api/plans", headers=self.foreman, data=data, files={"file": ("plan.pdf", pdf, "application/pdf")}).status_code, 403)
+        self.assertEqual(self.client.post("/api/plans", data=data, files={"file": ("plan.pdf", pdf, "application/pdf")}).status_code, 401)
+        self.assertEqual(self.client.post("/api/plans", headers=self.manager, data=data, files={"file": ("plan.txt", pdf, "text/plain")}).status_code, 400)
+        self.assertEqual(self.client.post("/api/plans", headers=self.manager, data=data, files={"file": ("plan.pdf", b"to nie jest pdf", "application/pdf")}).status_code, 400)
+        created = self.client.post("/api/plans", headers=self.manager, data=data, files={"file": ("plan.pdf", pdf, "application/pdf")})
+        self.assertEqual(created.status_code, 200, created.text)
+        self.assertEqual(self.client.post("/api/plans", headers=self.manager, data=data, files={"file": ("inna-nazwa.pdf", pdf, "application/pdf")}).status_code, 409)
+        listing = self.client.get(f"/api/plans?project_id={project_id}", headers=self.foreman).json()
+        self.assertEqual(len(listing), 1)
+        plan = listing[0]
+        self.assertEqual(plan["title"], "Plan testowy v1")
+        self.assertEqual(plan["uploaded_by"], "Kierownik Budowy")
+        self.assertTrue(plan["deletable"])
+        self.assertFalse(plan["approved_source"])
+        downloaded = self.client.get(plan["file_url"], headers=self.foreman2)
+        self.assertEqual(downloaded.status_code, 200)
+        self.assertEqual(downloaded.content, pdf)
+        self.assertEqual(downloaded.headers["content-type"], "application/pdf")
+        self.assertEqual(self.client.delete(f"/api/plans/{plan['id']}", headers=self.foreman).status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/plans/{plan['id']}", headers=self.manager).status_code, 200)
+        self.assertEqual(self.client.get(f"/api/plans?project_id={project_id}", headers=self.manager).json(), [])
+        self.assertEqual(self.client.get(plan["file_url"], headers=self.manager).status_code, 404)
+        self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
+
+    def test_additional_plan_does_not_change_approved_technical_base(self):
+        project_id = self.new_project("Projekt bez wpływu planu na BOM")
+        before = self.client.get(f"/api/projects/{project_id}/tracker-config", headers=self.manager).json()["grand_total"]
+        self.client.post("/api/plans", headers=self.manager, data={"project_id": str(project_id)}, files={"file": ("dodatkowy.pdf", b"%PDF-1.7 dodatkowy", "application/pdf")})
+        self.assertEqual(self.client.get(f"/api/projects/{project_id}/tracker-config", headers=self.manager).json()["grand_total"], before)
+        self.assertEqual(self.client.get(f"/api/instructions?project_id={project_id}", headers=self.manager).json(), [])
+        self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
+
+    def test_approved_source_plans_are_listed_and_protected_from_deletion(self):
+        approved = []
+        for project in self.client.get("/api/projects", headers=self.manager).json():
+            for plan in self.client.get(f"/api/plans?project_id={project['id']}", headers=self.manager).json():
+                if plan["approved_source"]:
+                    approved.append(plan)
+        self.assertTrue(approved, "zatwierdzone planimetrie powinny być widoczne jako plany")
+        self.assertTrue(all("planimetria" in plan["filename"].lower() for plan in approved))
+        self.assertTrue(all(plan["deletable"] is False for plan in approved))
+        target = approved[0]
+        self.assertEqual(self.client.delete(f"/api/plans/{target['id']}", headers=self.manager).status_code, 403)
+        self.assertEqual(self.client.get(target["file_url"], headers=self.manager).status_code, 200)
+
+    def test_photos_are_stored_in_database_and_restricted_to_images(self):
+        from app.database import UPLOAD_DIR
+        project_id = self.new_project("Projekt zdjęć w bazie")
+        worklog = self.client.post("/api/worklogs", headers=self.foreman, json={"project_id": project_id, "team": "Zespół A", "stage": "Montaż", "people": 3, "hours": 8, "rows_completed": 1})
+        self.assertEqual(worklog.status_code, 200, worklog.text)
+        worklog_id = worklog.json()["id"]
+        content = b"\xff\xd8\xff\xe0 zdjecie w bazie"
+        uploaded = self.client.post(f"/api/worklog/{worklog_id}/photos", headers=self.foreman, files={"file": ("teren.jpg", content, "image/jpeg")})
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        self.assertEqual(self.client.post(f"/api/worklog/{worklog_id}/photos", headers=self.foreman, files={"file": ("x.svg", b"<svg onload=alert(1)/>", "image/svg+xml")}).status_code, 400)
+        self.assertEqual(self.client.post(f"/api/worklog/{worklog_id}/photos", headers=self.foreman, files={"file": ("pusty.jpg", b"", "image/jpeg")}).status_code, 400)
+        history = self.client.get(f"/api/worklog/{worklog_id}/photos", headers=self.manager).json()
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["author"], "Brygadzista 1")
+        self.assertFalse(any(UPLOAD_DIR.glob("db-*")), "nowe zdjęcia nie powinny trafiać na dysk")
+        image = self.client.get(history[0]["url"], headers=self.manager)
+        self.assertEqual(image.content, content)
+        self.assertEqual(image.headers["content-type"], "image/jpeg")
+        self.assertEqual(image.headers["x-content-type-options"], "nosniff")
+        self.assertEqual(self.client.get(history[0]["url"]).status_code, 401)
+        self.assertEqual(self.client.delete(f"/api/projects/{project_id}", headers=self.manager).status_code, 200)
+
+    def test_missing_static_file_is_404_while_app_routes_return_the_shell(self):
+        missing = self.client.get("/assets/brakujacy-plik.js")
+        self.assertEqual(missing.status_code, 404)
+        self.assertNotIn("text/html", missing.headers.get("content-type", ""))
+        self.assertEqual(self.client.get("/inny-brakujacy.js").status_code, 404)
+        route = self.client.get("/planimetria")
+        self.assertEqual(route.status_code, 200)
+        self.assertIn("text/html", route.headers["content-type"])
+
+    def test_health_reports_current_version(self):
+        self.assertEqual(self.client.get("/api/health").json()["version"], "4.4.0")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 from datetime import UTC, date, datetime
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .database import Base
 
@@ -132,6 +132,8 @@ class Document(Base):
     status: Mapped[str] = mapped_column(String(80), default="wgrany")
     extracted_text: Mapped[str] = mapped_column(Text, default="")
     analysis_json: Mapped[str] = mapped_column(Text, default="{}")
+    # Nowe pliki trafiają do bazy; starsze rekordy czytają plik z katalogu uploads.
+    data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
     uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
@@ -244,6 +246,8 @@ class Attachment(Base):
     filename: Mapped[str] = mapped_column(String(255))
     stored_name: Mapped[str] = mapped_column(String(255), unique=True)
     mime_type: Mapped[str] = mapped_column(String(100))
+    data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
+    size: Mapped[int] = mapped_column(Integer, default=0)
     uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 

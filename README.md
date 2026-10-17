@@ -49,7 +49,8 @@ Zapotrzebowanie obejmuje komponenty systemowe, w tym słupy, TCU i odbiornik. Li
 - zdjęcia można dodawać bezpośrednio z aparatu telefonu i przeglądać w historii meldunku;
 - moduł RFI rejestruje problem, priorytet, opis i zdjęcie;
 - raport dzienny PDF zawiera prace, KPI i dziennik QA/QC;
-- WebSocket synchronizuje urządzenia, a PWA buforuje odczyty i kolejkuje zapisy offline;
+- WebSocket synchronizuje urządzenia (wskaźnik „Na żywo / Łączenie / Offline”, ponowne łączenie i odświeżanie co 15 s), a kolejka lokalna przechowuje proste zapisy podczas utraty sieci;
+- zakładka **Planimetria** wyświetla zatwierdzone plany PDF w aplikacji (przybliżanie, dopasowanie, pobieranie); kierownik wgrywa oficjalne plany i usuwa wyłącznie plany dodatkowe — zatwierdzone źródła są chronione;
 - interfejs działa po polsku na telefonie, tablecie i komputerze.
 
 ## Uruchomienie na Windows
@@ -60,45 +61,81 @@ Zapotrzebowanie obejmuje komponenty systemowe, w tym słupy, TCU i odbiornik. Li
 
 Skrypt używa polecenia `py -3.11`. Przy pierwszym uruchomieniu instaluje zależności w lokalnym folderze `runtime-packages`, a następnie otwiera aplikację. Dane i zdjęcia są przechowywane w folderze `data`.
 
-## Konta startowe
+## Konta i hasła
 
-| Rola | Login | Hasło |
+Trzy konta startowe powstają przy pierwszym uruchomieniu, jeśli jeszcze nie istnieją:
+
+| Login | Rola | Zmienna z hasłem |
 |---|---|---|
-| Kierownik Budowy | `kierownik` | `Asolar2026!` |
-| Brygadzista | `brygadzista` | `Brygada2026!` |
-| Magazynier | `magazynier` | `Magazyn2026!` |
+| `kierownik` | kierownik | `ASOLAR_MANAGER_PASSWORD` |
+| `brygadzista1` | brygadzista | `ASOLAR_FOREMAN1_PASSWORD` |
+| `brygadzista2` | brygadzista | `ASOLAR_FOREMAN2_PASSWORD` |
 
-Kierownik może tworzyć kolejne konta. W instalacji sieciowej należy ustawić własny `ASOLAR_SECRET`.
+- Hasła mają minimum 8 znaków i są przechowywane jako skróty PBKDF2. W kodzie ani we froncie nie ma haseł.
+- Restart **nie zmienia** haseł istniejących użytkowników. Zmiana zmiennej środowiskowej dotyczy tylko kont, które dopiero powstają.
+- Jeżeli zmiennej brakuje (np. lokalna instalacja), hasło jest losowane i zapisywane w pliku `data/initial-passwords.txt`; po pierwszym zalogowaniu usuń ten plik.
+- Instalacje z wcześniejszych wersji zachowują swoje konta (`brygadzista`, `magazynier`); `brygadzista1` i `brygadzista2` są dodawane obok nich.
+- Kierownik tworzy dodatkowe konta w zakładce Użytkownicy. Uprawnienia są sprawdzane w backendzie: odbiór QA/QC, użytkownicy i wgrywanie planów należą do kierownika; brygadzista zgłasza montaż, notatki, zdjęcia, meldunki i dostawy.
+- W instalacji dostępnej w sieci ustaw własny, długi `ASOLAR_SECRET`.
 
-## Uruchomienie deweloperskie
+## Uruchomienie lokalne
 
-Wymagane są Python 3.11+ i Node.js 20+.
+Wymagane są Python 3.11+ i Node.js 22+ (do budowy interfejsu).
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-cd frontend
-npm ci
-npm run build
-cd ..
-.venv/bin/python server.py
+cd frontend && npm ci && npm run build && cd ..
+ASOLAR_MANAGER_PASSWORD='...' ASOLAR_FOREMAN1_PASSWORD='...' ASOLAR_FOREMAN2_PASSWORD='...' .venv/bin/python server.py
 ```
 
-Dokumentacja OpenAPI jest dostępna pod `/docs`.
+Dokumentacja OpenAPI jest dostępna pod `/docs`. Na Windows użyj `Uruchom-Windows.bat` (zawsze `py -3.11`, bez stałych ścieżek).
+
+> Katalog `frontend/dist` w repozytorium jest wynikiem ostatniego pełnego buildu. Po zmianach w `frontend/src` trzeba go odtworzyć poleceniem `npm run build` (Docker i Render robią to automatycznie).
+
+## PostgreSQL i trwałość danych
+
+Ustaw `DATABASE_URL`. Adresy `postgres://` i `postgresql://` są zamieniane na `postgresql+psycopg://` (psycopg 3). Brakujące kolumny są dodawane automatycznie, bez kasowania danych.
+
+Zdjęcia i nowe dokumenty (w tym plany PDF) zapisują się **w bazie** jako dane binarne wraz z metadanymi, więc kopia zapasowa bazy obejmuje także pliki, a restart serwera niczego nie resetuje. Starsze pliki z katalogu `data/uploads` nadal są odczytywane. Dokumenty źródłowe z `project_sources` są kopiowane do `data/uploads` przy starcie.
+
+Kopie zapasowe: dla PostgreSQL `pg_dump "$DATABASE_URL" > kopia.sql`; dla SQLite skopiuj plik `data/asolar.db` przy zatrzymanym serwerze.
 
 ## Docker
 
 ```bash
-ASOLAR_SECRET="długi-losowy-klucz" docker compose up --build
+export ASOLAR_SECRET='długi-losowy-klucz' ASOLAR_MANAGER_PASSWORD='...' ASOLAR_FOREMAN1_PASSWORD='...' ASOLAR_FOREMAN2_PASSWORD='...'
+docker compose up --build                       # SQLite w wolumenie
+POSTGRES_PASSWORD='...' DATABASE_URL='postgresql://asolar:...@db:5432/asolar' docker compose --profile postgres up --build
 ```
 
-Domyślną bazą jest SQLite. Po ustawieniu `DATABASE_URL` i zainstalowaniu sterownika można użyć PostgreSQL.
+Obraz buduje interfejs, uruchamia testy frontendu (`npm test`) i dołącza `project_sources` z bazą BOM.
+
+## Wdrożenie na Render
+
+1. W Render wybierz **New → Blueprint** i wskaż to repozytorium (`render.yaml`).
+2. Uzupełnij `ASOLAR_MANAGER_PASSWORD`, `ASOLAR_FOREMAN1_PASSWORD` i `ASOLAR_FOREMAN2_PASSWORD`.
+3. Przekaż brygadzistom jeden adres HTTPS usługi.
+
+Nazwy i ceny planów Render zmieniają się; plik `render.yaml` zawiera plany płatne, bo trwałe przechowywanie danych wymaga trwałej bazy PostgreSQL. Darmowe instancje i bazy mogą wygasać — sprawdź aktualne warunki przed wdrożeniem. Wdrożenie nie jest wykonywane automatycznie.
+
+## Instalacja PWA
+
+Otwórz adres HTTPS w Chrome lub Safari i wybierz „Zainstaluj aplikację” / „Dodaj do ekranu głównego”. Service worker obsługuje wyłącznie GET do własnego origin; API, WebSocket, żądania Range i rozszerzenia przeglądarki są pomijane. Wgrywanie zdjęć i plików wymaga połączenia z serwerem — kolejka offline obejmuje tylko proste zapisy.
 
 ## Testy
 
 ```bash
-.venv/bin/python -m unittest -v tests/test_api.py
+cd frontend && npm test                          # service worker i logika Planimetrii (Node 22, bez instalacji pakietów)
+python -m unittest tests/test_standalone.py      # adres bazy, hasła, integralność źródeł (bez FastAPI)
+.venv/bin/python -m unittest -v tests/test_api.py  # pełny backend (wymaga requirements.txt)
 cd frontend && npm run build
 ```
 
-Testy sprawdzają strefy, zapotrzebowanie ogólne i strefowe, zerowy stan i sumowanie pełnych dostaw BOM, niezależność dostaw od obliczeń projektowych, automatyczną numerację i ręczne sortowanie rzędów, zachowanie historii, siedem wariantów, sumowanie BOM-ów łączonych, momenty dokręcania, role, meldunki, zdjęcia, QA/QC, raport PDF oraz integralność dziesięciu dokumentów źródłowych.
+Testy sprawdzają m.in.: konta i role, hasła z zmiennych środowiskowych, plany PDF i uprawnienia, ochronę zatwierdzonych źródeł, zdjęcia w bazie, strefy, warianty, sortowanie, zachowanie historii rzędów, zapotrzebowanie niezależne od dostaw, deduplikację, raport PDF oraz integralność dziesięciu dokumentów źródłowych.
+
+## Znane ograniczenia
+
+- Przybliżanie planów PDF korzysta z wbudowanej przeglądarki PDF; część telefonów nie pokazuje PDF w ramce — działają wtedy „Otwórz w nowej karcie” i „Pobierz”.
+- Pliki DWG/DXF są zapisywane, ale nie są analizowane. Analiza dotyczy zatwierdzonych źródeł PDF i plików Excel BOM.
+- Nie ma jeszcze samodzielnego launchera `ASOLAR.exe` — użyj `Uruchom-Windows.bat`.
