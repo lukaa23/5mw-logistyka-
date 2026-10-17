@@ -19,7 +19,7 @@ from .services.parser import inspect_upload
 from .services.report import daily_report
 from .services.source_basis import SOURCE_DIR, build_eset_demand, load_eset_bom, load_source_manifest, sha256_file, source_analysis, source_entry_by_hash
 
-APP_VERSION="4.6.0"
+APP_VERSION="4.6.1"
 app=FastAPI(title="ASOLAR ESET Tracker Manager",version=APP_VERSION)
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024

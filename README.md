@@ -176,7 +176,7 @@ cd frontend && npm ci && npm run build && cd ..
 cd desktop && npm ci && npm test && npx electron-builder --win nsis portable
 ```
 
-Wynik w `desktop/dist`: `ASOLAR-4.6.0-instalator.exe` (instalator NSIS ze skrótami na pulpicie i w menu Start) oraz `ASOLAR-4.6.0-portable.exe`. Pliki **nie są podpisane cyfrowo** — Windows SmartScreen pokaże ostrzeżenie „Nieznany wydawca” do czasu podpisania certyfikatem firmy (zmienne `CSC_LINK` / `CSC_KEY_PASSWORD` w electron-builder). Ikony (`.ico`, PNG dla PWA) generuje `py -3.11 windows/build_icon.py` (wymaga Pillow).
+Wynik w `desktop/dist`: `ASOLAR-<wersja>-instalator.exe` (instalator NSIS ze skrótami na pulpicie i w menu Start) oraz `ASOLAR-<wersja>-portable.exe`. Pliki **nie są podpisane cyfrowo** — Windows SmartScreen pokaże ostrzeżenie „Nieznany wydawca” do czasu podpisania certyfikatem firmy (zmienne `CSC_LINK` / `CSC_KEY_PASSWORD` w electron-builder). Ikony (`.ico`, PNG dla PWA) generuje `py -3.11 windows/build_icon.py` (wymaga Pillow).
 
 ## Uruchomienie na Windows (Python 3.11)
 
@@ -236,6 +236,11 @@ cd desktop && npm test                     # funkcje aplikacji Electron
 
 - **Backend** (`tests/test_api.py`, `tests/test_regression.py`): role i logowanie, brak resetu haseł po restarcie, wymagane zmienne serwera, trwałe notatki i zdjęcia w bazie, historia przy zmniejszaniu i zwiększaniu liczby rzędów, ręczne sortowanie z trwałym ID, warianty łączone jako suma BOM, korekty materiałowe rzędu, zapotrzebowanie niezależne od dostaw, zerowy stan dostaw i deduplikacja WZ, planimetria i uprawnienia, analiza plików pomocniczych bez zmiany bazy technicznej, KPI i prognoza, raport PDF, zdarzenia WebSocket, 404 dla brakujących skryptów, zgodność manifestu SHA-256 dziesięciu źródeł.
 - **Frontend** (`frontend/tests`): Planimetria (odświeżanie synchronizacji, usunięcie bieżącego planu, zmiana projektu, spóźnione odpowiedzi, zmiana planu w trakcie pobierania, brak starego PDF pod nowym tytułem, zwalnianie blob URL, null/pusta lista/niepoprawne rekordy, brak tytułu, błędna data, błąd pobierania), service worker (schematy rozszerzeń, obcy origin, API, WebSocket, POST, Range, błąd `cache.put`/`caches.open`, brak cache dla 500/206, fallback tylko dla nawigacji, usuwanie wyłącznie starych cache ASOLAR), logowanie bez haseł w kodzie, ErrorBoundary i kolejka offline.
+
+## Zmiany w wersji 4.6.1
+
+- Dostawy WZ: naprawiono znikanie danych w formularzu przy odświeżaniu w tle; wyszukiwarka elementów BOM (nazwa, kod, specyfikacja, bez polskich znaków, tolerancja literówki); edycja i usuwanie WZ przez kierownika z potwierdzeniem i przeliczeniem bilansu; szkic WZ zachowywany do zapisu.
+- Wybór strefy w „Zapotrzebowaniu” nie resetuje się już przy synchronizacji.
 
 ## Zmiany w wersji 4.6.0
 

@@ -236,7 +236,7 @@ class UniversalWorkflowTest(unittest.TestCase):
         )
         self.assertEqual({item["role"] for item in team.json()}, {"kierownik", "brygadzista"})
         health = self.client.get("/api/health").json()
-        self.assertEqual(health["version"], "4.6.0")
+        self.assertEqual(health["version"], "4.6.1")
         self.assertEqual(health["file_storage"], "database")
         self.assertEqual(health["realtime"], "websocket")
 

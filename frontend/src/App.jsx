@@ -14,7 +14,7 @@ const NAV = [
   ["map", "Mapa / Planimetria", "⌖"],
   ["documents", "Dokumenty", "▱"], ["rfi", "RFI / problemy", "!"], ["users", "Użytkownicy", "♙"],
 ];
-const APP_VERSION = "4.6.0";
+const APP_VERSION = "4.6.1";
 const TRACKER_VARIANTS = ["1x28", "1x42", "1x56", "1x70", "1x42+1x28", "1x56+1x28", "1x56+1x42"];
 const emptyMaterials = () => ({ "1": 0, "2": 0, "3": 0 });
 const roleName = role => ({ kierownik: "Kierownik budowy", brygadzista: "Brygadzista", magazynier: "Magazynier" }[role] || role);
