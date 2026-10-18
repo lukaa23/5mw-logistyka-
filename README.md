@@ -162,9 +162,11 @@ Wymagania i ograniczenia:
 
 Folder [desktop](desktop) zawiera aplikację Electron z ikoną ASOLAR (`desktop/build/icon.ico`) i konfiguracją `electron-builder`.
 
-- **Tryb serwera (domyślny):** aplikacja uruchamia lokalny serwer ASOLAR (FastAPI + SQLite) i otwiera go w oknie. Baza, zdjęcia i dokumenty są zapisywane w profilu użytkownika: `%APPDATA%\ASOLAR ESET Tracker Manager\data` — nie znikają przy braku internetu ani przy aktualizacji programu. Klucz sesji jest generowany przy pierwszym uruchomieniu (`secret.key`).
+- **Pierwsze uruchomienie:** aplikacja pyta, gdzie są dane: *Serwer w chmurze* (wpisujesz adres HTTPS, np. `https://asolar-eset-tracker.onrender.com`; program sprawdza `/api/health` przed zapisaniem) albo *Serwer na tym komputerze*. Zmiana później: menu *Serwer → Ustaw adres serwera…*.
+- **Tryb chmury (zalecany przy Render):** komputer kierownika i telefony pracują na tej samej bazie PostgreSQL pod jednym adresem. Program **nie uruchamia lokalnego Pythona** i nie wymaga go. Bez internetu przy starcie pokazuje komunikat z przyciskiem „Spróbuj ponownie” (wcześniej otwarta aplikacja działa offline jak PWA).
+- **Tryb serwera na tym komputerze:** aplikacja uruchamia lokalny serwer ASOLAR (FastAPI + SQLite) i otwiera go w oknie. Baza, zdjęcia i dokumenty są zapisywane w profilu użytkownika: `%APPDATA%\ASOLAR ESET Tracker Manager\data` — nie znikają przy braku internetu ani przy aktualizacji programu. Klucz sesji jest generowany przy pierwszym uruchomieniu (`secret.key`).
 - **Udostępnianie telefonom:** menu *Serwer → Udostępnij serwer telefonom w sieci lokalnej*, potem *Pokaż adresy dla telefonów*. Telefony w tej samej sieci Wi-Fi otwierają `http://ADRES-KOMPUTERA:8765` (zapora Windows może zapytać o zgodę). Do pełnej PWA offline potrzebny jest adres HTTPS — np. wspólny serwer w Render albo tunel HTTPS do komputera kierownika.
-- **Tryb klienta:** *Serwer → Połącz z serwerem zdalnym* (pole `serverUrl` w `config.json`) albo plik `server-url.txt` obok programu — aplikacja otwiera wtedy wspólny serwer i nie potrzebuje Pythona.
+- **Konfiguracja bez klikania (np. dla wielu komputerów):** plik `server-url.txt` z jedną linią — adresem HTTPS — w `%APPDATA%\ASOLAR ESET Tracker Manager\` albo obok programu. Ustawienia zapisują się w `config.json` w tym samym folderze.
 - Zajęty port 8765 jest wykrywany — program pokazuje komunikat zamiast otwierać starą instancję. Druga kopia programu nie startuje (przełącza na otwarte okno).
 - Kopia bazy: panel synchronizacji → „Pobierz kopię bazy (SQLite)” albo *Plik → Otwórz folder danych*.
 - **Wymaganie trybu serwera:** Python 3.11 z Python Launcher (`py -3.11`). Przy pierwszym uruchomieniu program jednorazowo instaluje składniki serwera do profilu użytkownika (wymaga Internetu, ok. 1 minuty). Python nie jest wbudowany w instalator.
@@ -236,6 +238,14 @@ cd desktop && npm test                     # funkcje aplikacji Electron
 
 - **Backend** (`tests/test_api.py`, `tests/test_regression.py`): role i logowanie, brak resetu haseł po restarcie, wymagane zmienne serwera, trwałe notatki i zdjęcia w bazie, historia przy zmniejszaniu i zwiększaniu liczby rzędów, ręczne sortowanie z trwałym ID, warianty łączone jako suma BOM, korekty materiałowe rzędu, zapotrzebowanie niezależne od dostaw, zerowy stan dostaw i deduplikacja WZ, planimetria i uprawnienia, analiza plików pomocniczych bez zmiany bazy technicznej, KPI i prognoza, raport PDF, zdarzenia WebSocket, 404 dla brakujących skryptów, zgodność manifestu SHA-256 dziesięciu źródeł.
 - **Frontend** (`frontend/tests`): Planimetria (odświeżanie synchronizacji, usunięcie bieżącego planu, zmiana projektu, spóźnione odpowiedzi, zmiana planu w trakcie pobierania, brak starego PDF pod nowym tytułem, zwalnianie blob URL, null/pusta lista/niepoprawne rekordy, brak tytułu, błędna data, błąd pobierania), service worker (schematy rozszerzeń, obcy origin, API, WebSocket, POST, Range, błąd `cache.put`/`caches.open`, brak cache dla 500/206, fallback tylko dla nawigacji, usuwanie wyłącznie starych cache ASOLAR), logowanie bez haseł w kodzie, ErrorBoundary i kolejka offline.
+
+## Zmiany w wersji 4.7.0
+
+- Aplikacja desktopowa: ekran wyboru serwera przy pierwszym uruchomieniu i w menu, sprawdzenie adresu przed zapisem, tryb chmury bez lokalnego Pythona, ekran „Spróbuj ponownie” przy braku połączenia, `server-url.txt` także w profilu użytkownika.
+- Spójne akcje przy rekordach: edycja i usuwanie RFI, usuwanie zdjęć (autor lub kierownik, także zdjęć czekających w telefonie), usuwanie plików pomocniczych, edycja imienia i roli użytkownika, „Anuluj” przy każdej edycji.
+- Jedno okno potwierdzenia w całej aplikacji (Enter — potwierdź, Esc — anuluj) zamiast okien przeglądarki; usunięcie projektu wymaga przepisania nazwy; zmiana hasła w oknie aplikacji.
+- Przyciski „+ Nowy …” w nagłówkach (projekt, RFI, meldunek, WZ, konto), stany ładowania na przyciskach, Esc zamyka edycję i panel synchronizacji, Ctrl+Enter zapisuje notatkę, komunikaty dostępne dla czytników ekranu.
+- Konfiguracja strefy nie traci niezapisanych liczb rzędów przy odświeżaniu w tle.
 
 ## Zmiany w wersji 4.6.1
 

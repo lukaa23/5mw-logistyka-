@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { cachedGet, mutate } from "./api";
-import { canWrite, Empty, fmt, Loader, PageHead, Progress, qty, today, uid } from "./ui";
+import { AddButton, canWrite, Empty, fmt, Loader, PageHead, Progress, qty, today, uid, useConfirm, useEscape } from "./ui";
 
 /* ---------- wyszukiwanie w katalogu BOM ---------- */
 
@@ -148,6 +148,7 @@ export function DeliveryForm({ items, delivery = null, draftKey = null, onSubmit
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const byId = useMemo(() => new Map((items || []).map(item => [String(item.component_id), item])), [items]);
+  useEscape(() => onCancel?.(), editing && !!onCancel);
 
   // Szkic nowego WZ przetrwa przełączenie zakładki lub odświeżenie strony.
   useEffect(() => {
@@ -204,7 +205,7 @@ export function DeliveryForm({ items, delivery = null, draftKey = null, onSubmit
   }
 
   const usedIds = form.lines.map(line => line.component_id).filter(Boolean);
-  return <form className={`card bom-delivery-form ${editing ? "editing" : ""}`} onSubmit={submit} noValidate>
+  return <form id={editing ? undefined : "wz-form"} className={`card bom-delivery-form ${editing ? "editing" : ""}`} onSubmit={submit} noValidate>
     <div className="card-head"><div><p className="eyebrow">{editing ? "KOREKTA PRZYJĘTEGO DOKUMENTU" : "NOWE PRZYJĘCIE"}</p><h2>{editing ? `Edytuj WZ ${delivery.wz_number}` : "Dodaj dokument WZ"}</h2></div>
       {editing ? <span className="badge warning">bilans zostanie przeliczony</span> : <span className="badge neutral">stan początkowy 0</span>}</div>
     {restored && <p className="hint draft-note">Przywrócono niezapisany szkic WZ. <button type="button" className="text-button" onClick={reset}>Wyczyść formularz</button></p>}
@@ -251,6 +252,7 @@ export default function BomDeliveries({ project, sync, notify, user }) {
   const [showAll, setShowAll] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const requestSeq = useRef(0);
+  const confirm = useConfirm();
 
   // Odświeżanie w tle (co 15 s i po zdarzeniach WebSocket) aktualizuje wyłącznie dane — nigdy formularzy.
   const load = useCallback(async () => {
@@ -287,7 +289,7 @@ export default function BomDeliveries({ project, sync, notify, user }) {
     return true;
   }
   async function remove(delivery) {
-    if (!window.confirm(`${DELETE_CONFIRMATION}\n\nWZ ${delivery.wz_number} z dnia ${fmt(delivery.delivery_date)}, ${positionsLabel(delivery.items.length)}.`)) return;
+    if (!(await confirm({ title: "Usunąć dokument WZ?", message: `${DELETE_CONFIRMATION}\n\nWZ ${delivery.wz_number} z dnia ${fmt(delivery.delivery_date)}, ${positionsLabel(delivery.items.length)}.`, danger: true, confirmLabel: "Usuń WZ" }))) return;
     try {
       const result = await mutate(`/api/bom-deliveries/${delivery.id}`, "DELETE");
       if (result?.queued) notify("Usunięcie WZ zapisane offline — zostanie wykonane po odzyskaniu połączenia");
@@ -298,7 +300,7 @@ export default function BomDeliveries({ project, sync, notify, user }) {
   if (!project) return <Empty>Wybierz aktywny projekt.</Empty>;
   if (!status) return <Loader />;
   const isManager = user.role === "kierownik";
-  return <><PageHead eyebrow="FIZYCZNY STAN NA BUDOWIE" title="Dostawy na budowę"><span className="badge success">WZ · pełna lista BOM</span></PageHead>
+  return <><PageHead eyebrow="FIZYCZNY STAN NA BUDOWIE" title="Dostawy na budowę"><span className="badge success">WZ · pełna lista BOM</span>{canWrite(user) && <AddButton target="wz-form">Nowy WZ</AddButton>}</PageHead>
     <section className="logistics-explainer"><div><strong>Zapotrzebowanie</strong><span>Wyliczane ze stref i wariantów</span></div><i>→</i><div><strong>Dostawy WZ</strong><span>Faktycznie przyjęte ilości</span></div><i>→</i><div><strong>Stan na polu</strong><span>Dostarczone minus uszkodzone</span></div></section>
     <section className="delivery-kpis"><article className="card"><small>Pozycje wymagane</small><strong>{status.summary.required_items}</strong></article><article className="card"><small>Pozycje kompletne</small><strong>{status.summary.complete_items}</strong></article><article className="card"><small>Pozycje z brakami</small><strong>{status.summary.missing_items}</strong></article><article className="card"><small>Dokumenty WZ</small><strong data-testid="wz-count">{status.summary.deliveries_count}</strong></article></section>
     {canWrite(user) && <DeliveryForm key={`new-${projectId}`} items={status.items} draftKey={`${projectId}`} onSubmit={create} />}

@@ -2,6 +2,7 @@
 /* Czyste funkcje pomocnicze aplikacji desktopowej — bez zależności od Electrona (testowane przez node:test). */
 const fs = require("node:fs");
 const http = require("node:http");
+const https = require("node:https");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
@@ -19,22 +20,34 @@ function normalizeServerUrl(value) {
   return url.origin;
 }
 
-/** Odczytuje konfigurację: config.json w profilu użytkownika oraz (zgodność wstecz) server-url.txt obok programu. */
-function readConfig(configPath, exeDir) {
-  let config = {};
-  try { config = JSON.parse(fs.readFileSync(configPath, "utf8")); } catch { config = {}; }
-  if (!config || typeof config !== "object" || Array.isArray(config)) config = {};
+function readServerUrlFile(folder) {
+  if (!folder) return null;
+  try { return normalizeServerUrl(fs.readFileSync(path.join(folder, "server-url.txt"), "utf8").split(/\r?\n/)[0]); } catch { return null; }
+}
+
+/**
+ * Konfiguracja: config.json w profilu użytkownika, a gdy brak w nim adresu — server-url.txt w profilu
+ * użytkownika albo obok programu. `firstRun` = użytkownik jeszcze nie wybrał trybu pracy.
+ */
+function readConfig(configPath, exeDir, profileDir = path.dirname(configPath)) {
+  let config = null;
+  try { config = JSON.parse(fs.readFileSync(configPath, "utf8")); } catch { config = null; }
+  const exists = !!config && typeof config === "object" && !Array.isArray(config);
+  if (!exists) config = {};
   let serverUrl = normalizeServerUrl(config.serverUrl);
-  if (!serverUrl && exeDir) {
-    try { serverUrl = normalizeServerUrl(fs.readFileSync(path.join(exeDir, "server-url.txt"), "utf8").split(/\r?\n/)[0]); } catch { /* brak pliku */ }
+  let source = serverUrl ? "config.json" : null;
+  if (!serverUrl && config.mode !== "local") {
+    serverUrl = readServerUrlFile(profileDir) || readServerUrlFile(exeDir);
+    if (serverUrl) source = "server-url.txt";
   }
   const port = Number.isInteger(config.port) && config.port > 1023 && config.port < 65536 ? config.port : DEFAULT_PORT;
-  return { serverUrl, shareOnLan: config.shareOnLan === true, port };
+  return { serverUrl, shareOnLan: config.shareOnLan === true, port, mode: serverUrl ? "remote" : config.mode === "local" ? "local" : null, firstRun: !exists && !serverUrl, source };
 }
 
 function writeConfig(configPath, values) {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify({ serverUrl: values.serverUrl || "", shareOnLan: !!values.shareOnLan, port: values.port || DEFAULT_PORT }, null, 2), "utf8");
+  const mode = values.serverUrl ? "remote" : "local";
+  fs.writeFileSync(configPath, JSON.stringify({ mode, serverUrl: values.serverUrl || "", shareOnLan: !!values.shareOnLan, port: values.port || DEFAULT_PORT }, null, 2), "utf8");
 }
 
 /** Stały, losowy klucz sesji przechowywany w profilu użytkownika (tworzony przy pierwszym uruchomieniu). */
@@ -62,7 +75,8 @@ function isPortBusy(port, host = "127.0.0.1") {
 
 function getJson(url, timeoutMs = 1500) {
   return new Promise((resolve, reject) => {
-    const request = http.get(url, { timeout: timeoutMs }, response => {
+    const client = String(url).startsWith("https:") ? https : http;
+    const request = client.get(url, { timeout: timeoutMs, headers: { Accept: "application/json" } }, response => {
       let body = "";
       response.setEncoding("utf8");
       response.on("data", chunk => { body += chunk; });
@@ -91,6 +105,20 @@ async function waitForHealth(baseUrl, { timeoutMs = 60000, intervalMs = 500, isA
   throw new Error(`Serwer nie odpowiedział w ciągu ${Math.round(timeoutMs / 1000)} s${lastError ? ` (${lastError.message})` : ""}`);
 }
 
+/**
+ * Sprawdza, czy pod adresem działa serwer ASOLAR (GET /api/health). Darmowy serwer w chmurze może się
+ * wybudzać około minuty, dlatego domyślny limit czasu jest długi.
+ */
+async function checkServer(value, { timeoutMs = 70000 } = {}) {
+  const origin = normalizeServerUrl(value);
+  if (!origin) throw new Error("Wpisz pełny adres zaczynający się od https:// (np. https://twoja-farma.onrender.com).");
+  let health;
+  try { health = await getJson(`${origin}/api/health`, timeoutMs); }
+  catch (error) { throw new Error(`Nie udało się połączyć z ${origin} (${error.message}). Sprawdź adres i połączenie z internetem.`); }
+  if (!health || health.status !== "ok" || !health.version) throw new Error(`Pod adresem ${origin} nie działa serwer ASOLAR.`);
+  return { origin, version: health.version, database: health.database, secure: origin.startsWith("https:") };
+}
+
 /** Adresy IPv4 w sieci lokalnej — dla telefonów brygadzistów. */
 function lanAddresses(interfaces = os.networkInterfaces()) {
   const result = [];
@@ -111,4 +139,4 @@ function isAppUrl(target, appOrigin) {
   } catch { return false; }
 }
 
-module.exports = { DEFAULT_PORT, normalizeServerUrl, readConfig, writeConfig, ensureSecret, isPortBusy, waitForHealth, lanAddresses, isAppUrl, getJson };
+module.exports = { DEFAULT_PORT, normalizeServerUrl, readConfig, writeConfig, checkServer, ensureSecret, isPortBusy, waitForHealth, lanAddresses, isAppUrl, getJson };

@@ -16,16 +16,50 @@ test("adres serwera: tylko http/https, zwracany origin", () => {
   for (const bad of ["", null, "ftp://x", "javascript:alert(1)", "file:///C:/x", "nie adres"]) assert.equal(lib.normalizeServerUrl(bad), null);
 });
 
-test("konfiguracja: config.json ma pierwszeństwo, server-url.txt jako zgodność wstecz, domyślny port", () => {
-  const dir = tmp();
-  const configPath = path.join(dir, "config.json");
-  assert.deepEqual(lib.readConfig(configPath, dir), { serverUrl: null, shareOnLan: false, port: 8765 });
-  fs.writeFileSync(path.join(dir, "server-url.txt"), "https://zdalny.example\r\n");
-  assert.equal(lib.readConfig(configPath, dir).serverUrl, "https://zdalny.example");
-  lib.writeConfig(configPath, { serverUrl: "https://inny.example", shareOnLan: true, port: 9000 });
-  assert.deepEqual(lib.readConfig(configPath, dir), { serverUrl: "https://inny.example", shareOnLan: true, port: 9000 });
-  fs.writeFileSync(configPath, "{zepsuty json");
+test("pierwsze uruchomienie: brak konfiguracji = ekran wyboru trybu", () => {
+  const profile = tmp();
+  const config = lib.readConfig(path.join(profile, "config.json"), tmp());
+  assert.deepEqual(config, { serverUrl: null, shareOnLan: false, port: 8765, mode: null, firstRun: true, source: null });
+});
+
+test("server-url.txt w profilu użytkownika lub obok programu włącza tryb chmury", () => {
+  const profile = tmp();
+  const exe = tmp();
+  const configPath = path.join(profile, "config.json");
+  fs.writeFileSync(path.join(exe, "server-url.txt"), "https://obok-programu.example\r\n");
+  assert.deepEqual(lib.readConfig(configPath, exe), { serverUrl: "https://obok-programu.example", shareOnLan: false, port: 8765, mode: "remote", firstRun: false, source: "server-url.txt" });
+  fs.writeFileSync(path.join(profile, "server-url.txt"), "https://twoja-farma.onrender.com/\n");
+  assert.equal(lib.readConfig(configPath, exe).serverUrl, "https://twoja-farma.onrender.com");
+  fs.writeFileSync(path.join(profile, "server-url.txt"), "ftp://zly-adres\n");
   assert.equal(lib.readConfig(configPath, null).serverUrl, null);
+});
+
+test("zapisana konfiguracja: tryb chmury i tryb lokalny (lokalny ignoruje server-url.txt)", () => {
+  const profile = tmp();
+  const configPath = path.join(profile, "config.json");
+  lib.writeConfig(configPath, { serverUrl: "https://inny.example", shareOnLan: true, port: 9000 });
+  assert.deepEqual(lib.readConfig(configPath, null), { serverUrl: "https://inny.example", shareOnLan: true, port: 9000, mode: "remote", firstRun: false, source: "config.json" });
+  fs.writeFileSync(path.join(profile, "server-url.txt"), "https://z-pliku.example");
+  lib.writeConfig(configPath, { serverUrl: null });
+  assert.deepEqual(lib.readConfig(configPath, null), { serverUrl: null, shareOnLan: false, port: 8765, mode: "local", firstRun: false, source: null });
+  fs.writeFileSync(configPath, "{zepsuty json");
+  assert.equal(lib.readConfig(configPath, null).serverUrl, "https://z-pliku.example");
+});
+
+test("sprawdzenie serwera: poprawny ASOLAR, obcy serwer, zły adres, brak połączenia", async () => {
+  const server = http.createServer((request, response) => {
+    response.writeHead(200, { "Content-Type": "application/json" });
+    if (request.url === "/api/health" && request.headers.host.startsWith("127.0.0.1")) response.end('{"status":"ok","version":"4.7.0","database":"postgresql"}');
+    else response.end('{"hello":"world"}');
+  }).listen(0, "127.0.0.1");
+  await new Promise(resolve => server.once("listening", resolve));
+  const { port } = server.address();
+  const result = await lib.checkServer(`http://127.0.0.1:${port}/dowolna/sciezka`, { timeoutMs: 3000 });
+  assert.deepEqual(result, { origin: `http://127.0.0.1:${port}`, version: "4.7.0", database: "postgresql", secure: false });
+  await assert.rejects(lib.checkServer(`http://localhost:${port}`, { timeoutMs: 3000 }), /nie działa serwer ASOLAR/);
+  await assert.rejects(lib.checkServer("twoja-farma.onrender.com"), /https:\/\//);
+  await assert.rejects(lib.checkServer("http://127.0.0.1:1", { timeoutMs: 1000 }), /Nie udało się połączyć/);
+  server.close();
 });
 
 test("klucz sesji jest tworzony raz i zachowywany", () => {

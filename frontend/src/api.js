@@ -215,3 +215,11 @@ export function saveBlob(blob, filename) {
   anchor.href = url; anchor.download = filename; anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+/** Usuwa jedną niewysłaną zmianę z kolejki tego urządzenia (np. błędnie zrobione zdjęcie). */
+export async function discardQueued(seq) {
+  const item = (await allItems()).find(entry => entry.seq === seq);
+  if (item) await removeItem(item);
+  await refreshCounts();
+  return !!item;
+}

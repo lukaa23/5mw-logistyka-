@@ -879,3 +879,41 @@ button.connection { border: 0; cursor: pointer; font: inherit; font-size: .7rem;
   .delivery-form-line .qty-field { grid-column: 2 / 3; }
   .delivery-form-line .remove-line { grid-column: 3; grid-row: 1; margin-top: 0; }
 }
+
+/* 4.7 — spójne akcje: okno potwierdzenia, „Dodaj nowy”, stany ładowania, edycja */
+.head-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; justify-content: flex-end; }
+.add-new { white-space: nowrap; }
+.dialog-overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 16px; background: rgba(11,43,33,.5); animation: dialog-fade .12s ease-out; }
+.dialog { width: min(460px, 100%); display: grid; gap: .8rem; box-shadow: 0 18px 50px rgba(11,43,33,.3); }
+.dialog h2 { margin: 0; }
+.dialog.danger h2 { color: #9f3029; }
+.dialog-message { margin: 0; white-space: pre-line; line-height: 1.5; color: var(--ink); font-size: .85rem; }
+.dialog label { margin: 0; }
+.dialog-actions { justify-content: flex-end; }
+.dialog-keys { margin: 0; text-align: right; }
+.danger-button.solid { background: var(--red) !important; color: #fff !important; border: 0 !important; border-radius: 9px; padding: .65rem .9rem; font-weight: 700; }
+.danger-button.solid:disabled { opacity: .45; }
+button.is-busy, button[aria-busy="true"] { cursor: progress; opacity: .75; }
+button.is-busy::before { content: ""; display: inline-block; width: .7em; height: .7em; margin-right: .4em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -.08em; animation: spin .7s linear infinite; }
+form.editing, .bom-delivery-form.editing, .project-form.editing, .report-mobile-form.editing { outline: 2px solid var(--amber); outline-offset: 2px; }
+.is-editing { outline: 2px solid var(--amber); }
+.inline-edit { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.inline-edit input { min-width: 0; flex: 1 1 180px; }
+.zone-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem; }
+.zone-title h2 { margin: 0; }
+.rfi-edit, .user-edit { display: grid; gap: .6rem; width: 100%; padding: .6rem 0; }
+.user-row .user-edit { flex: 1; }
+.rfi-actions { margin-top: .6rem; align-items: center; }
+.photo-gallery figure { position: relative; margin: 0; }
+.photo-gallery figcaption { display: flex; justify-content: space-between; gap: .3rem; align-items: flex-start; }
+.photo-delete { border: 0; background: var(--red-bg); color: var(--red); border-radius: 7px; width: 1.7rem; height: 1.7rem; font-weight: 700; flex: none; }
+.icon-button.danger { color: var(--red); }
+.toast { cursor: pointer; }
+@keyframes dialog-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 720px) {
+  .head-actions { justify-content: flex-start; }
+  .dialog-actions { flex-direction: column-reverse; }
+  .dialog-actions button { width: 100%; }
+}
+.photo-gallery figcaption small { position: static; background: none; color: var(--muted); padding: .2rem 0 0; font-size: .55rem; line-height: 1.3; }

@@ -1,7 +1,7 @@
 {
   "name": "asolar-eset-desktop",
   "productName": "ASOLAR ESET Tracker Manager",
-  "version": "4.6.1",
+  "version": "4.7.0",
   "description": "ASOLAR ESET Tracker Manager — aplikacja desktopowa (serwer kierownika i klient)",
   "author": "ASOLAR Sp. z o.o.",
   "license": "UNLICENSED",
@@ -26,6 +26,9 @@
     "files": [
       "main.js",
       "lib.js",
+      "setup.js",
+      "setup.html",
+      "preload.js",
       "build/icon.ico",
       "build/icon.png",
       "package.json"

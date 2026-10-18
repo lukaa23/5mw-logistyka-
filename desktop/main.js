@@ -3,9 +3,10 @@
  *
  * Tryb serwera (komputer kierownika): uruchamia lokalny backend FastAPI (Python 3.11),
  * baza SQLite i zdjęcia trafiają do profilu użytkownika, opcjonalnie udostępnia serwer
- * telefonom w sieci lokalnej. Tryb klienta: gdy ustawiono adres serwera, otwiera go.
+ * telefonom w sieci lokalnej. Tryb klienta (zalecany przy serwerze w chmurze): otwiera wspólny
+ * adres HTTPS i nie uruchamia lokalnego Pythona. Przy pierwszym starcie użytkownik wybiera tryb.
  */
-const { app, BrowserWindow, Menu, dialog, shell, clipboard } = require("electron");
+const { app, BrowserWindow, Menu, dialog, shell, clipboard, ipcMain } = require("electron");
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -18,6 +19,7 @@ let mainWindow = null;
 let serverProcess = null;
 let quitting = false;
 let config = null;
+let appOrigin = null;
 
 const userDir = () => app.getPath("userData");
 const configPath = () => path.join(userDir(), "config.json");
@@ -47,22 +49,84 @@ function createWindow() {
     title: APP_TITLE,
     icon: iconPath(),
     backgroundColor: "#f3f6f4",
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false },
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false, preload: path.join(__dirname, "preload.js") },
   });
   mainWindow.on("page-title-updated", event => event.preventDefault());
   mainWindow.on("closed", () => { mainWindow = null; });
-}
-
-/** Zewnętrzne adresy otwieramy w przeglądarce; okno aplikacji pozostaje przy własnym serwerze. */
-function lockNavigation(appOrigin) {
+  // Zewnętrzne adresy otwieramy w przeglądarce; okno aplikacji pozostaje przy własnym serwerze.
   const contents = mainWindow.webContents;
   contents.setWindowOpenHandler(({ url }) => {
-    if (lib.isAppUrl(url, appOrigin)) return { action: "allow", overrideBrowserWindowOptions: { icon: iconPath(), autoHideMenuBar: true } };
+    if (appOrigin && lib.isAppUrl(url, appOrigin)) return { action: "allow", overrideBrowserWindowOptions: { icon: iconPath(), autoHideMenuBar: true } };
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: "deny" };
   });
   contents.on("will-navigate", (event, url) => {
-    if (!lib.isAppUrl(url, appOrigin) && !url.startsWith("data:")) { event.preventDefault(); if (/^https?:/.test(url)) shell.openExternal(url); }
+    if (url.startsWith("data:") || url.startsWith("file:") || (appOrigin && lib.isAppUrl(url, appOrigin))) return;
+    event.preventDefault();
+    if (/^https?:/.test(url)) shell.openExternal(url);
+  });
+  // Brak internetu przy starcie w trybie chmury: ekran z „Spróbuj ponownie” zamiast pustej strony.
+  contents.on("did-fail-load", (_event, errorCode, description, url, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3 || !appOrigin || !String(url).startsWith(appOrigin) || config?.mode !== "remote") return;
+    showSetup(`Nie udało się otworzyć ${appOrigin} (${description}). Sprawdź połączenie z internetem i kliknij „Spróbuj ponownie”. Dane wprowadzone wcześniej w trybie offline pozostają w pamięci aplikacji.`);
+  });
+}
+
+function showSetup(error = "") {
+  appOrigin = null;
+  buildMenu(config?.mode === "local" ? "local" : "remote");
+  return mainWindow.loadFile(path.join(__dirname, "setup.html"), { query: error ? { error } : {} });
+}
+
+async function openRemote() {
+  appOrigin = new URL(config.serverUrl).origin;
+  buildMenu("remote");
+  try { await mainWindow.loadURL(config.serverUrl); } catch { /* obsłużone przez did-fail-load */ }
+}
+
+async function openLocal() {
+  buildMenu("local");
+  mainWindow.loadURL(statusPage("Uruchamianie", "Przygotowuję serwer na tym komputerze…"));
+  try {
+    const target = await startLocalServer();
+    appOrigin = new URL(target).origin;
+    await mainWindow.loadURL(target);
+  } catch (error) {
+    if (mainWindow) mainWindow.loadURL(statusPage("Nie udało się uruchomić", error.message, error.hint || ""));
+  }
+}
+
+/** Żądania IPC przyjmujemy wyłącznie z lokalnego ekranu ustawień (nie ze strony serwera). */
+function fromSetupPage(event) {
+  const url = event.senderFrame?.url || "";
+  if (!url.startsWith("file:")) throw new Error("Niedozwolone źródło żądania");
+}
+
+function registerIpc() {
+  ipcMain.handle("asolar:get-settings", event => {
+    fromSetupPage(event);
+    return { version: app.getVersion(), mode: config.mode, serverUrl: config.serverUrl || "", source: config.source };
+  });
+  ipcMain.handle("asolar:connect", async (event, value) => {
+    fromSetupPage(event);
+    const result = await lib.checkServer(value);
+    stopLocalServer();
+    config = { ...config, serverUrl: result.origin, mode: "remote", firstRun: false };
+    lib.writeConfig(configPath(), config);
+    setTimeout(openRemote, 700);
+    return result;
+  });
+  ipcMain.handle("asolar:use-local", async event => {
+    fromSetupPage(event);
+    config = { ...config, serverUrl: null, mode: "local", firstRun: false };
+    lib.writeConfig(configPath(), config);
+    openLocal();
+    return true;
+  });
+  ipcMain.handle("asolar:retry", event => {
+    fromSetupPage(event);
+    if (config.mode === "remote" && config.serverUrl) openRemote(); else openLocal();
+    return true;
   });
 }
 
@@ -143,8 +207,7 @@ function buildMenu(mode) {
       { label: "Udostępnij serwer telefonom w sieci lokalnej", type: "checkbox", checked: config.shareOnLan, enabled: local, click: item => { config.shareOnLan = item.checked; lib.writeConfig(configPath(), config); restartApp("Ustawienie zostanie zastosowane po ponownym uruchomieniu serwera."); } },
       { label: "Pokaż adresy dla telefonów", enabled: local, click: showLanAddresses },
       { type: "separator" },
-      { label: "Połącz z serwerem zdalnym (plik konfiguracji)…", click: editConfig },
-      { label: "Wróć do serwera na tym komputerze", enabled: !local, click: () => { config.serverUrl = null; lib.writeConfig(configPath(), config); restartApp("Aplikacja uruchomi lokalny serwer."); } },
+      { label: "Ustaw adres serwera… (chmura / ten komputer)", click: () => showSetup() },
     ] },
     { label: "Widok", submenu: [{ role: "reload", label: "Odśwież" }, { role: "togglefullscreen", label: "Pełny ekran" }, { role: "resetZoom", label: "Rzeczywisty rozmiar" }, { role: "zoomIn", label: "Powiększ" }, { role: "zoomOut", label: "Pomniejsz" }, { type: "separator" }, { role: "toggleDevTools", label: "Narzędzia deweloperskie" }] },
     { label: "Pomoc", submenu: [{ label: "O programie", click: () => dialog.showMessageBox(mainWindow, { type: "info", title: APP_TITLE, message: `${APP_TITLE} ${app.getVersion()}`, detail: local ? `Tryb: serwer na tym komputerze\nDane: ${dataDir()}` : `Tryb: klient serwera ${config.serverUrl}` }) }] },
@@ -162,12 +225,6 @@ function showLanAddresses() {
     .then(({ response }) => { if (response === 0 && urls.length && config.shareOnLan) clipboard.writeText(urls[0]); });
 }
 
-function editConfig() {
-  lib.writeConfig(configPath(), config);
-  dialog.showMessageBox(mainWindow, { type: "info", title: "Serwer zdalny", message: "W pliku konfiguracji wpisz adres wspólnego serwera w polu \"serverUrl\" (np. https://asolar-eset-tracker.onrender.com), zapisz plik i uruchom aplikację ponownie.", detail: configPath() })
-    .then(() => shell.openPath(configPath()));
-}
-
 function restartApp(message) {
   dialog.showMessageBox(mainWindow, { type: "info", title: APP_TITLE, message, buttons: ["Uruchom ponownie teraz", "Później"] }).then(({ response }) => {
     if (response === 0) { app.relaunch(); app.quit(); }
@@ -176,23 +233,15 @@ function restartApp(message) {
 
 async function boot() {
   config = lib.readConfig(configPath(), exeDir());
+  registerIpc();
   createWindow();
-  mainWindow.loadURL(statusPage("Uruchamianie", "Przygotowuję aplikację…"));
-  try {
-    let target;
-    if (config.serverUrl) {
-      buildMenu("remote");
-      target = config.serverUrl;
-    } else {
-      buildMenu("local");
-      target = await startLocalServer();
-    }
-    lockNavigation(new URL(target).origin);
-    await mainWindow.loadURL(target);
-  } catch (error) {
-    if (mainWindow) mainWindow.loadURL(statusPage("Nie udało się uruchomić", error.message, error.hint || ""));
-  }
+  if (config.mode === "remote") return openRemote();      // chmura: bez lokalnego Pythona
+  if (config.mode === "local") return openLocal();        // serwer na tym komputerze
+  return showSetup();                                      // pierwsze uruchomienie: wybór trybu
 }
+
+// Osobny profil (np. testy lub druga instalacja): ASOLAR_USER_DATA=C:\ścieżka
+if (process.env.ASOLAR_USER_DATA) app.setPath("userData", process.env.ASOLAR_USER_DATA);
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();

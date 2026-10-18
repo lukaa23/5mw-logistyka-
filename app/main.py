@@ -19,7 +19,7 @@ from .services.parser import inspect_upload
 from .services.report import daily_report
 from .services.source_basis import SOURCE_DIR, build_eset_demand, load_eset_bom, load_source_manifest, sha256_file, source_analysis, source_entry_by_hash
 
-APP_VERSION="4.6.1"
+APP_VERSION="4.7.0"
 app=FastAPI(title="ASOLAR ESET Tracker Manager",version=APP_VERSION)
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024
@@ -65,7 +65,7 @@ class RowMoveIn(BaseModel): direction:str
 RFI_PRIORITIES=("niski","normalny","wysoki","krytyczny")
 RFI_STATUSES=("otwarty","w analizie","zamknięty")
 class RFIIn(BaseModel): project_id:int; row_id:int|None=None; title:str=Field(min_length=1,max_length=180); description:str=Field(min_length=1); priority:Literal["niski","normalny","wysoki","krytyczny"]="normalny"; assigned_to_id:int|None=None; client_id:str|None=None
-class RFIUpdate(BaseModel): status:Literal["otwarty","w analizie","zamknięty"]|None=None; assigned_to_id:int|None=None; priority:Literal["niski","normalny","wysoki","krytyczny"]|None=None
+class RFIUpdate(BaseModel): title:str|None=Field(default=None,min_length=1,max_length=180); description:str|None=Field(default=None,min_length=1); row_id:int|None=None; status:Literal["otwarty","w analizie","zamknięty"]|None=None; assigned_to_id:int|None=None; priority:Literal["niski","normalny","wysoki","krytyczny"]|None=None
 class WorkLogIn(BaseModel): project_id:int; work_date:date=Field(default_factory=date.today); team:str; stage:str; people:int=Field(ge=1,le=1000); hours:float=Field(gt=0,le=24,default=8); rows_completed:float=Field(ge=0); qc_notes:str=""; note:str=""; row_id:int|None=None; client_id:str|None=None
 class WorkLogUpdate(BaseModel): work_date:date|None=None; team:str|None=None; stage:str|None=None; people:int|None=Field(default=None,ge=1,le=1000); hours:float|None=Field(default=None,gt=0,le=24); rows_completed:float|None=Field(default=None,ge=0); qc_notes:str|None=None; note:str|None=None; row_id:int|None=None
 class DeliveryItemIn(BaseModel): material_id:int; quantity_received:float=Field(gt=0); quantity_damaged:float=Field(ge=0,default=0)
@@ -793,6 +793,16 @@ async def upload_document(project_id:int=Form(...),file:UploadFile=File(...),db:
     item=Document(project_id=project_id,filename=filename,stored_name=stored,kind=extension[1:].upper(),size=len(content),status=status,extracted_text="",analysis_json=json.dumps(result,ensure_ascii=False),content_blob=content,content_type=file.content_type or mimetypes.guess_type(filename)[0],uploaded_by_id=user.id)
     db.add(item);db.flush();audit(db,user,"upload","document",item.id,item.filename);db.commit();await realtime.send("document.changed",{"id":item.id});return {"id":item.id,"status":status,"analysis":result}
 
+@app.delete("/api/documents/{document_id}")
+async def delete_document(document_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    """Usuwa plik pomocniczy. Zatwierdzone źródła techniczne są chronione."""
+    item=db.get(Document,document_id)
+    if not item:raise HTTPException(404,"Brak dokumentu")
+    if json.loads(item.analysis_json or "{}").get("approved_source"):raise HTTPException(409,"Zatwierdzony dokument źródłowy nie może zostać usunięty")
+    if item.content_blob is None:(UPLOAD_DIR/item.stored_name).unlink(missing_ok=True)
+    project_id=item.project_id;audit(db,user,"delete","document",item.id,item.filename);db.delete(item);db.commit()
+    await realtime.send("document.changed",{"project_id":project_id});return {"ok":True}
+
 @app.get("/api/documents/{document_id}/file")
 def document_file(document_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
     item=db.get(Document,document_id)
@@ -898,19 +908,34 @@ def rfis(project_id:int,status:str|None=None,db:Session=Depends(get_db),user=Dep
         photos=db.scalar(select(func.count(Attachment.id)).where(Attachment.entity_type=="rfi",Attachment.entity_id==x.id))
         row=db.get(ConstructionRow,x.row_id) if x.row_id else None
         zone_name=db.scalar(select(Zone.name).join(Section).where(Section.id==row.section_id)) if row else None
-        result.append({"id":x.id,"row_id":x.row_id,"row_label":f"{zone_name} · rząd {row.code} ({row.variant_name})" if row else None,"title":x.title,"description":x.description,"priority":x.priority,"status":x.status,"created_at":x.created_at,"resolved_at":x.resolved_at,"created_by":users.get(x.created_by_id,"—"),"assigned_to_id":x.assigned_to_id,"assigned_to":users.get(x.assigned_to_id) if x.assigned_to_id else None,"photos":photos})
+        result.append({"id":x.id,"row_id":x.row_id,"row_label":f"{zone_name} · rząd {row.code} ({row.variant_name})" if row else None,"title":x.title,"description":x.description,"priority":x.priority,"status":x.status,"created_at":x.created_at,"resolved_at":x.resolved_at,"created_by":users.get(x.created_by_id,"—"),"created_by_id":x.created_by_id,"assigned_to_id":x.assigned_to_id,"assigned_to":users.get(x.assigned_to_id) if x.assigned_to_id else None,"photos":photos})
     return result
 
+RFI_AUTHOR_FIELDS={"title","description","priority","row_id"}
+
 @app.patch("/api/rfis/{rfi_id}")
-async def update_rfi(rfi_id:int,data:RFIUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+async def update_rfi(rfi_id:int,data:RFIUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    """Kierownik zmienia wszystko; autor-brygadzista może poprawić treść własnego, niezamkniętego zgłoszenia."""
     item=db.get(RFI,rfi_id)
     if not item:raise HTTPException(404,"Brak RFI")
     values=data.model_dump(exclude_unset=True)
+    if user.role!="kierownik":
+        if item.created_by_id!=user.id:raise HTTPException(403,"Brygadzista może edytować tylko własne zgłoszenia")
+        if set(values)-RFI_AUTHOR_FIELDS:raise HTTPException(403,"Status i osobę odpowiedzialną zmienia kierownik")
+        if item.status=="zamknięty":raise HTTPException(409,"Zgłoszenie jest zamknięte")
+    if values.get("row_id") and not db.scalar(select(ConstructionRow.id).join(Section).join(Zone).where(ConstructionRow.id==values["row_id"],Zone.project_id==item.project_id)):raise HTTPException(400,"Rząd nie należy do projektu zgłoszenia")
     if values.get("assigned_to_id") and not db.get(User,values["assigned_to_id"]):raise HTTPException(400,"Nieznana osoba odpowiedzialna")
     for key,value in values.items():
         if value is not None or key=="assigned_to_id":setattr(item,key,value)
     item.resolved_at=(item.resolved_at or utc_now()) if item.status=="zamknięty" else None
-    audit(db,user,"update","rfi",item.id,item.status);db.commit();await realtime.send("rfi.changed",{"id":item.id});return {"ok":True}
+    audit(db,user,"update","rfi",item.id,json.dumps(values,ensure_ascii=False,default=str));db.commit();await realtime.send("rfi.changed",{"id":item.id});return {"ok":True}
+
+@app.delete("/api/rfis/{rfi_id}")
+async def delete_rfi(rfi_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik"))):
+    item=db.get(RFI,rfi_id)
+    if not item:raise HTTPException(404,"Brak RFI")
+    for photo in db.scalars(select(Attachment).where(Attachment.entity_type=="rfi",Attachment.entity_id==rfi_id)).all():(UPLOAD_DIR/photo.stored_name).unlink(missing_ok=True);db.delete(photo)
+    audit(db,user,"delete","rfi",item.id,item.title);db.delete(item);db.commit();await realtime.send("rfi.changed",{"id":rfi_id});return {"ok":True}
 
 PHOTO_ENTITIES={"row":ConstructionRow,"rfi":RFI,"worklog":WorkLog}
 
@@ -950,7 +975,21 @@ async def store_photo(entity_type,entity,file,client_id,client_time,db,user):
 def photos(entity_type:str,entity_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
     if entity_type not in ("row","rfi","worklog"):raise HTTPException(400,"Nieznany typ obiektu")
     items=db.scalars(select(Attachment).where(Attachment.entity_type==entity_type,Attachment.entity_id==entity_id).order_by(Attachment.created_at.desc())).all();users={item.id:item.full_name for item in db.scalars(select(User)).all()}
-    return [{"id":item.id,"filename":item.filename,"mime_type":item.mime_type,"created_at":item.created_at,"uploaded_by":users.get(item.uploaded_by_id,"—"),"url":f"/api/attachments/{item.id}"} for item in items]
+    return [{"id":item.id,"filename":item.filename,"mime_type":item.mime_type,"created_at":item.created_at,"uploaded_by":users.get(item.uploaded_by_id,"—"),"uploaded_by_id":item.uploaded_by_id,"url":f"/api/attachments/{item.id}"} for item in items]
+
+@app.delete("/api/attachments/{attachment_id}")
+async def delete_attachment(attachment_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    """Usunięcie błędnie dodanego zdjęcia: autor zdjęcia albo kierownik."""
+    item=db.get(Attachment,attachment_id)
+    if not item:raise HTTPException(404,"Brak załącznika")
+    if user.role!="kierownik" and item.uploaded_by_id!=user.id:raise HTTPException(403,"Brygadzista usuwa tylko własne zdjęcia")
+    entity_type,entity_id=item.entity_type,item.entity_id
+    if item.content_blob is None:(UPLOAD_DIR/item.stored_name).unlink(missing_ok=True)
+    if entity_type=="row":
+        row=db.get(ConstructionRow,entity_id)
+        if row:row.last_changed_by_id=user.id;row.last_changed_at=utc_now()
+    audit(db,user,"delete","attachment",item.id,f"{entity_type}:{entity_id}:{item.filename}");db.delete(item);db.commit()
+    await realtime.send(f"{entity_type}.photo",{"id":entity_id});return {"ok":True}
 
 @app.get("/api/attachments/{attachment_id}")
 def attachment(attachment_id:int,db:Session=Depends(get_db),user=Depends(current_user)):

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { api, cachedGet, download, upload } from "./api";
+import { useConfirm } from "./ui";
 
 /** Zamienia odpowiedź listy planów na bezpieczną tablicę rekordów. */
 export function normalizePlans(list) {
@@ -56,6 +57,7 @@ export default function PlanMap({ project, sync, notify, user }) {
   const requestSeq = useRef(0);
   const currentProject = useRef(projectId);
   const mounted = useRef(true);
+  const confirm = useConfirm();
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
@@ -132,7 +134,7 @@ export default function PlanMap({ project, sync, notify, user }) {
   }
 
   async function remove(item) {
-    if (!window.confirm(`Usunąć plan „${item.title}”? Tej operacji nie można cofnąć.`)) return;
+    if (!(await confirm({ title: "Usunąć plan?", message: `Plan „${item.title}” zostanie trwale usunięty z projektu. Tej operacji nie można cofnąć.`, danger: true, confirmLabel: "Usuń plan" }))) return;
     try { await api(`/api/planimetry/${item.id}`, { method: "DELETE" }); notify("Planimetria usunięta"); await load(); } catch (error) { notify(error.message, "error"); }
   }
 
