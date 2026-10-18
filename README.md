@@ -239,6 +239,13 @@ cd desktop && npm test                     # funkcje aplikacji Electron
 - **Backend** (`tests/test_api.py`, `tests/test_regression.py`): role i logowanie, brak resetu haseł po restarcie, wymagane zmienne serwera, trwałe notatki i zdjęcia w bazie, historia przy zmniejszaniu i zwiększaniu liczby rzędów, ręczne sortowanie z trwałym ID, warianty łączone jako suma BOM, korekty materiałowe rzędu, zapotrzebowanie niezależne od dostaw, zerowy stan dostaw i deduplikacja WZ, planimetria i uprawnienia, analiza plików pomocniczych bez zmiany bazy technicznej, KPI i prognoza, raport PDF, zdarzenia WebSocket, 404 dla brakujących skryptów, zgodność manifestu SHA-256 dziesięciu źródeł.
 - **Frontend** (`frontend/tests`): Planimetria (odświeżanie synchronizacji, usunięcie bieżącego planu, zmiana projektu, spóźnione odpowiedzi, zmiana planu w trakcie pobierania, brak starego PDF pod nowym tytułem, zwalnianie blob URL, null/pusta lista/niepoprawne rekordy, brak tytułu, błędna data, błąd pobierania), service worker (schematy rozszerzeń, obcy origin, API, WebSocket, POST, Range, błąd `cache.put`/`caches.open`, brak cache dla 500/206, fallback tylko dla nawigacji, usuwanie wyłącznie starych cache ASOLAR), logowanie bez haseł w kodzie, ErrorBoundary i kolejka offline.
 
+## Zmiany w wersji 4.7.1
+
+- Notatki rzędu: przy każdej notatce „Edytuj” i ikona kosza „Usuń” (autor notatki lub kierownik), potwierdzenie „Czy na pewno chcesz usunąć tę notatkę?”, oznaczenie „edytowano” z autorem i czasem korekty.
+- Edycja i usunięcie działają bez zasięgu (kolejka IndexedDB) i są wysyłane po odzyskaniu sieci; notatkę jeszcze niewysłaną zmienia się bezpośrednio w kolejce telefonu. Usunięcie notatki, którą inne urządzenie usunęło wcześniej, kończy się poprawnie.
+- Otwarta historia notatek odświeża się przy synchronizacji, więc zmiany z telefonu są widoczne na laptopie kierownika (i odwrotnie).
+- Poprzednia treść edytowanej lub usuniętej notatki zostaje w dzienniku zdarzeń serwera (`audit_events`) — widok rzędu pokazuje stan bieżący, a historia zmian pozostaje identyfikowalna.
+
 ## Zmiany w wersji 4.7.0
 
 - Aplikacja desktopowa: ekran wyboru serwera przy pierwszym uruchomieniu i w menu, sprawdzenie adresu przed zapisem, tryb chmury bez lokalnego Pythona, ekran „Spróbuj ponownie” przy braku połączenia, `server-url.txt` także w profilu użytkownika.

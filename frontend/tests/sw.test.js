@@ -113,7 +113,7 @@ describe("service worker ASOLAR", () => {
     const worker = loadWorker();
     const { event } = await dispatch(worker, get("/assets/app.js"));
     expect(event.waits.length).toBe(1);
-    expect(worker.caches.stores.get("asolar-eset-shell-v4.7.0").has(`${ORIGIN}/assets/app.js`)).toBe(true);
+    expect(worker.caches.stores.get("asolar-eset-shell-v4.7.1").has(`${ORIGIN}/assets/app.js`)).toBe(true);
   });
 
   it("nie buforuje odpowiedzi 500 ani częściowych 206", async () => {
@@ -127,7 +127,7 @@ describe("service worker ASOLAR", () => {
   });
 
   it("stosuje fallback index.html tylko dla nawigacji", async () => {
-    const caches = createCaches({ initial: { "asolar-eset-shell-v4.7.0": { [`${ORIGIN}/index.html`]: new Response("<html>", { headers: { "Content-Type": "text/html" } }) } } });
+    const caches = createCaches({ initial: { "asolar-eset-shell-v4.7.1": { [`${ORIGIN}/index.html`]: new Response("<html>", { headers: { "Content-Type": "text/html" } }) } } });
     const worker = loadWorker({ caches, fetchImpl: vi.fn(async () => { throw new TypeError("offline"); }) });
     const nav = await dispatch(worker, fakeRequest(`${ORIGIN}/raporty`, { mode: "navigate" }));
     expect(await nav.response.text()).toBe("<html>");
@@ -136,12 +136,12 @@ describe("service worker ASOLAR", () => {
   });
 
   it("przy aktywacji usuwa tylko stare cache ASOLAR", async () => {
-    const caches = createCaches({ initial: { "asolar-eset-shell-v45": {}, "asolar-eset-shell-v4.7.0": {}, "inna-aplikacja-v1": {}, "workbox-precache": {} } });
+    const caches = createCaches({ initial: { "asolar-eset-shell-v45": {}, "asolar-eset-shell-v4.7.1": {}, "inna-aplikacja-v1": {}, "workbox-precache": {} } });
     const worker = loadWorker({ caches });
     const waits = [];
     worker.listeners.activate({ waitUntil: promise => waits.push(promise) });
     await Promise.all(waits);
-    expect([...caches.stores.keys()].sort()).toEqual(["asolar-eset-shell-v4.7.0", "inna-aplikacja-v1", "workbox-precache"]);
+    expect([...caches.stores.keys()].sort()).toEqual(["asolar-eset-shell-v4.7.1", "inna-aplikacja-v1", "workbox-precache"]);
     expect(worker.self.clients.claim).toHaveBeenCalled();
   });
 

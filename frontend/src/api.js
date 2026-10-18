@@ -62,7 +62,8 @@ export async function cachedGet(path) {
   }
 }
 
-const ROW_PATH = /^\/api\/rows\/\d+(\/notes)?$/;
+const ROW_PATH = /^\/api\/rows\/\d+(\/notes(\/\d+)?)?$/;
+const NOTE_PATH = /^\/api\/rows\/(\d+)\/notes\/(\d+)$/;
 
 /** Zapis JSON: online — od razu; bez zasięgu lub przy zerwaniu połączenia — do kolejki w telefonie. */
 export async function mutate(path, method, body) {
@@ -151,6 +152,8 @@ async function doFlush() {
       sent += 1;
     } catch (error) {
       if (isNetworkError(error) || error.status === 401 || error.status >= 500) break; // spróbujemy ponownie później
+      // Usunięcie czegoś, czego już nie ma (np. notatkę usunęło wcześniej inne urządzenie) — cel osiągnięty.
+      if (item.method === "DELETE" && error.status === 404) { await removeItem(item); sent += 1; continue; }
       item.attempts = (item.attempts || 0) + 1;
       item.failed = true;
       item.lastError = error.message || String(error);
@@ -181,6 +184,8 @@ export function applyPendingRows(rows, items) {
   for (const item of items) {
     if (item.failed) continue;
     if (item.kind === "photo" && item.entityType === "row") { photos.set(item.entityId, (photos.get(item.entityId) || 0) + 1); continue; }
+    const noteChange = item.kind === "json" && NOTE_PATH.exec(item.path || "");
+    if (noteChange) { if (item.method === "DELETE") notes.set(Number(noteChange[1]), (notes.get(Number(noteChange[1])) || 0) - 1); continue; }
     const match = item.kind === "json" && /^\/api\/rows\/(\d+)(\/notes)?$/.exec(item.path || "");
     if (!match) continue;
     const id = Number(match[1]);
@@ -192,12 +197,36 @@ export function applyPendingRows(rows, items) {
   }
   return rows.map(row => {
     if (!patches.has(row.id) && !notes.has(row.id) && !photos.has(row.id)) return row;
-    return { ...row, ...(patches.get(row.id) || {}), notes_count: (row.notes_count || 0) + (notes.get(row.id) || 0), photos: (row.photos || 0) + (photos.get(row.id) || 0), pending_sync: true };
+    return { ...row, ...(patches.get(row.id) || {}), notes_count: Math.max(0, (row.notes_count || 0) + (notes.get(row.id) || 0)), photos: (row.photos || 0) + (photos.get(row.id) || 0), pending_sync: true };
   });
 }
 
 export function pendingNotes(rowId, items) {
-  return (items || []).filter(item => !item.failed && item.kind === "json" && item.path === `/api/rows/${rowId}/notes`).map(item => ({ id: `pending-${item.seq}`, text: item.body?.text || "", created_at: item.queuedAt, pending: true }));
+  return (items || []).filter(item => !item.failed && item.kind === "json" && item.method === "POST" && item.path === `/api/rows/${rowId}/notes`).map(item => ({ id: `pending-${item.seq}`, seq: item.seq, text: item.body?.text || "", created_at: item.queuedAt, pending: true }));
+}
+
+/** Nakłada niewysłane edycje i usunięcia notatek z serwera (np. zrobione bez zasięgu) na listę notatek rzędu. */
+export function applyPendingNoteChanges(rowId, notes, items) {
+  const edits = new Map();
+  const deleted = new Set();
+  for (const item of items || []) {
+    if (item.failed || item.kind !== "json") continue;
+    const match = NOTE_PATH.exec(item.path || "");
+    if (!match || Number(match[1]) !== Number(rowId)) continue;
+    const noteId = Number(match[2]);
+    if (item.method === "DELETE") deleted.add(noteId);
+    else if (item.method === "PATCH") edits.set(noteId, { text: item.body?.text, at: item.queuedAt });
+  }
+  return (notes || []).filter(note => !deleted.has(note.id)).map(note => (edits.has(note.id) ? { ...note, text: edits.get(note.id).text, edited_at: edits.get(note.id).at, pending_edit: true } : note));
+}
+
+/** Zmienia treść notatki, która jeszcze czeka w kolejce tego urządzenia (nie trafiła na serwer). */
+export async function editQueuedNote(seq, text) {
+  const item = (await allItems()).find(entry => entry.seq === seq);
+  if (!item || item.kind !== "json" || item.method !== "POST") return false;
+  await updateItem({ ...item, body: { ...item.body, text } });
+  await refreshCounts();
+  return true;
 }
 
 export function pendingPhotos(entityType, entityId, items) {

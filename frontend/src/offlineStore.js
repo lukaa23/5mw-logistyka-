@@ -120,6 +120,7 @@ export async function refreshCounts() {
 export const queueCounts = () => memoryCount;
 
 export function describe(path, method) {
+  if (/\/api\/rows\/\d+\/notes\/\d+$/.test(path)) return method === "DELETE" ? "Usunięcie notatki" : "Edycja notatki";
   if (/\/api\/rows\/\d+\/notes$/.test(path)) return "Notatka do rzędu";
   if (/\/api\/rows\/\d+\/move$/.test(path)) return "Kolejność rzędów";
   if (/\/api\/rows\/\d+$/.test(path)) return "Status rzędu";

@@ -19,7 +19,7 @@ from .services.parser import inspect_upload
 from .services.report import daily_report
 from .services.source_basis import SOURCE_DIR, build_eset_demand, load_eset_bom, load_source_manifest, sha256_file, source_analysis, source_entry_by_hash
 
-APP_VERSION="4.7.0"
+APP_VERSION="4.7.1"
 app=FastAPI(title="ASOLAR ESET Tracker Manager",version=APP_VERSION)
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 MAX_DOCUMENT_SIZE=int(os.getenv("ASOLAR_MAX_DOCUMENT_MB","100"))*1024*1024
@@ -61,6 +61,7 @@ class RowsIn(BaseModel): section_id:int; prefix:str="R"; start_number:int=1; cou
 class RowIn(BaseModel): section_id:int; code:str; template_id:int|None=None; variant_name:str=""; length_m:float=0; specification:str=""; material_quantities:dict[str,float]=Field(default_factory=dict)
 class RowUpdate(BaseModel): client_time:datetime|None=None; code:str|None=None; template_id:int|None=None; variant_name:str|None=None; length_m:float|None=None; specification:str|None=None; material_quantities:dict[str,float]|None=None; built:bool|None=None; qc_checked:bool|None=None; note:str|None=None
 class RowNoteIn(BaseModel): text:str=Field(min_length=1,max_length=5000); client_id:str|None=None; client_time:datetime|None=None
+class RowNoteUpdate(BaseModel): text:str=Field(min_length=1,max_length=5000); client_time:datetime|None=None
 class RowMoveIn(BaseModel): direction:str
 RFI_PRIORITIES=("niski","normalny","wysoki","krytyczny")
 RFI_STATUSES=("otwarty","w analizie","zamknięty")
@@ -540,8 +541,42 @@ async def update_row(row_id:int,data:RowUpdate,db:Session=Depends(get_db),user=D
 @app.get("/api/rows/{row_id}/notes")
 def row_notes(row_id:int,db:Session=Depends(get_db),user=Depends(current_user)):
     if not db.get(ConstructionRow,row_id):raise HTTPException(404,"Brak rzędu")
-    items=db.scalars(select(RowNote).where(RowNote.row_id==row_id).options(selectinload(RowNote.author)).order_by(RowNote.created_at.desc(),RowNote.id.desc())).all()
-    return [{"id":item.id,"text":item.text,"author":item.author.full_name,"created_at":item.created_at} for item in items]
+    items=db.scalars(select(RowNote).where(RowNote.row_id==row_id).options(selectinload(RowNote.author),selectinload(RowNote.edited_by)).order_by(RowNote.created_at.desc(),RowNote.id.desc())).all()
+    return [{"id":item.id,"text":item.text,"author":item.author.full_name,"author_id":item.author_id,"created_at":item.created_at,"edited_at":item.edited_at,"edited_by":item.edited_by.full_name if item.edited_by else None} for item in items]
+
+def editable_note(db,row_id,note_id,user):
+    """Notatkę zmienia lub usuwa jej autor albo kierownik."""
+    item=db.get(RowNote,note_id)
+    if not item or item.row_id!=row_id:raise HTTPException(404,"Notatka nie istnieje (mogła zostać już usunięta)")
+    if user.role!="kierownik" and item.author_id!=user.id:raise HTTPException(403,"Brygadzista może zmieniać tylko własne notatki")
+    return item
+
+def refresh_row_note(db,row,user,when):
+    """Pole „bieżąca notatka” rzędu = najnowsza pozostała notatka."""
+    latest=db.scalar(select(RowNote).where(RowNote.row_id==row.id).order_by(RowNote.created_at.desc(),RowNote.id.desc()).limit(1))
+    row.note=latest.text if latest else "";row.last_changed_by_id=user.id;row.last_changed_at=when
+
+@app.patch("/api/rows/{row_id}/notes/{note_id}")
+async def update_row_note(row_id:int,note_id:int,data:RowNoteUpdate,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    item=editable_note(db,row_id,note_id,user)
+    text=data.text.strip()
+    if not text:raise HTTPException(400,"Treść notatki jest wymagana")
+    when=effective_time(data.client_time)
+    if text!=item.text:
+        audit(db,user,"update","row_note",item.id,json.dumps({"row":row_id,"przed":item.text,"po":text},ensure_ascii=False))
+        item.text=text;item.edited_at=when;item.edited_by_id=user.id;db.flush()
+        refresh_row_note(db,db.get(ConstructionRow,row_id),user,when)
+        db.commit();await realtime.send("row.note",{"id":row_id})
+    return {"id":item.id,"text":item.text,"edited_at":item.edited_at}
+
+@app.delete("/api/rows/{row_id}/notes/{note_id}")
+async def delete_row_note(row_id:int,note_id:int,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):
+    item=editable_note(db,row_id,note_id,user)
+    # Treść usuniętej notatki zostaje w dzienniku zdarzeń (identyfikowalność), znika z widoku rzędu.
+    audit(db,user,"delete","row_note",item.id,json.dumps({"row":row_id,"autor_id":item.author_id,"utworzono":str(item.created_at),"tresc":item.text},ensure_ascii=False))
+    db.delete(item);db.flush()
+    refresh_row_note(db,db.get(ConstructionRow,row_id),user,utc_now())
+    db.commit();await realtime.send("row.note",{"id":row_id});return {"ok":True}
 
 @app.post("/api/rows/{row_id}/notes")
 async def create_row_note(row_id:int,data:RowNoteIn,db:Session=Depends(get_db),user=Depends(roles("kierownik","brygadzista"))):

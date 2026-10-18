@@ -115,8 +115,11 @@ class RowNote(Base):
     text: Mapped[str] = mapped_column(Text)
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    edited_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     row: Mapped[ConstructionRow] = relationship(back_populates="notes")
-    author: Mapped[User] = relationship()
+    author: Mapped[User] = relationship(foreign_keys=[author_id])
+    edited_by: Mapped[User | None] = relationship(foreign_keys=[edited_by_id])
 
 class Component(Base):
     __tablename__ = "components"

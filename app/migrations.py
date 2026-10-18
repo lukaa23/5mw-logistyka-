@@ -30,6 +30,10 @@ COLUMNS = {
         "content_blob": "BLOB NULL",
         "client_id": "VARCHAR(80) NULL",
     },
+    "row_notes": {
+        "edited_at": "DATETIME NULL",
+        "edited_by_id": "INTEGER NULL REFERENCES users(id)",
+    },
     "deliveries": {
         "updated_by_id": "INTEGER NULL REFERENCES users(id)",
         "updated_at": "DATETIME NULL",
