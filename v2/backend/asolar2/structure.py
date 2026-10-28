@@ -11,7 +11,7 @@ from collections import defaultdict
 from sqlalchemy import func, or_, select
 
 from .imports import loads
-from .tenancy import BomItem, CatalogItem, ProjectEvent, SiteRow, SiteTable, StructureType, Suggestion, TorqueSpec, Zone
+from .tenancy import BomItem, CatalogItem, Photo, ProjectEvent, SiteRow, SiteTable, StructureType, Suggestion, TableNote, TorqueSpec, Zone
 
 MAX_TABLES_FROM_NUMBERING = 5000
 TYPE_CODE = re.compile(r"^([1-4])x(\d{1,3})(?:\+([1-4])x(\d{1,3}))?$")
@@ -185,9 +185,22 @@ def revert_suggestion(session, item: Suggestion):
         assigned = [table for table in tables if table.zone_id or table.row_id or table.structure_type_id]
         if assigned:
             raise ApplyError(f"{len(assigned)} stołów z tej numeracji ma już przypisaną strefę, rząd lub typ — najpierw usuń przypisania")
+        with_work = tables_with_field_data(session, [table.id for table in tables])
+        if with_work:
+            raise ApplyError(f"{len(with_work)} stołów z tej numeracji ma zapisany postęp, notatki lub zdjęcia — nie można cofnąć zatwierdzenia")
         for table in tables:
             session.delete(table)
     session.flush()
+
+
+def tables_with_field_data(session, ids: list[int]) -> set[int]:
+    """Stoły z danymi z budowy (montaż, odbiór, notatki, zdjęcia) — ich usunięcie skasowałoby pracę ekip."""
+    if not ids:
+        return set()
+    result = set(session.scalars(select(SiteTable.id).where(SiteTable.id.in_(ids), or_(SiteTable.built.is_(True), SiteTable.qc_checked.is_(True)))).all())
+    result |= set(session.scalars(select(TableNote.table_id).where(TableNote.table_id.in_(ids))).all())
+    result |= set(session.scalars(select(Photo.table_id).where(Photo.table_id.in_(ids))).all())
+    return result
 
 
 # --- zapotrzebowanie materiałów -------------------------------------------------------------------

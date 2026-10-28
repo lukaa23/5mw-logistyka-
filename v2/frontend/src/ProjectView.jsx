@@ -2,17 +2,26 @@ import React, { useState } from "react";
 import { api, send } from "./api";
 import { roleLabel } from "./Dashboard";
 import Documents from "./Documents";
+import Fieldwork from "./Fieldwork";
+import { cachedGet } from "./offline";
 import { Constructions, Requirements, Tables } from "./Structure";
 import { AsyncButton, Empty, fmt, Loader, PageHead, useConfirm, useEscape } from "./ui";
 import { useLoad } from "./useLoad";
 
-export const TABS = [["przeglad", "Przegląd"], ["dokumenty", "Dokumenty i import"], ["strefy", "Strefy"], ["konstrukcje", "Konstrukcje i BOM"], ["stoly", "Stoły i rzędy"], ["materialy", "Zapotrzebowanie"], ["zespol", "Zespół"], ["ustawienia", "Ustawienia"]];
-const ACTIONS = { create: "utworzył(a)", update: "zmienił(a)", delete: "usunął(ęła)", upload: "wgrał(a)", assign: "przypisał(a)", review: "rozpatrzył(a)", "review-bulk": "zatwierdził(a) zbiorczo" };
-const ENTITIES = { project: "budowę", zone: "strefę", document: "dokument", suggestion: "propozycję", type: "typ konstrukcji", bom: "pozycję BOM", row: "rząd", tables: "stoły" };
+export const TABS = [["przeglad", "Przegląd"], ["postep", "Postęp prac"], ["dokumenty", "Dokumenty i import"], ["strefy", "Strefy"], ["konstrukcje", "Konstrukcje i BOM"], ["stoly", "Stoły i rzędy"], ["materialy", "Zapotrzebowanie"], ["zespol", "Zespół"], ["ustawienia", "Ustawienia"]];
+const ACTIONS = { create: "utworzył(a)", update: "zmienił(a)", delete: "usunął(ęła)", upload: "wgrał(a)", assign: "przypisał(a)", progress: "zmienił(a) postęp:", review: "rozpatrzył(a)", "review-bulk": "zatwierdził(a) zbiorczo" };
+const ENTITIES = { project: "budowę", zone: "strefę", document: "dokument", suggestion: "propozycję", type: "typ konstrukcji", bom: "pozycję BOM", row: "rząd", tables: "stoły", table: "stół", note: "notatkę", photo: "zdjęcie" };
 
 function eventText(event) {
   if (event.action === "analyze") {
     try { const details = JSON.parse(event.details); return <>Analiza PDF zakończona: <strong>{details["plik"]}</strong> ({details["nowe"]} nowych propozycji)</>; } catch { return "Analiza PDF zakończona"; }
+  }
+  if (event.action === "progress") {
+    try {
+      const details = JSON.parse(event.details);
+      const what = [details.built === true && "zamontowany", details.built === false && "montaż cofnięty", details.qc_checked === true && "odebrany", details.qc_checked === false && "odbiór cofnięty"].filter(Boolean).join(", ");
+      return <><strong>{event.user}</strong> stół {details["stół"]}: {what}</>;
+    } catch { /* starszy format */ }
   }
   const detail = ["upload", "delete"].includes(event.action) && event.entity === "document" ? ` „${event.details}”` : event.entity === "zone" && event.action !== "update" ? ` „${event.details}”` : "";
   return <><strong>{event.user}</strong> {ACTIONS[event.action] || event.action} {ENTITIES[event.entity] || event.entity}{detail}</>;
@@ -130,7 +139,7 @@ function Settings({ project, access, user, notify, onChanged, onDeleted }) {
 }
 
 export default function ProjectView({ projectId, tab, user, notify, navigate }) {
-  const { data: project, error, loading, reload } = useLoad(() => api(`/api/projects/${projectId}`), [projectId]);
+  const { data: project, error, loading, reload } = useLoad(() => cachedGet(`/api/projects/${projectId}`), [projectId]);
   if (error) return <Empty>{error === "Nie znaleziono budowy" ? "Nie znaleziono tej budowy albo nie masz do niej dostępu." : error}</Empty>;
   if (loading && !project) return <Loader />;
   if (!project) return null;
@@ -139,6 +148,6 @@ export default function ProjectView({ projectId, tab, user, notify, navigate }) 
   return <>
     <PageHead eyebrow={project.archived ? "BUDOWA ZARCHIWIZOWANA" : "BUDOWA"} title={project.name}><span className="badge neutral">{roleLabel(project.role)}</span></PageHead>
     <nav className="view-switch project-tabs" aria-label="Sekcje budowy">{TABS.map(([id, label]) => <button type="button" key={id} className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => navigate(`#/p/${project.id}/${id}`)}>{label}</button>)}</nav>
-    {tab === "konstrukcje" ? <Constructions {...common} /> : tab === "stoly" ? <Tables {...common} /> : tab === "materialy" ? <Requirements {...common} /> : tab === "dokumenty" ? <Documents {...common} onChanged={reload} /> : tab === "strefy" ? <Zones {...common} /> : tab === "zespol" ? <Team {...common} /> : tab === "ustawienia" ? <Settings key={`${project.name}|${project.location}|${project.capacity_mw}|${project.description}|${project.archived}`} {...common} onChanged={reload} onDeleted={() => navigate("#/")} /> : <Overview {...common} navigate={navigate} />}
+    {tab === "postep" ? <Fieldwork {...common} /> : tab === "konstrukcje" ? <Constructions {...common} /> : tab === "stoly" ? <Tables {...common} /> : tab === "materialy" ? <Requirements {...common} /> : tab === "dokumenty" ? <Documents {...common} onChanged={reload} /> : tab === "strefy" ? <Zones {...common} /> : tab === "zespol" ? <Team {...common} /> : tab === "ustawienia" ? <Settings key={`${project.name}|${project.location}|${project.capacity_mw}|${project.description}|${project.archived}`} {...common} onChanged={reload} onDeleted={() => navigate("#/")} /> : <Overview {...common} navigate={navigate} />}
   </>;
 }

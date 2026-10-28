@@ -3,10 +3,12 @@ import { api, getCachedUser, getToken, send, setSession } from "./api";
 import Dashboard from "./Dashboard";
 import ProjectView, { TABS } from "./ProjectView";
 import UsersAdmin from "./UsersAdmin";
+import SyncStatus, { useAutoFlush } from "./Sync";
+import { cachedGet, clearCache } from "./offline";
 import { DialogProvider, Loader } from "./ui";
 import { useLoad } from "./useLoad";
 
-export const APP_VERSION = "2.0 · etap 3";
+export const APP_VERSION = "2.0 · etap 4a";
 const LAST_PROJECT = "asolar2_last_project";
 
 /** Adres w pasku: #/ — budowy, #/p/12/strefy — budowa i zakładka, #/konta — konta. */
@@ -40,7 +42,7 @@ function Login({ onLogin }) {
 /** Przełącznik budów w górnym pasku — zmiana budowy zachowuje bieżącą zakładkę. */
 export function ProjectSwitcher({ route, navigate, refreshKey }) {
   // Odświeżany po akcjach w aplikacji i przy każdej zmianie widoku (np. nowa budowa dodana przez kogoś innego).
-  const { data: projects } = useLoad(() => api("/api/projects"), [refreshKey, route.view, route.projectId]);
+  const { data: projects } = useLoad(() => cachedGet("/api/projects"), [refreshKey, route.view, route.projectId]);
   const value = route.view === "project" ? String(route.projectId) : "";
   return <label className="project-select"><span>Budowa</span>
     <select aria-label="Przełącz budowę" value={value} onChange={event => navigate(event.target.value ? `#/p/${event.target.value}/${route.view === "project" ? route.tab : "przeglad"}` : "#/")}>
@@ -62,12 +64,14 @@ function Shell({ user, onLogout }) {
   useEffect(() => { if (route.view === "project") localStorage.setItem(LAST_PROJECT, String(route.projectId)); }, [route]);
   const navigate = useCallback(hash => { if (window.location.hash !== hash) window.location.hash = hash; else setRoute(parseRoute(hash)); window.scrollTo?.({ top: 0 }); }, []);
   const notify = useCallback((message, type = "success") => { setToast({ message, type }); setSwitcherKey(key => key + 1); setTimeout(() => setToast(null), 4200); }, []);
+  useAutoFlush(true);
   const initials = user.full_name.split(" ").map(x => x[0]).slice(0, 2).join("");
   return <div className="app-shell v2">
     <header className="topbar v2-topbar">
       <button type="button" className="mobile-logo home-link" onClick={() => navigate("#/")}><div className="brand-mark">A</div><strong>ASOLAR <small>v{APP_VERSION}</small></strong></button>
       <ProjectSwitcher route={route} navigate={navigate} refreshKey={switcherKey} />
       <nav className="top-links"><button type="button" className={route.view === "dashboard" ? "active" : ""} onClick={() => navigate("#/")}>Budowy</button>{user.is_admin && <button type="button" className={route.view === "users" ? "active" : ""} onClick={() => navigate("#/konta")}>Konta</button>}</nav>
+      <SyncStatus notify={notify} />
       <button type="button" className="avatar top-avatar" title={`${user.full_name} — wyloguj`} onClick={onLogout}>{initials}</button>
     </header>
     <main className="content v2-content">
@@ -90,5 +94,5 @@ export default function App() {
     return () => window.removeEventListener("asolar2:unauthorized", logout);
   }, []);
   if (checking && !user) return <Loader />;
-  return <DialogProvider>{user ? <Shell user={user} onLogout={() => { setSession(null); setUser(null); }} /> : <Login onLogin={setUser} />}</DialogProvider>;
+  return <DialogProvider>{user ? <Shell user={user} onLogout={() => { setSession(null); clearCache(); setUser(null); }} /> : <Login onLogin={setUser} />}</DialogProvider>;
 }

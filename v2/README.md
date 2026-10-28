@@ -2,14 +2,16 @@
 
 Nowa, osobna wersja aplikacji. **Nie zastępuje i nie zmienia** wersji 1 (katalogi `app/`, `frontend/`, `desktop/` w głównym folderze repozytorium), która działa dalej pod dotychczasowym adresem.
 
-## Stan: etap 3 z 5
+## Stan: etap 4a z 5 (etap 4 w trzech częściach)
 
 | Etap | Zakres | Stan |
 |---|---|---|
 | 1 | Rejestr budów, przełącznik budów, izolowana przestrzeń danych każdej budowy, konta i role per budowa | **gotowy** |
 | 2 | Wgrywanie wielu PDF naraz, lokalny parser (tabele BOM, teksty z rysunków, wzorce), ekran przeglądu propozycji | **gotowy** |
 | 3 | Zasilenie budowy zatwierdzonymi danymi: strefy, typy konstrukcji, BOM, stoły/słupy, rzędy | **gotowy** |
-| 4 | Moduły operacyjne z v1: rzędy, offline, notatki, zdjęcia, WZ, meldunki, Planimetria | planowany |
+| 4a | Praca w terenie: montaż i odbiór QA/QC stołów, notatki, zdjęcia, kolejka offline, service worker | **gotowy** |
+| 4b | Dostawy WZ wobec zapotrzebowania, stan magazynu, meldunki dzienne | planowany |
+| 4c | Planimetria, raport dzienny, pulpit postępu | planowany |
 | 5 | Docker/Render (osobna usługa), aplikacja desktopowa, dokumentacja | planowany |
 
 ## Architektura
@@ -59,6 +61,13 @@ v2/
 - Zakładki: „Konstrukcje i BOM” (typy, słupy na stół, BOM, katalog, momenty), „Stoły i rzędy” (filtry, zaznaczanie i zbiorcze przypisanie strefy/rzędu/typu, ręczne dodanie zakresu), „Zapotrzebowanie” (ilość BOM × liczba stołów, dla budowy lub strefy, eksport CSV).
 - Brakujące dane (typ stołu, strefa, liczba słupów, BOM typu) są pokazywane jako „wymaga potwierdzenia” i nie są liczone.
 - Nowe kolumny w istniejących przestrzeniach budów są dodawane automatycznie przy starcie (prosta migracja).
+
+**Praca w terenie (etap 4a)**
+
+- Zakładka „Postęp prac”: brygadzista i kierownik oznaczają montaż stołu, kierownik wykonuje odbiór QA/QC (dopiero po montażu; cofnięcie montażu cofa odbiór, z potwierdzeniem).
+- Panel stołu: notatki (edycja/usuwanie — autor albo kierownik) i zdjęcia z aparatu telefonu.
+- Bez zasięgu: zmiany trafiają do kolejki w IndexedDB (zdjęcia jako bajty), są widoczne od razu jako „czeka na wysłanie” i wysyłane automatycznie po powrocie połączenia. client_id zapobiega duplikatom, client_time zachowuje moment wykonania czynności. Widoki pokazują ostatnią zapisaną kopię danych; service worker uruchamia aplikację bez sieci.
+- Stołów z zapisanym postępem, notatkami lub zdjęciami nie można usunąć ani cofnąć ich numeracji.
 
 ## Uruchomienie lokalne
 

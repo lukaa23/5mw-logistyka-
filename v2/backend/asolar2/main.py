@@ -3,11 +3,12 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -19,7 +20,7 @@ from .registry import Membership, Project, RegistryEvent, RegistrySession, User,
 from .security import create_token, decode_token, hash_password, verify_password
 from . import imports, structure, tenancy
 from .imports import document_dict, suggestion_dict
-from .tenancy import BomItem, CatalogItem, Document, ProjectEvent, SiteRow, SiteTable, StructureType, Suggestion, TorqueSpec, Zone
+from .tenancy import BomItem, CatalogItem, Document, Photo, ProjectEvent, SiteRow, SiteTable, StructureType, Suggestion, TableNote, TorqueSpec, Zone
 
 app = FastAPI(title="ASOLAR v2 — wiele budów", version=APP_VERSION)
 
@@ -607,9 +608,11 @@ def bom_dict(item: BomItem):
             "quantity": item.quantity, "unit": item.unit, "from_pdf": item.source_suggestion_id is not None}
 
 
-def table_dict(item: SiteTable):
+def table_dict(item: SiteTable, notes: int = 0, photos: int = 0):
     return {"id": item.id, "code": item.code, "prefix": item.prefix, "number": item.number, "zone_id": item.zone_id, "row_id": item.row_id,
-            "structure_type_id": item.structure_type_id, "from_pdf": item.source_suggestion_id is not None}
+            "structure_type_id": item.structure_type_id, "from_pdf": item.source_suggestion_id is not None,
+            "built": bool(item.built), "built_at": item.built_at, "qc_checked": bool(item.qc_checked), "qc_at": item.qc_at,
+            "last_changed_at": item.last_changed_at, "notes": notes, "photos": photos}
 
 
 def project_event(session, access: Access, action: str, entity: str, entity_id, details):
@@ -790,7 +793,9 @@ def list_tables(zone_id: int | None = None, row_id: int | None = None, type_id: 
                 access: Access = Depends(project_access)):
     """Filtry: zone_id/row_id/type_id = 0 oznacza „bez przypisania”."""
     with tenancy.project_session(access.project.storage_key) as session:
-        return [table_dict(item) for item in structure.find_tables(session, zone_id, row_id, type_id, q, unassigned)]
+        notes = dict(session.execute(select(TableNote.table_id, func.count(TableNote.id)).group_by(TableNote.table_id)).all())
+        photos = dict(session.execute(select(Photo.table_id, func.count(Photo.id)).group_by(Photo.table_id)).all())
+        return [table_dict(item, notes.get(item.id, 0), photos.get(item.id, 0)) for item in structure.find_tables(session, zone_id, row_id, type_id, q, unassigned)]
 
 
 @app.post("/api/projects/{project_id}/tables/range")
@@ -855,6 +860,10 @@ def delete_tables(data: IdsIn, access: Access = Depends(project_access)):
     writable(access)
     with tenancy.project_session(access.project.storage_key) as session:
         tables = session.scalars(select(SiteTable).where(SiteTable.id.in_(data.ids))).all()
+        with_work = structure.tables_with_field_data(session, [table.id for table in tables])
+        if with_work:
+            codes = ", ".join(sorted(table.code for table in tables if table.id in with_work)[:10])
+            raise HTTPException(409, f"{len(with_work)} z zaznaczonych stołów ma zapisany postęp, notatki lub zdjęcia ({codes}) — odznacz je")
         for table in tables:
             session.delete(table)
         project_event(session, access, "delete", "tables", None, f"{len(tables)} stołów")
@@ -875,6 +884,218 @@ def list_catalog(access: Access = Depends(project_access)):
 def material_requirements(zone_id: int | None = None, access: Access = Depends(project_access)):
     with tenancy.project_session(access.project.storage_key) as session:
         return structure.requirements(session, zone_id)
+
+
+# --- API: praca w terenie (etap 4a): postęp stołów, notatki, zdjęcia --------------------------------
+#
+# Zapisy z telefonu mogą przyjść z opóźnieniem (kolejka offline). client_time = moment wykonania
+# czynności na telefonie; client_id = identyfikator nadany na telefonie (ponowna wysyłka nie dubluje).
+
+MAX_PHOTO_BYTES = 15 * 1024 * 1024
+PHOTO_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+MAX_CLIENT_DELAY = timedelta(days=30)
+
+
+def effective_time(client_time: datetime | None) -> datetime:
+    """Czas z telefonu (UTC), ale nie z przyszłości i nie starszy niż 30 dni — wtedy czas serwera."""
+    current = now()
+    if client_time is None:
+        return current
+    value = client_time.astimezone(UTC).replace(tzinfo=None) if client_time.tzinfo else client_time
+    return value if current - MAX_CLIENT_DELAY <= value <= current else current
+
+
+def field_writable(access: Access):
+    """Kierownik i brygadzista budowy zapisują postęp, notatki i zdjęcia."""
+    if access.project.archived:
+        raise HTTPException(409, "Budowa jest zarchiwizowana")
+
+
+class ProgressIn(BaseModel):
+    built: bool | None = None
+    qc_checked: bool | None = None
+    client_time: datetime | None = None
+
+
+class NoteIn(BaseModel):
+    text: str = Field(min_length=1, max_length=5000)
+    client_id: str | None = Field(default=None, max_length=80)
+    client_time: datetime | None = None
+
+
+class NoteUpdate(BaseModel):
+    text: str = Field(min_length=1, max_length=5000)
+    client_time: datetime | None = None
+
+
+def user_names(access: Access) -> dict[int, str]:
+    return {user.id: user.full_name for user in access.db.scalars(select(User)).all()}
+
+
+@app.patch("/api/projects/{project_id}/tables/{table_id}/progress")
+def update_progress(table_id: int, data: ProgressIn, access: Access = Depends(project_access)):
+    field_writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        table = get_or_404(session, SiteTable, table_id, "Nie znaleziono stołu (mógł zostać usunięty)")
+        when = effective_time(data.client_time)
+        if data.built is not None:
+            table.built, table.built_by, table.built_at = data.built, access.user.id if data.built else None, when if data.built else None
+            if not data.built:  # cofnięcie montażu unieważnia odbiór
+                table.qc_checked, table.qc_by, table.qc_at = False, None, None
+        if data.qc_checked is not None:
+            if not access.is_manager:
+                raise HTTPException(403, "Odbiór QA/QC wykonuje kierownik budowy")
+            if data.qc_checked and not table.built:
+                raise HTTPException(400, "Najpierw oznacz stół jako zamontowany")
+            table.qc_checked, table.qc_by, table.qc_at = data.qc_checked, access.user.id if data.qc_checked else None, when if data.qc_checked else None
+        table.last_changed_by, table.last_changed_at = access.user.id, when
+        project_event(session, access, "progress", "table", table.id, {"stół": table.code, **data.model_dump(exclude_unset=True, exclude={"client_time"})})
+        session.commit()
+        return table_dict(table)
+
+
+@app.get("/api/projects/{project_id}/progress")
+def progress_summary(zone_id: int | None = None, access: Access = Depends(project_access)):
+    """Postęp: razem i w podziale na strefy, rzędy i typy (zamontowane / odebrane)."""
+    with tenancy.project_session(access.project.storage_key) as session:
+        query = select(SiteTable)
+        if zone_id is not None:
+            query = query.where(SiteTable.zone_id == zone_id) if zone_id else query.where(SiteTable.zone_id.is_(None))
+        tables = session.scalars(query).all()
+        zones = {z.id: z.name for z in session.scalars(select(Zone)).all()}
+        rows = {r.id: r.name for r in session.scalars(select(SiteRow)).all()}
+        types = {t.id: t.code for t in session.scalars(select(StructureType)).all()}
+
+    def group(key, names):
+        result = {}
+        for table in tables:
+            ident = getattr(table, key)
+            entry = result.setdefault(ident, {"id": ident, "name": names.get(ident, "bez przypisania"), "total": 0, "built": 0, "qc": 0})
+            entry["total"] += 1
+            entry["built"] += bool(table.built)
+            entry["qc"] += bool(table.qc_checked)
+        return sorted(result.values(), key=lambda e: (e["id"] is None, e["name"]))
+
+    return {"total": len(tables), "built": sum(bool(t.built) for t in tables), "qc": sum(bool(t.qc_checked) for t in tables),
+            "zones": group("zone_id", zones), "rows": group("row_id", rows), "types": group("structure_type_id", types)}
+
+
+@app.get("/api/projects/{project_id}/tables/{table_id}/notes")
+def list_notes(table_id: int, access: Access = Depends(project_access)):
+    names = user_names(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        get_or_404(session, SiteTable, table_id, "Nie znaleziono stołu")
+        notes = session.scalars(select(TableNote).where(TableNote.table_id == table_id).order_by(TableNote.created_at.desc(), TableNote.id.desc())).all()
+        return [{"id": n.id, "text": n.text, "author_id": n.author_id, "author": names.get(n.author_id, "—"), "created_at": n.created_at,
+                 "edited_at": n.edited_at, "edited_by": names.get(n.edited_by) if n.edited_by else None} for n in notes]
+
+
+@app.post("/api/projects/{project_id}/tables/{table_id}/notes")
+def create_note(table_id: int, data: NoteIn, access: Access = Depends(project_access)):
+    field_writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        if data.client_id:
+            existing = session.scalar(select(TableNote).where(TableNote.client_id == data.client_id))
+            if existing is not None:
+                return {"id": existing.id, "duplicate": True}
+        table = get_or_404(session, SiteTable, table_id, "Nie znaleziono stołu (mógł zostać usunięty)")
+        text_value = data.text.strip()
+        if not text_value:
+            raise HTTPException(400, "Treść notatki jest wymagana")
+        note = TableNote(client_id=data.client_id, table_id=table.id, text=text_value, author_id=access.user.id, created_at=effective_time(data.client_time))
+        session.add(note)
+        session.flush()
+        project_event(session, access, "create", "note", note.id, f"{table.code}: {text_value[:120]}")
+        session.commit()
+        return {"id": note.id}
+
+
+def editable_note(session, access: Access, table_id: int, note_id: int) -> TableNote:
+    note = session.get(TableNote, note_id)
+    if note is None or note.table_id != table_id:
+        raise HTTPException(404, "Notatka nie istnieje (mogła zostać już usunięta)")
+    if not access.is_manager and note.author_id != access.user.id:
+        raise HTTPException(403, "Brygadzista może zmieniać tylko własne notatki")
+    return note
+
+
+@app.patch("/api/projects/{project_id}/tables/{table_id}/notes/{note_id}")
+def update_note(table_id: int, note_id: int, data: NoteUpdate, access: Access = Depends(project_access)):
+    field_writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        note = editable_note(session, access, table_id, note_id)
+        text_value = data.text.strip()
+        if not text_value:
+            raise HTTPException(400, "Treść notatki jest wymagana")
+        if text_value != note.text:
+            note.text, note.edited_at, note.edited_by = text_value, effective_time(data.client_time), access.user.id
+            project_event(session, access, "update", "note", note.id, text_value[:120])
+            session.commit()
+        return {"ok": True}
+
+
+@app.delete("/api/projects/{project_id}/tables/{table_id}/notes/{note_id}")
+def delete_note(table_id: int, note_id: int, access: Access = Depends(project_access)):
+    field_writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        note = editable_note(session, access, table_id, note_id)
+        project_event(session, access, "delete", "note", note.id, note.text[:120])
+        session.delete(note)
+        session.commit()
+    return {"ok": True}
+
+
+@app.get("/api/projects/{project_id}/tables/{table_id}/photos")
+def list_photos(table_id: int, access: Access = Depends(project_access)):
+    names = user_names(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        photos = session.scalars(select(Photo).where(Photo.table_id == table_id).order_by(Photo.created_at.desc(), Photo.id.desc())).all()
+        return [{"id": p.id, "filename": p.filename, "size": p.size, "uploaded_by": p.uploaded_by, "author": names.get(p.uploaded_by, "—"), "created_at": p.created_at} for p in photos]
+
+
+@app.post("/api/projects/{project_id}/tables/{table_id}/photos")
+def upload_photo(table_id: int, file: UploadFile = File(...), client_id: str | None = Form(default=None, max_length=80),
+                 client_time: datetime | None = Form(default=None), access: Access = Depends(project_access)):
+    field_writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        if client_id:
+            existing = session.scalar(select(Photo).where(Photo.client_id == client_id))
+            if existing is not None:
+                return {"id": existing.id, "duplicate": True}
+        table = get_or_404(session, SiteTable, table_id, "Nie znaleziono stołu (mógł zostać usunięty)")
+        mime = (file.content_type or "").lower()
+        if mime not in PHOTO_TYPES:
+            raise HTTPException(400, "Dozwolone są zdjęcia JPG, PNG, WEBP lub HEIC")
+        content = file.file.read(MAX_PHOTO_BYTES + 1)
+        if len(content) > MAX_PHOTO_BYTES:
+            raise HTTPException(400, f"Zdjęcie większe niż {MAX_PHOTO_BYTES // (1024 * 1024)} MB")
+        photo = Photo(client_id=client_id, table_id=table.id, filename=Path(file.filename or "zdjecie.jpg").name[:255], mime_type=mime, size=len(content),
+                      content=content, uploaded_by=access.user.id, created_at=effective_time(client_time))
+        session.add(photo)
+        session.flush()
+        project_event(session, access, "create", "photo", photo.id, table.code)
+        session.commit()
+        return {"id": photo.id}
+
+
+@app.get("/api/projects/{project_id}/photos/{photo_id}/file")
+def photo_file(photo_id: int, access: Access = Depends(project_access)):
+    with tenancy.project_session(access.project.storage_key) as session:
+        photo = get_or_404(session, Photo, photo_id, "Nie znaleziono zdjęcia")
+        return Response(photo.content, media_type=photo.mime_type, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.delete("/api/projects/{project_id}/photos/{photo_id}")
+def delete_photo(photo_id: int, access: Access = Depends(project_access)):
+    field_writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        photo = get_or_404(session, Photo, photo_id, "Nie znaleziono zdjęcia (mogło zostać już usunięte)")
+        if not access.is_manager and photo.uploaded_by != access.user.id:
+            raise HTTPException(403, "Brygadzista może usuwać tylko własne zdjęcia")
+        project_event(session, access, "delete", "photo", photo.id, photo.filename)
+        session.delete(photo)
+        session.commit()
+    return {"ok": True}
 
 
 # --- API: konta (administrator)-----------------------------------------------------------------

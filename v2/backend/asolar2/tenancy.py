@@ -113,6 +113,42 @@ class SiteTable(ProjectBase):
     structure_type_id: Mapped[int | None] = mapped_column(ForeignKey("structure_types.id", ondelete="SET NULL"), nullable=True, index=True)
     source_suggestion_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    # Etap 4: postęp prac (montaż, odbiór QA/QC). Kolumny dopuszczają NULL — migracja istniejących budów.
+    built: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False, index=True)
+    built_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    built_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    qc_checked: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False, index=True)
+    qc_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    qc_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_changed_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TableNote(ProjectBase):
+    """Notatka do stołu. client_id z telefonu — ponowne wysłanie z kolejki offline nie tworzy duplikatu."""
+    __tablename__ = "table_notes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
+    table_id: Mapped[int] = mapped_column(ForeignKey("site_tables.id", ondelete="CASCADE"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    author_id: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    edited_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class Photo(ProjectBase):
+    """Zdjęcie z budowy przypięte do stołu (zawartość w bazie budowy)."""
+    __tablename__ = "photos"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
+    table_id: Mapped[int] = mapped_column(ForeignKey("site_tables.id", ondelete="CASCADE"), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    mime_type: Mapped[str] = mapped_column(String(100))
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    content: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    uploaded_by: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
 class ProjectEvent(ProjectBase):
