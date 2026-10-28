@@ -2,7 +2,7 @@
 
 Nowa, osobna wersja aplikacji. **Nie zastępuje i nie zmienia** wersji 1 (katalogi `app/`, `frontend/`, `desktop/` w głównym folderze repozytorium), która działa dalej pod dotychczasowym adresem.
 
-## Stan: etap 4b z 5 (etap 4 w trzech częściach)
+## Stan: etap 4 z 5 gotowy (4a, 4b, 4c)
 
 | Etap | Zakres | Stan |
 |---|---|---|
@@ -11,7 +11,7 @@ Nowa, osobna wersja aplikacji. **Nie zastępuje i nie zmienia** wersji 1 (katalo
 | 3 | Zasilenie budowy zatwierdzonymi danymi: strefy, typy konstrukcji, BOM, stoły/słupy, rzędy | **gotowy** |
 | 4a | Praca w terenie: montaż i odbiór QA/QC stołów, notatki, zdjęcia, kolejka offline, service worker | **gotowy** |
 | 4b | Dostawy WZ wobec zapotrzebowania, stan magazynu, meldunki dzienne | **gotowy** |
-| 4c | Planimetria, raport dzienny, pulpit postępu | planowany |
+| 4c | Planimetria, raport dzienny, pulpit postępu | **gotowy** |
 | 5 | Docker/Render (osobna usługa), aplikacja desktopowa, dokumentacja | planowany |
 
 ## Architektura
@@ -25,6 +25,9 @@ v2/
     pdfparse.py   lokalny parser PDF (pdfplumber) — bez danych wpisanych na sztywno
     imports.py    analiza w tle, scalanie propozycji z wielu plików, decyzje kierownika
     structure.py  zastosowanie/cofnięcie zatwierdzonych propozycji, zapotrzebowanie materiałów
+    logistics.py  katalog materiałów, stan magazynu wobec zapotrzebowania
+    plans.py      Planimetria: render strony PDF, położenie stołów z warstwy tekstowej rysunku
+    report.py     pulpit postępu z prognozą (z założeniami), raport dzienny PDF
     security.py   hasła PBKDF2, tokeny sesji
     main.py       API
   frontend/src/   React: logowanie, „Moje budowy”, nowa budowa, przełącznik, zakładki budowy, konta
@@ -74,6 +77,12 @@ v2/
 - „Dostawy i magazyn”: przyjęcie WZ (kierownik i brygadzista, także offline), pozycje wybierane z katalogu materiałów budowy (BOM + zatwierdzone komponenty) — dostawa zawsze trafia do bilansu. Edycja i usuwanie WZ: kierownik.
 - Stan materiałów: zapotrzebowanie (BOM × stoły) wobec dostarczonych − uszkodzonych; status komplet / brak / poza zapotrzebowaniem, filtr „tylko braki”.
 - „Meldunki”: dzienny meldunek brygady (prace, osoby, godziny → rbh, stoły, dziennik QA/QC, zdjęcia). Offline: meldunek i jego zdjęcia czekają w kolejce; zdjęcia trafiają do meldunku po jego client_id.
+
+**Planimetria, pulpit, raport (etap 4c)**
+
+- „Planimetria”: strona rysunku PDF ze znacznikami stołów w kolorze stanu (do montażu / zamontowany / odebrany). Położenie to współrzędne oznaczeń (np. T.48) z warstwy tekstowej rysunku — nic nie jest zgadywane. Kliknięcie znacznika otwiera panel stołu (notatki, zdjęcia). Rysunek-skan wyświetla się bez znaczników, z wyjaśnieniem.
+- „Przegląd”: pulpit postępu (zamontowane, odebrane, dziś, braki materiałów, montaż z 14 dni) i prognoza zakończenia liczona z dat montażu — tylko przy danych z ≥ 2 dni, zawsze z wypisanymi założeniami.
+- Raport dzienny PDF: liczby dnia, postęp wg stref, zamontowane stoły, meldunki, dziennik QA/QC, notatki, dostawy.
 
 ## Uruchomienie lokalne
 

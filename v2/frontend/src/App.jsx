@@ -8,7 +8,7 @@ import { cachedGet, clearCache } from "./offline";
 import { DialogProvider, Loader } from "./ui";
 import { useLoad } from "./useLoad";
 
-export const APP_VERSION = "2.0 · etap 4b";
+export const APP_VERSION = "2.0 · etap 4c";
 const LAST_PROJECT = "asolar2_last_project";
 
 /** Adres w pasku: #/ — budowy, #/p/12/strefy — budowa i zakładka, #/konta — konta. */

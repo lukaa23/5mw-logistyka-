@@ -153,3 +153,39 @@
 .wz-line { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
 .wz-line select { grid-column: 1 / -1; }
 #wz-form .form-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+/* Etap 4c: Planimetria i pulpit. */
+.plan-toolbar { margin-bottom: .8rem; }
+.inline-label { display: flex; align-items: center; gap: .4rem; margin: 0; font-size: .75rem; }
+.inline-label input { width: 5rem; }
+.zoom-buttons { display: flex; align-items: center; gap: .3rem; font-size: .75rem; }
+.zoom-buttons button { min-width: 2.4rem; }
+.plan-legend { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .8rem; font-size: .75rem; margin-top: .6rem; }
+.plan-legend .small { margin-left: auto; padding: .3rem .6rem; font-size: .68rem; }
+.dot { display: inline-block; width: .8rem; height: .8rem; border-radius: 3px; margin-right: -.4rem; }
+.dot.todo, .plan-marker.todo { background: rgba(214, 69, 65, .35); border-color: #c0392b; }
+.dot.built, .plan-marker.built { background: rgba(240, 173, 40, .45); border-color: #c98a00; }
+.dot.qc, .plan-marker.qc { background: rgba(31, 132, 82, .45); border-color: #146c43; }
+.plan-scroll { overflow: auto; max-height: 78vh; border: 1px solid var(--line); border-radius: 12px; background: #fff; touch-action: pan-x pan-y pinch-zoom; }
+.plan-canvas { position: relative; min-width: 100%; }
+.plan-canvas img { display: block; width: 100%; height: auto; user-select: none; }
+.plan-marker { position: absolute; padding: 0; border: 2px solid; border-radius: 3px; cursor: pointer; min-width: 10px; min-height: 10px; transform: translate(-15%, -15%); box-sizing: content-box; padding: 2px; }
+.plan-marker:hover, .plan-marker:focus-visible { outline: 3px solid var(--green-900); z-index: 2; }
+.plan-marker.pending { border-style: dashed; }
+.dashboard-card { margin-bottom: 1rem; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .8rem; margin-bottom: 1rem; }
+.kpis > div { display: grid; gap: .2rem; }
+.kpis strong { font-size: 1.6rem; color: var(--green-900); line-height: 1; }
+.kpis strong.negative { color: #9b1c1c; }
+.kpis small { color: var(--muted); font-size: .7rem; }
+.history { display: grid; grid-template-columns: repeat(14, 1fr); gap: .25rem; align-items: end; height: 90px; margin: .4rem 0 .8rem; }
+.history-bar { display: grid; grid-template-rows: 1fr auto; height: 100%; text-align: center; }
+.history-bar i { display: block; align-self: end; background: var(--green-700); border-radius: 3px 3px 0 0; min-height: 2px; }
+.history-bar small { font-size: .55rem; color: var(--muted); }
+.forecast { margin: .3rem 0; font-size: .82rem; }
+.dashboard-card details { font-size: .72rem; color: var(--muted); margin-bottom: .8rem; }
+.report-download { display: flex; flex-wrap: wrap; align-items: end; gap: .5rem; margin-bottom: .4rem; }
+.report-download label { margin: 0; }
+.plan-marker { padding: 1px; min-width: 8px; min-height: 8px; border-width: 2px; transform: translate(-2px, -2px); }
+.plan-marker.todo { background: rgba(214, 69, 65, .18); }
+.plan-marker.built { background: rgba(240, 173, 40, .28); }
+.plan-marker.qc { background: rgba(31, 132, 82, .28); }

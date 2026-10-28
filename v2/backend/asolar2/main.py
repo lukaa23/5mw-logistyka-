@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from .config import APP_VERSION, IS_POSTGRES, SERVER_MODE
 from .registry import Membership, Project, RegistryEvent, RegistrySession, User, init_registry, now
 from .security import create_token, decode_token, hash_password, verify_password
-from . import imports, logistics, structure, tenancy
+from . import imports, logistics, plans, report, structure, tenancy
 from .imports import document_dict, suggestion_dict
 from .tenancy import (BomItem, CatalogItem, Delivery, DeliveryItem, Document, Photo, ProjectEvent, SiteRow, SiteTable, StructureType, Suggestion,
                       TableNote, TorqueSpec, WorkLog, WorkLogPhoto, Zone)
@@ -1367,6 +1367,74 @@ def delete_worklog_photo(photo_id: int, access: Access = Depends(project_access)
         session.delete(photo)
         session.commit()
     return {"ok": True}
+
+
+# --- API: Planimetria, raport dzienny, pulpit (etap 4c) --------------------------------------------
+
+class DocumentUpdate(BaseModel):
+    category: Literal["auto", "bom", "rysunek", "instrukcja", "inne"]
+
+
+def document_content(session, document_id: int) -> Document:
+    document = get_or_404(session, Document, document_id, "Nie znaleziono dokumentu")
+    _ = document.content  # kolumna odroczona — wczytaj, póki sesja jest otwarta
+    return document
+
+
+@app.patch("/api/projects/{project_id}/documents/{document_id}")
+def update_document(document_id: int, data: DocumentUpdate, access: Access = Depends(project_access)):
+    """Rodzaj dokumentu (np. „rysunek” — trafia na listę planów w Planimetrii)."""
+    writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        document = get_or_404(session, Document, document_id, "Nie znaleziono dokumentu")
+        document.category = data.category
+        project_event(session, access, "update", "document", document.id, f"{document.filename}: {data.category}")
+        session.commit()
+        return document_dict(document)
+
+
+@app.get("/api/projects/{project_id}/documents/{document_id}/plan")
+def document_plan(document_id: int, page: int = Query(1, ge=1, le=10000), access: Access = Depends(project_access)):
+    """Strona rysunku i znaczniki stołów w miejscach, gdzie ich oznaczenia są wydrukowane na rysunku."""
+    with tenancy.project_session(access.project.storage_key) as session:
+        document = document_content(session, document_id)
+        tables = {t.code: {"id": t.id, "built": bool(t.built), "qc_checked": bool(t.qc_checked)} for t in session.scalars(select(SiteTable)).all()}
+        try:
+            info = plans.page_info(document.sha256, document.content, page)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from None
+        except Exception as error:
+            raise HTTPException(422, f"Nie udało się odczytać strony PDF ({type(error).__name__})") from None
+    return {"document_id": document_id, "page": page, "pages": info["pages"], "width": info["width"], "height": info["height"],
+            "has_text": info["has_text"], "codes_on_page": len(info["codes"]), **plans.markers(info, tables)}
+
+
+@app.get("/api/projects/{project_id}/documents/{document_id}/pages/{page}.png")
+def document_page_image(document_id: int, page: int, scale: float = Query(2.0, ge=0.5, le=plans.MAX_SCALE), access: Access = Depends(project_access)):
+    with tenancy.project_session(access.project.storage_key) as session:
+        document = document_content(session, document_id)
+        try:
+            image = plans.render_png(document.sha256, document.content, page, scale)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from None
+        except Exception as error:
+            raise HTTPException(422, f"Nie udało się wyrenderować strony PDF ({type(error).__name__})") from None
+    return Response(image, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/api/projects/{project_id}/dashboard")
+def project_dashboard(access: Access = Depends(project_access)):
+    with tenancy.project_session(access.project.storage_key) as session:
+        return report.dashboard(session)
+
+
+@app.get("/api/projects/{project_id}/reports/daily")
+def daily_report(report_date: date = Query(default_factory=date.today), access: Access = Depends(project_access)):
+    names = user_names(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        content = report.daily_report(session, access.project, names, report_date)
+    filename = f"ASOLAR-raport-{report_date.isoformat()}.pdf"
+    return Response(content, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 # --- API: konta (administrator)-----------------------------------------------------------------

@@ -59,7 +59,7 @@ function NoteItem({ note, canEdit, onSave, onDelete }) {
   </div>;
 }
 
-function TablePanel({ project, table, user, access, notify, onClose, onChanged }) {
+export function TablePanel({ project, table, user, access, notify, onClose, onChanged }) {
   const confirm = useConfirm();
   const base = `/api/projects/${project.id}`;
   const notesPath = `${base}/tables/${table.id}/notes`;
