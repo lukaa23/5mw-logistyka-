@@ -48,7 +48,7 @@ export default function Dashboard({ user, notify, openProject }) {
         <div className="card-head"><span className={`badge ${project.archived ? "neutral" : "success"}`}>{project.archived ? "archiwum" : "aktywna"}</span><span className="badge neutral">{roleLabel(project.role)}</span></div>
         <h2>{project.name}</h2>
         <p>{project.location || "Brak lokalizacji"}{project.capacity_mw ? ` · ${project.capacity_mw} MW` : ""}</p>
-        <div className="project-stats"><span><b>{project.stats.zones}</b> stref</span><span><b>{project.stats.members}</b> osób</span><span>ostatnia zmiana: {fmt(project.stats.last_activity)}</span></div>
+        <div className="project-stats"><span><b>{project.stats.zones}</b> stref</span><span><b>{project.stats.documents ?? 0}</b> PDF</span>{project.stats.pending_suggestions > 0 && <span><b>{project.stats.pending_suggestions}</b> do przeglądu</span>}<span><b>{project.stats.members}</b> osób</span><span>ostatnia zmiana: {fmt(project.stats.last_activity)}</span></div>
         <div className="card-actions"><button type="button" className="primary" onClick={() => openProject(project.id)}>Otwórz</button></div>
       </article>)}
     </div>}

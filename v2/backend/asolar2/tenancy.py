@@ -13,7 +13,7 @@ import threading
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Integer, MetaData, String, Text, create_engine, event, inspect, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, MetaData, String, Text, create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from .config import IS_POSTGRES, PROJECTS_DIR
@@ -51,6 +51,45 @@ class ProjectEvent(ProjectBase):
     entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     details: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+
+
+class Document(ProjectBase):
+    """Plik PDF budowy (zawartość w bazie — przeżywa restart serwera) i stan jego analizy."""
+    __tablename__ = "documents"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    sha256: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    content: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    category: Mapped[str] = mapped_column(String(40), default="auto")  # auto | bom | rysunek | instrukcja | inne
+    status: Mapped[str] = mapped_column(String(20), default="oczekuje")  # oczekuje | analiza | gotowy | błąd
+    pages: Mapped[int] = mapped_column(Integer, default=0)
+    summary_json: Mapped[str] = mapped_column(Text, default="{}")
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    error: Mapped[str] = mapped_column(Text, default="")
+    parser_version: Mapped[str] = mapped_column(String(40), default="")
+    uploaded_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    analyzed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Suggestion(ProjectBase):
+    """Propozycja danych wyciągnięta z PDF — czeka na decyzję kierownika (zatwierdź / popraw / odrzuć)."""
+    __tablename__ = "suggestions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(30), index=True)
+    key: Mapped[str] = mapped_column(String(400), unique=True)
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    original_json: Mapped[str] = mapped_column(Text, default="{}")  # wartości odczytane przez parser (przed poprawką)
+    sources_json: Mapped[str] = mapped_column(Text, default="[]")   # [{document_id, filename, page, excerpt}]
+    confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    status: Mapped[str] = mapped_column(String(20), default="nowa", index=True)  # nowa | zatwierdzona | odrzucona
+    edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    applied_ref: Mapped[str] = mapped_column(String(80), default="")  # np. zone:12 po zastosowaniu w budowie
+    reviewed_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
 def storage_key_for(project_id: int) -> str:

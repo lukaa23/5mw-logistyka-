@@ -26,3 +26,34 @@
   .v2-content { padding-top: 140px; }
   .zone-row.editing { grid-template-columns: 1fr; }
 }
+/* Etap 2: dokumenty PDF i przegląd propozycji. */
+.drop-zone { display: grid; justify-items: center; gap: .45rem; padding: 1.6rem 1rem; margin-bottom: 1rem; border: 2px dashed var(--line); border-radius: 12px; text-align: center; background: var(--green-50); transition: border-color .15s, background .15s; }
+.drop-zone.over { border-color: var(--green-700, #2f7d4f); background: #e6f3ea; }
+.drop-zone small { color: var(--muted); }
+.doc-row { display: grid; grid-template-columns: 1fr auto; gap: .4rem .8rem; align-items: start; padding: .75rem 0; border-bottom: 1px solid var(--line); }
+.doc-row .card-actions { grid-column: 1 / -1; }
+.doc-main { display: grid; gap: .15rem; min-width: 0; }
+.doc-main strong { overflow-wrap: anywhere; }
+.doc-warning { color: #9a5b00; }
+.section-title { margin: 1.6rem 0 .8rem; }
+.review-toolbar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: 1rem; }
+.review-toolbar input[type="search"] { flex: 1 1 220px; max-width: 360px; }
+.suggestion-section { margin-bottom: 1rem; }
+.suggestion-section .card-head { flex-wrap: wrap; }
+.suggestion-section .card-head .card-actions { margin-left: auto; }
+.suggestion-group { margin: 1rem 0 .3rem; font-size: .85rem; color: var(--green-900); }
+.suggestion-row { display: grid; grid-template-columns: 1fr auto; gap: .35rem .8rem; padding: .7rem 0; border-bottom: 1px solid var(--line); }
+.suggestion-row.status-odrzucona .suggestion-main { opacity: .6; }
+.suggestion-main { display: grid; gap: .15rem; min-width: 0; }
+.suggestion-main small { overflow-wrap: anywhere; }
+.suggestion-title { display: flex; flex-wrap: wrap; gap: .3rem .8rem; align-items: baseline; }
+.suggestion-value { font-weight: 800; color: var(--green-900); }
+.suggestion-source { color: var(--muted); }
+.suggestion-side { display: flex; flex-direction: column; gap: .3rem; align-items: flex-end; }
+.suggestion-actions, .suggestion-edit { grid-column: 1 / -1; }
+.suggestion-edit { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .5rem; padding: .6rem; border-radius: 10px; background: var(--green-50); }
+.suggestion-edit .card-actions { grid-column: 1 / -1; }
+@media (max-width: 720px) {
+  .suggestion-row, .doc-row { grid-template-columns: 1fr; }
+  .suggestion-side { flex-direction: row; align-items: center; }
+}

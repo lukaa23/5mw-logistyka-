@@ -2,12 +2,12 @@
 
 Nowa, osobna wersja aplikacji. **Nie zastępuje i nie zmienia** wersji 1 (katalogi `app/`, `frontend/`, `desktop/` w głównym folderze repozytorium), która działa dalej pod dotychczasowym adresem.
 
-## Stan: etap 1 z 5
+## Stan: etap 2 z 5
 
 | Etap | Zakres | Stan |
 |---|---|---|
 | 1 | Rejestr budów, przełącznik budów, izolowana przestrzeń danych każdej budowy, konta i role per budowa | **gotowy** |
-| 2 | Wgrywanie wielu PDF naraz, lokalny parser (tabele BOM, teksty z rysunków, wzorce), ekran przeglądu propozycji | planowany |
+| 2 | Wgrywanie wielu PDF naraz, lokalny parser (tabele BOM, teksty z rysunków, wzorce), ekran przeglądu propozycji | **gotowy** |
 | 3 | Zasilenie budowy zatwierdzonymi danymi: strefy, typy konstrukcji, BOM, stoły/słupy, rzędy | planowany |
 | 4 | Moduły operacyjne z v1: rzędy, offline, notatki, zdjęcia, WZ, meldunki, Planimetria | planowany |
 | 5 | Docker/Render (osobna usługa), aplikacja desktopowa, dokumentacja | planowany |
@@ -19,7 +19,9 @@ v2/
   backend/asolar2/
     config.py     adres bazy, folder danych, tryb serwera
     registry.py   rejestr centralny: konta, budowy, członkostwa (rola per budowa), dziennik
-    tenancy.py    izolowana przestrzeń każdej budowy
+    tenancy.py    izolowana przestrzeń każdej budowy (strefy, dziennik, dokumenty, propozycje)
+    pdfparse.py   lokalny parser PDF (pdfplumber) — bez danych wpisanych na sztywno
+    imports.py    analiza w tle, scalanie propozycji z wielu plików, decyzje kierownika
     security.py   hasła PBKDF2, tokeny sesji
     main.py       API
   frontend/src/   React: logowanie, „Moje budowy”, nowa budowa, przełącznik, zakładki budowy, konta
@@ -39,6 +41,14 @@ v2/
 - W każdej budowie osoba ma rolę *kierownik* albo *brygadzista* (zakładka „Zespół”).
 - Osoba spoza zespołu budowy dostaje „nie znaleziono” — nie dowiaduje się o jej istnieniu.
 - Uprawnienia są sprawdzane na serwerze przy każdym żądaniu.
+
+**Dokumenty PDF i propozycje (etap 2)**
+
+- Zakładka „Dokumenty i import”: wiele PDF naraz (przeciągnij/wybierz, do 60 MB każdy, 20 na żądanie). Pliki trafiają do przestrzeni danej budowy; duplikaty (SHA-256) są pomijane.
+- Analiza działa lokalnie w tle: tabele BOM (nagłówki PL/EN/IT/DE, typ konstrukcji z podpisu tabeli), wiersze tekstowe tabel, typy konstrukcji (`1x28`, `1x42+1x28`), strefy, numeracja stołów/trackerów (z pominięciem oznaczeń elektrycznych i rozmiarów śrub), momenty dokręcania, narzędzia.
+- Każda propozycja ma źródło (plik, strona, fragment) i pewność. Ten sam element z wielu plików = jedna propozycja z wieloma źródłami; różne ilości tej samej pozycji BOM są oznaczane jako rozbieżność („wymaga potwierdzenia”) i nie wchodzą do zatwierdzania zbiorczego.
+- Kierownik zatwierdza, poprawia albo odrzuca; brygadzista ma podgląd. Ponowna analiza nie nadpisuje decyzji ani poprawek. Zatwierdzona strefa od razu trafia do budowy; pozostałe rodzaje zasilą strukturę budowy w etapie 3.
+- Ograniczenie: strony zapisane jako obraz (skany) są wykrywane i opisywane jako „wymaga OCR” — OCR nie jest jeszcze wykonywany.
 
 ## Uruchomienie lokalne
 

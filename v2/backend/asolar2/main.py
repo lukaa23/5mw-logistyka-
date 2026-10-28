@@ -1,12 +1,14 @@
-"""ASOLAR v2 — serwer wielu budów (etap 1: rejestr, izolowane przestrzenie budów, konta i role)."""
+"""ASOLAR v2 — serwer wielu budów (etap 1: rejestr, izolacja, konta i role; etap 2: dokumenty PDF i propozycje)."""
+import hashlib
 import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -15,8 +17,9 @@ from sqlalchemy.orm import Session
 from .config import APP_VERSION, IS_POSTGRES, SERVER_MODE
 from .registry import Membership, Project, RegistryEvent, RegistrySession, User, init_registry, now
 from .security import create_token, decode_token, hash_password, verify_password
-from . import tenancy
-from .tenancy import ProjectEvent, Zone
+from . import imports, tenancy
+from .imports import document_dict, suggestion_dict
+from .tenancy import Document, ProjectEvent, Suggestion, Zone
 
 app = FastAPI(title="ASOLAR v2 — wiele budów", version=APP_VERSION)
 
@@ -38,9 +41,10 @@ def bootstrap():
             db.add(User(username=username, full_name="Kierownik Budowy", password_hash=hash_password(password), is_admin=True))
             db.commit()
         # Uzupełnia przestrzenie istniejących budów o tabele dodane w nowszych wersjach.
-        for project in db.scalars(select(Project)).all():
-            if project.storage_key:
-                tenancy.create_storage(project.storage_key)
+        keys = [project.storage_key for project in db.scalars(select(Project)).all() if project.storage_key]
+        for key in keys:
+            tenancy.create_storage(key)
+    imports.resume_pending(keys)
 
 
 bootstrap()
@@ -121,8 +125,10 @@ def project_dict(project: Project, role: str | None = None, stats: dict | None =
 def project_stats(project: Project) -> dict:
     with tenancy.project_session(project.storage_key) as session:
         zones = session.scalar(select(func.count(Zone.id))) or 0
+        documents = session.scalar(select(func.count(Document.id))) or 0
+        pending = session.scalar(select(func.count(Suggestion.id)).where(Suggestion.status == "nowa")) or 0
         last = session.scalar(select(func.max(ProjectEvent.created_at)))
-    return {"zones": zones, "members": len(project.memberships), "last_activity": last}
+    return {"zones": zones, "documents": documents, "pending_suggestions": pending, "members": len(project.memberships), "last_activity": last}
 
 
 # --- API: konto ---------------------------------------------------------------------------------
@@ -358,7 +364,179 @@ def list_events(limit: int = Query(50, ge=1, le=500), access: Access = Depends(p
     return [{"id": e.id, "user": names.get(e.user_id, "—"), "action": e.action, "entity": e.entity, "entity_id": e.entity_id, "details": e.details, "created_at": e.created_at} for e in events]
 
 
-# --- API: konta (administrator) -----------------------------------------------------------------
+# --- API: dokumenty PDF i propozycje (etap 2) -----------------------------------------------------
+
+MAX_FILES_PER_UPLOAD = 20
+MAX_FILE_BYTES = 60 * 1024 * 1024
+CATEGORIES = ("auto", "bom", "rysunek", "instrukcja", "inne")
+
+
+def writable(access: Access):
+    access.require_manager()
+    if access.project.archived:
+        raise HTTPException(409, "Budowa jest zarchiwizowana")
+
+
+@app.post("/api/projects/{project_id}/documents")
+def upload_documents(background: BackgroundTasks, files: list[UploadFile] = File(...), category: str = Query("auto"),
+                     access: Access = Depends(project_access)):
+    """Wiele PDF naraz. Każdy plik jest zapisywany w przestrzeni tej budowy i analizowany w tle."""
+    writable(access)
+    if category not in CATEGORIES:
+        raise HTTPException(400, "Nieznana kategoria dokumentu")
+    if len(files) > MAX_FILES_PER_UPLOAD:
+        raise HTTPException(400, f"Jednorazowo można wgrać najwyżej {MAX_FILES_PER_UPLOAD} plików")
+    key = access.project.storage_key
+    accepted, duplicates, rejected = [], [], []
+    with tenancy.project_session(key) as session:
+        for upload in files:
+            name = Path(upload.filename or "dokument.pdf").name[:255]
+            content = upload.file.read(MAX_FILE_BYTES + 1)
+            if len(content) > MAX_FILE_BYTES:
+                rejected.append({"filename": name, "reason": f"Plik większy niż {MAX_FILE_BYTES // (1024 * 1024)} MB"})
+                continue
+            if not content.startswith(b"%PDF-"):
+                rejected.append({"filename": name, "reason": "To nie jest plik PDF"})
+                continue
+            digest = hashlib.sha256(content).hexdigest()
+            existing = session.scalar(select(Document).where(Document.sha256 == digest))
+            if existing or any(item.sha256 == digest for item in accepted):
+                duplicates.append({"filename": name, "existing": existing.filename if existing else name})
+                continue
+            document = Document(filename=name, sha256=digest, size=len(content), content=content, category=category, uploaded_by=access.user.id)
+            session.add(document)
+            accepted.append(document)
+        session.flush()
+        for document in accepted:
+            session.add(ProjectEvent(user_id=access.user.id, action="upload", entity="document", entity_id=document.id, details=document.filename))
+        session.commit()
+        result = [document_dict(document) for document in accepted]
+    for document in result:
+        background.add_task(imports.analyze_document, key, document["id"])
+    return {"accepted": result, "duplicates": duplicates, "rejected": rejected}
+
+
+@app.get("/api/projects/{project_id}/documents")
+def list_documents(access: Access = Depends(project_access)):
+    with tenancy.project_session(access.project.storage_key) as session:
+        return [document_dict(item) for item in session.scalars(select(Document).order_by(Document.uploaded_at.desc(), Document.id.desc())).all()]
+
+
+@app.get("/api/projects/{project_id}/documents/{document_id}/file")
+def document_file(document_id: int, access: Access = Depends(project_access)):
+    with tenancy.project_session(access.project.storage_key) as session:
+        document = session.get(Document, document_id)
+        if not document:
+            raise HTTPException(404, "Nie znaleziono dokumentu")
+        return Response(document.content, media_type="application/pdf",
+                        headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(document.filename)}", "Cache-Control": "private, no-store"})
+
+
+@app.post("/api/projects/{project_id}/documents/{document_id}/reanalyze")
+def reanalyze_document(document_id: int, background: BackgroundTasks, access: Access = Depends(project_access)):
+    writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        document = session.get(Document, document_id)
+        if not document:
+            raise HTTPException(404, "Nie znaleziono dokumentu")
+        if document.status == "analiza":
+            raise HTTPException(409, "Analiza tego dokumentu jeszcze trwa")
+        document.status = "oczekuje"
+        session.commit()
+        result = document_dict(document)
+    background.add_task(imports.analyze_document, access.project.storage_key, document_id)
+    return result
+
+
+@app.delete("/api/projects/{project_id}/documents/{document_id}")
+def delete_document(document_id: int, access: Access = Depends(project_access)):
+    """Usuwa plik i jego nierozpatrzone propozycje. Zatwierdzone/odrzucone decyzje zostają."""
+    writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        document = session.get(Document, document_id)
+        if not document:
+            raise HTTPException(404, "Nie znaleziono dokumentu")
+        removed = imports.detach_document(session, document.id)
+        imports.recompute_conflicts(session)
+        session.add(ProjectEvent(user_id=access.user.id, action="delete", entity="document", entity_id=document.id, details=document.filename))
+        session.delete(document)
+        session.commit()
+    return {"ok": True, "removed_suggestions": removed}
+
+
+class SuggestionUpdate(BaseModel):
+    status: Literal["nowa", "zatwierdzona", "odrzucona"] | None = None
+    payload: dict | None = None
+
+
+class BulkStatus(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=2000)
+    status: Literal["nowa", "zatwierdzona", "odrzucona"]
+
+
+def set_status(session, item: Suggestion, status: str, user_id: int):
+    item.status = status
+    item.reviewed_by = user_id if status != "nowa" else None
+    item.reviewed_at = now() if status != "nowa" else None
+    item.updated_at = now()
+    if status == "zatwierdzona":
+        imports.apply_approved(session, item, user_id)
+
+
+@app.get("/api/projects/{project_id}/suggestions")
+def list_suggestions(kind: str | None = None, status: str | None = None, access: Access = Depends(project_access)):
+    with tenancy.project_session(access.project.storage_key) as session:
+        query = select(Suggestion).order_by(Suggestion.kind, Suggestion.id)
+        if kind:
+            query = query.where(Suggestion.kind == kind)
+        if status:
+            query = query.where(Suggestion.status == status)
+        return [suggestion_dict(item) for item in session.scalars(query).all()]
+
+
+@app.patch("/api/projects/{project_id}/suggestions/{suggestion_id}")
+def update_suggestion(suggestion_id: int, data: SuggestionUpdate, access: Access = Depends(project_access)):
+    """Zatwierdź / odrzuć / popraw propozycję. Poprawione wartości nie zostaną nadpisane przy ponownej analizie."""
+    writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        item = session.get(Suggestion, suggestion_id)
+        if not item:
+            raise HTTPException(404, "Nie znaleziono propozycji")
+        details = {"klucz": item.key}
+        if data.payload:
+            try:
+                changes = imports.clean_payload(item.kind, data.payload)
+            except ValueError as error:
+                raise HTTPException(400, str(error)) from None
+            payload = imports.loads(item.payload_json, {})
+            payload.update(changes)
+            item.payload_json = imports.dumps(payload)
+            item.edited = True
+            details["poprawki"] = changes
+        if data.status:
+            set_status(session, item, data.status, access.user.id)
+            details["status"] = data.status
+        imports.recompute_conflicts(session)
+        session.add(ProjectEvent(user_id=access.user.id, action="review", entity="suggestion", entity_id=item.id, details=imports.dumps(details)))
+        session.commit()
+        return suggestion_dict(item)
+
+
+@app.post("/api/projects/{project_id}/suggestions/bulk")
+def bulk_suggestions(data: BulkStatus, access: Access = Depends(project_access)):
+    writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        items = session.scalars(select(Suggestion).where(Suggestion.id.in_(data.ids))).all()
+        for item in items:
+            set_status(session, item, data.status, access.user.id)
+        imports.recompute_conflicts(session)
+        session.add(ProjectEvent(user_id=access.user.id, action="review-bulk", entity="suggestion", entity_id=None,
+                                 details=imports.dumps({"status": data.status, "liczba": len(items)})))
+        session.commit()
+        return {"updated": len(items)}
+
+
+# --- API: konta (administrator)-----------------------------------------------------------------
 
 class UserIn(BaseModel):
     username: str = Field(min_length=3, max_length=80, pattern=r"^[A-Za-z0-9._-]+$")
