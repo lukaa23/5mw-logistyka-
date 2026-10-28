@@ -39,6 +39,80 @@ class Zone(ProjectBase):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    source_suggestion_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # etap 3
+
+
+# --- struktura budowy (etap 3) -------------------------------------------------------------------
+
+class StructureType(ProjectBase):
+    """Typ stołu/trackera (np. 1x42). posts_per_table puste = „wymaga potwierdzenia”."""
+    __tablename__ = "structure_types"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(60), unique=True)
+    modules: Mapped[int] = mapped_column(Integer, default=0)
+    posts_per_table: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    source_suggestion_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class BomItem(ProjectBase):
+    """Pozycja BOM: ilość na JEDEN stół danego typu."""
+    __tablename__ = "bom_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    structure_type_id: Mapped[int] = mapped_column(ForeignKey("structure_types.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    code: Mapped[str] = mapped_column(String(120), default="")
+    spec: Mapped[str] = mapped_column(String(160), default="")
+    quantity: Mapped[float] = mapped_column(Float, default=0)
+    unit: Mapped[str] = mapped_column(String(20), default="szt.")
+    source_suggestion_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class CatalogItem(ProjectBase):
+    """Komponenty (bez ilości) i narzędzia z dokumentów."""
+    __tablename__ = "catalog_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20))  # component | tool
+    name: Mapped[str] = mapped_column(String(255))
+    code: Mapped[str] = mapped_column(String(120), default="")
+    spec: Mapped[str] = mapped_column(String(160), default="")
+    source_suggestion_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class TorqueSpec(ProjectBase):
+    __tablename__ = "torque_specs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bolt: Mapped[str] = mapped_column(String(20))
+    min_nm: Mapped[float] = mapped_column(Float)
+    max_nm: Mapped[float] = mapped_column(Float)
+    context: Mapped[str] = mapped_column(Text, default="")
+    source_suggestion_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class SiteRow(ProjectBase):
+    """Rząd stołów (w strefie lub bez strefy)."""
+    __tablename__ = "site_rows"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    zone_id: Mapped[int | None] = mapped_column(ForeignKey("zones.id", ondelete="SET NULL"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class SiteTable(ProjectBase):
+    """Stół / tracker o konkretnym oznaczeniu (np. T-12) z przypisaniem do strefy, rzędu i typu."""
+    __tablename__ = "site_tables"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True)
+    prefix: Mapped[str] = mapped_column(String(10), default="")
+    number: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    zone_id: Mapped[int | None] = mapped_column(ForeignKey("zones.id", ondelete="SET NULL"), nullable=True, index=True)
+    row_id: Mapped[int | None] = mapped_column(ForeignKey("site_rows.id", ondelete="SET NULL"), nullable=True, index=True)
+    structure_type_id: Mapped[int | None] = mapped_column(ForeignKey("structure_types.id", ondelete="SET NULL"), nullable=True, index=True)
+    source_suggestion_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
 class ProjectEvent(ProjectBase):
@@ -119,9 +193,15 @@ def _sqlite_engine(key: str):
 
             @event.listens_for(engine, "connect")
             def _fk(connection, _record):
+                # Transakcje sterowane przez SQLAlchemy (inaczej sqlite3 psuje SAVEPOINT — przepis z dokumentacji).
+                connection.isolation_level = None
                 cursor = connection.cursor()
                 cursor.execute("PRAGMA foreign_keys=ON")
                 cursor.close()
+
+            @event.listens_for(engine, "begin")
+            def _begin(connection):
+                connection.exec_driver_sql("BEGIN")
 
             _sqlite_engines[key] = engine
         return engine
@@ -152,6 +232,26 @@ def create_storage(key: str) -> None:
             connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{key}"'))
     with project_bind(key).begin() as connection:
         ProjectBase.metadata.create_all(connection)
+        add_missing_columns(connection, key)
+
+
+def add_missing_columns(connection, key: str) -> list[str]:
+    """Prosta migracja: kolumny dodane w nowszych wersjach (zawsze dopuszczające NULL) trafiają
+    do istniejących tabel budowy. create_all tworzy tylko brakujące tabele, nie kolumny."""
+    inspector = inspect(connection)
+    schema = key if IS_POSTGRES else None
+    added = []
+    for table in ProjectBase.metadata.sorted_tables:
+        existing = {column["name"] for column in inspector.get_columns(table.name, schema=schema)}
+        for column in table.columns:
+            if column.name in existing:
+                continue
+            if not column.nullable:
+                raise RuntimeError(f"Nowa kolumna {table.name}.{column.name} musi dopuszczać NULL")
+            target = f'"{key}"."{table.name}"' if IS_POSTGRES else f'"{table.name}"'
+            connection.execute(text(f'ALTER TABLE {target} ADD COLUMN "{column.name}" {column.type.compile(dialect=connection.dialect)}'))
+            added.append(f"{table.name}.{column.name}")
+    return added
 
 
 def drop_storage(key: str) -> None:

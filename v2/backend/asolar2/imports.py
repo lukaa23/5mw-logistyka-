@@ -9,11 +9,11 @@ import logging
 import threading
 from collections import defaultdict
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from . import tenancy
 from .pdfparse import PARSER_VERSION, analyze_pdf
-from .tenancy import Document, ProjectEvent, Suggestion, Zone, now
+from .tenancy import Document, ProjectEvent, Suggestion, now
 
 log = logging.getLogger("asolar2.imports")
 
@@ -222,22 +222,3 @@ def clean_payload(kind: str, changes: dict) -> dict:
     if kind == "bom_line" and "name" in result and not result["name"]:
         raise ValueError("Nazwa pozycji nie może być pusta")
     return result
-
-
-def apply_approved(session, item: Suggestion, user_id: int) -> str:
-    """Natychmiastowe skutki zatwierdzenia. Etap 2: strefa trafia do budowy. Pozostałe rodzaje
-    (BOM, typy, numeracja) zasilą strukturę budowy w etapie 3 — do tego czasu są tylko zatwierdzone."""
-    if item.kind != "zone" or item.applied_ref:
-        return item.applied_ref
-    name = str(loads(item.payload_json, {}).get("name", "")).strip()
-    if not name:
-        return ""
-    zone = session.scalar(select(Zone).where(func.lower(Zone.name) == name.lower()))
-    if zone is None:
-        order = (session.scalar(select(func.max(Zone.sort_order))) or 0) + 1
-        zone = Zone(name=name, description="Z dokumentów PDF (zatwierdzona propozycja)", sort_order=order, created_by=user_id)
-        session.add(zone)
-        session.flush()
-        session.add(ProjectEvent(user_id=user_id, action="create", entity="zone", entity_id=zone.id, details=f"{name} (z propozycji PDF)"))
-    item.applied_ref = f"zone:{zone.id}"
-    return item.applied_ref

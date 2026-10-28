@@ -2,12 +2,13 @@ import React, { useState } from "react";
 import { api, send } from "./api";
 import { roleLabel } from "./Dashboard";
 import Documents from "./Documents";
+import { Constructions, Requirements, Tables } from "./Structure";
 import { AsyncButton, Empty, fmt, Loader, PageHead, useConfirm, useEscape } from "./ui";
 import { useLoad } from "./useLoad";
 
-export const TABS = [["przeglad", "Przegląd"], ["dokumenty", "Dokumenty i import"], ["strefy", "Strefy"], ["zespol", "Zespół"], ["ustawienia", "Ustawienia"]];
-const ACTIONS = { create: "utworzył(a)", update: "zmienił(a)", delete: "usunął(ęła)", upload: "wgrał(a)", review: "rozpatrzył(a)", "review-bulk": "zatwierdził(a) zbiorczo" };
-const ENTITIES = { project: "budowę", zone: "strefę", document: "dokument", suggestion: "propozycję" };
+export const TABS = [["przeglad", "Przegląd"], ["dokumenty", "Dokumenty i import"], ["strefy", "Strefy"], ["konstrukcje", "Konstrukcje i BOM"], ["stoly", "Stoły i rzędy"], ["materialy", "Zapotrzebowanie"], ["zespol", "Zespół"], ["ustawienia", "Ustawienia"]];
+const ACTIONS = { create: "utworzył(a)", update: "zmienił(a)", delete: "usunął(ęła)", upload: "wgrał(a)", assign: "przypisał(a)", review: "rozpatrzył(a)", "review-bulk": "zatwierdził(a) zbiorczo" };
+const ENTITIES = { project: "budowę", zone: "strefę", document: "dokument", suggestion: "propozycję", type: "typ konstrukcji", bom: "pozycję BOM", row: "rząd", tables: "stoły" };
 
 function eventText(event) {
   if (event.action === "analyze") {
@@ -21,7 +22,7 @@ function Overview({ project, navigate }) {
   const { data: events, loading } = useLoad(() => api(`/api/projects/${project.id}/events?limit=20`), [project.id]);
   return <div className="split">
     <section className="card"><div className="card-head"><h2>Dane budowy</h2></div>
-      <dl className="facts"><dt>Lokalizacja</dt><dd>{project.location || "—"}</dd><dt>Moc</dt><dd>{project.capacity_mw ? `${project.capacity_mw} MW` : "—"}</dd><dt>Strefy</dt><dd>{project.stats.zones}</dd><dt>Dokumenty PDF</dt><dd>{project.stats.documents ?? 0}</dd><dt>Do przeglądu</dt><dd>{project.stats.pending_suggestions ?? 0} propozycji</dd><dt>Zespół</dt><dd>{project.stats.members} osób</dd><dt>Utworzono</dt><dd>{fmt(project.created_at)}</dd></dl>
+      <dl className="facts"><dt>Lokalizacja</dt><dd>{project.location || "—"}</dd><dt>Moc</dt><dd>{project.capacity_mw ? `${project.capacity_mw} MW` : "—"}</dd><dt>Strefy</dt><dd>{project.stats.zones}</dd><dt>Typy konstrukcji</dt><dd>{project.stats.types ?? 0}</dd><dt>Stoły</dt><dd>{project.stats.tables ?? 0}</dd><dt>Dokumenty PDF</dt><dd>{project.stats.documents ?? 0}</dd><dt>Do przeglądu</dt><dd>{project.stats.pending_suggestions ?? 0} propozycji</dd><dt>Zespół</dt><dd>{project.stats.members} osób</dd><dt>Utworzono</dt><dd>{fmt(project.created_at)}</dd></dl>
       {project.description && <p>{project.description}</p>}
       <button type="button" className="secondary" onClick={() => navigate(`#/p/${project.id}/dokumenty`)}>{project.stats.pending_suggestions ? "Przejrzyj propozycje z PDF" : "Wgraj dokumenty PDF"}</button>
     </section>
@@ -138,6 +139,6 @@ export default function ProjectView({ projectId, tab, user, notify, navigate }) 
   return <>
     <PageHead eyebrow={project.archived ? "BUDOWA ZARCHIWIZOWANA" : "BUDOWA"} title={project.name}><span className="badge neutral">{roleLabel(project.role)}</span></PageHead>
     <nav className="view-switch project-tabs" aria-label="Sekcje budowy">{TABS.map(([id, label]) => <button type="button" key={id} className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => navigate(`#/p/${project.id}/${id}`)}>{label}</button>)}</nav>
-    {tab === "dokumenty" ? <Documents {...common} onChanged={reload} /> : tab === "strefy" ? <Zones {...common} /> : tab === "zespol" ? <Team {...common} /> : tab === "ustawienia" ? <Settings key={`${project.name}|${project.location}|${project.capacity_mw}|${project.description}|${project.archived}`} {...common} onChanged={reload} onDeleted={() => navigate("#/")} /> : <Overview {...common} navigate={navigate} />}
+    {tab === "konstrukcje" ? <Constructions {...common} /> : tab === "stoly" ? <Tables {...common} /> : tab === "materialy" ? <Requirements {...common} /> : tab === "dokumenty" ? <Documents {...common} onChanged={reload} /> : tab === "strefy" ? <Zones {...common} /> : tab === "zespol" ? <Team {...common} /> : tab === "ustawienia" ? <Settings key={`${project.name}|${project.location}|${project.capacity_mw}|${project.description}|${project.archived}`} {...common} onChanged={reload} onDeleted={() => navigate("#/")} /> : <Overview {...common} navigate={navigate} />}
   </>;
 }

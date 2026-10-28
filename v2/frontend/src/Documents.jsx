@@ -6,10 +6,10 @@ import { useLoad } from "./useLoad";
 /* Etap 2: wiele PDF naraz → lokalny parser → propozycje, które kierownik zatwierdza, poprawia lub odrzuca. */
 
 export const KINDS = [
-  ["zone", "Strefy", "Zatwierdzona strefa od razu trafia do zakładki „Strefy”."],
-  ["structure_type", "Typy konstrukcji", "Typy stołów/trackerów (np. 1x28, 1x42+1x28)."],
-  ["numbering", "Numeracja stołów / trackerów", "Zakresy oznaczeń znalezione na rysunkach. Oznaczenia elektryczne (INV, MPPT…) są pomijane."],
-  ["bom_line", "BOM — ilości na typ konstrukcji", "Pozycje tabel materiałowych z ilościami."],
+  ["zone", "Strefy", "Zatwierdzona strefa trafia do zakładki „Strefy”."],
+  ["structure_type", "Typy konstrukcji", "Zatwierdzony typ trafia do zakładki „Konstrukcje i BOM”."],
+  ["numbering", "Numeracja stołów / trackerów", "Zatwierdzenie tworzy stoły o numerach odczytanych z rysunku (luki nie są dopisywane). Oznaczenia elektryczne (INV, MPPT…) są pomijane."],
+  ["bom_line", "BOM — ilości na typ konstrukcji", "Ilości na jeden stół danego typu. Zatwierdzona pozycja trafia do BOM typu — pozycja bez typu konstrukcji wymaga uzupełnienia (Popraw)."],
   ["component", "Komponenty (bez ilości)", "Elementy z tabel bez kolumny ilości."],
   ["tool", "Narzędzia", "Tabele narzędzi montażowych."],
   ["torque", "Momenty dokręcania", "Wartości odczytane z tekstu — sprawdź z instrukcją producenta."],
@@ -222,7 +222,12 @@ function Review({ project, canEdit, notify, suggestions, reload, onChanged }) {
   }
   async function bulk(items, title) {
     if (!(await confirm({ title: "Zatwierdzić wszystkie?", message: `Zostanie zatwierdzonych ${items.length} propozycji z sekcji „${title}”. Pozycje z rozbieżnością ilości trzeba rozpatrzyć pojedynczo.`, confirmLabel: `Zatwierdź ${items.length}` }))) return;
-    try { await send(`/api/projects/${project.id}/suggestions/bulk`, "POST", { ids: items.map(item => item.id), status: "zatwierdzona" }); notify(`Zatwierdzono ${items.length} propozycji`); await reload(); onChanged?.(); }
+    try {
+      const result = await send(`/api/projects/${project.id}/suggestions/bulk`, "POST", { ids: items.map(item => item.id), status: "zatwierdzona" });
+      notify(`Zatwierdzono ${result.updated} propozycji`);
+      if (result.failed?.length) notify(`Pominięto ${result.failed.length}: ${result.failed.slice(0, 3).map(item => item.reason).join(" · ")}${result.failed.length > 3 ? " …" : ""}`, "error");
+      await reload(); onChanged?.();
+    }
     catch (failure) { notify(failure.message, "error"); }
   }
   return <>
@@ -237,7 +242,7 @@ function Review({ project, canEdit, notify, suggestions, reload, onChanged }) {
       const items = visible.filter(item => item.kind === kind);
       return items.length ? <KindSection key={`${kind}-${status}`} kind={kind} title={title} hint={hint} items={items} canEdit={canEdit} onUpdate={update} onBulk={bulk} /> : null;
     })}
-    {all.length > 0 && <p className="hint">Zatwierdzone typy konstrukcji, BOM i numeracja zasilą strukturę budowy (stoły, rzędy, materiały) w kolejnym etapie. Nic nie trafia do danych budowy bez zatwierdzenia.</p>}
+    {all.length > 0 && <p className="hint">Nic nie trafia do danych budowy bez zatwierdzenia. Cofnięcie decyzji usuwa utworzone dane, o ile nie są już używane.</p>}
   </>;
 }
 
