@@ -35,12 +35,13 @@ beforeEach(async () => {
     if (path.endsWith("/documents")) return json(server.documents);
     if (path.endsWith("/tables")) return json(server.tables);
     if (path.includes("/plan?page=")) return json(server.plan);
-    if (path.includes(".png")) return new Response(new Blob([new Uint8Array([137, 80])], { type: "image/png" }), { headers: { "Content-Type": "image/png" } });
+    // Bajty zamiast Blob z jsdom — Response z Node 22 nie umie czytać Blob z jsdom.
+    if (path.includes(".png")) return new Response(new Uint8Array([137, 80]), { headers: { "Content-Type": "image/png" } });
     if (/\/tables\/\d+\/(notes|photos)$/.test(path)) return json([]);
     if (path.endsWith("/dashboard")) return json({ tables_total: 10, tables_built: 3, tables_qc: 1, built_pct: 30, qc_pct: 10, built_today: 1, materials_missing: 2, materials_required: 5, worklogs_today: 1, manhours_today: 24,
       history: Array.from({ length: 14 }, (_, i) => ({ date: `2026-10-${String(15 + i).padStart(2, "0")}`, built: i === 13 ? 1 : i === 12 ? 2 : 0 })),
       forecast_days: 5, forecast_date: "2026-11-02", forecast_status: "szacunek", forecast_assumptions: ["Prognoza nie uwzględnia przerw."] });
-    if (path.includes("/reports/daily")) return new Response(new Blob(["%PDF"], { type: "application/pdf" }), { headers: { "Content-Type": "application/pdf" } });
+    if (path.includes("/reports/daily")) return new Response("%PDF", { headers: { "Content-Type": "application/pdf" } });
     return json({});
   }));
 });
