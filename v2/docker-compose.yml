@@ -1,0 +1,32 @@
+# Lokalnie / na własnym serwerze: ASOLAR v2 + PostgreSQL 16 (schemat na budowę).
+# Uruchomienie z katalogu v2:  ASOLAR_ADMIN_PASSWORD=... ASOLAR_SECRET=... docker compose up --build
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: asolar
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-asolar}
+      POSTGRES_DB: asolar_v2
+    volumes:
+      - asolar_v2_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asolar -d asolar_v2"]
+      interval: 5s
+      retries: 12
+  asolar-v2:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8770:8770"
+    environment:
+      DATABASE_URL: postgresql://asolar:${POSTGRES_PASSWORD:-asolar}@db:5432/asolar_v2
+      ASOLAR_SECRET: ${ASOLAR_SECRET:?Ustaw ASOLAR_SECRET (losowy, min. 32 znaki)}
+      ASOLAR_ADMIN_PASSWORD: ${ASOLAR_ADMIN_PASSWORD:?Ustaw ASOLAR_ADMIN_PASSWORD}
+    volumes:
+      - asolar_v2_data:/app/data
+
+volumes:
+  asolar_v2_db:
+  asolar_v2_data:

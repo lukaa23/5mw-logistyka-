@@ -2,7 +2,7 @@
 
 Nowa, osobna wersja aplikacji. **Nie zastępuje i nie zmienia** wersji 1 (katalogi `app/`, `frontend/`, `desktop/` w głównym folderze repozytorium), która działa dalej pod dotychczasowym adresem.
 
-## Stan: etap 4 z 5 gotowy (4a, 4b, 4c)
+## Stan: wersja 2.0.0 — wszystkie etapy gotowe
 
 | Etap | Zakres | Stan |
 |---|---|---|
@@ -12,7 +12,11 @@ Nowa, osobna wersja aplikacji. **Nie zastępuje i nie zmienia** wersji 1 (katalo
 | 4a | Praca w terenie: montaż i odbiór QA/QC stołów, notatki, zdjęcia, kolejka offline, service worker | **gotowy** |
 | 4b | Dostawy WZ wobec zapotrzebowania, stan magazynu, meldunki dzienne | **gotowy** |
 | 4c | Planimetria, raport dzienny, pulpit postępu | **gotowy** |
-| 5 | Docker/Render (osobna usługa), aplikacja desktopowa, dokumentacja | planowany |
+| 5 | Docker/Render (osobna usługa), aplikacja desktopowa, dokumentacja | **gotowy** |
+
+**Dokumentacja:** [instrukcja użytkownika](docs/INSTRUKCJA.md) · [wdrożenie (Render, Docker, desktop)](docs/WDROZENIE.md)
+
+**Wdrożenie (etap 5):** `v2/Dockerfile` (kontekst `v2/`), `v2/render.yaml` (osobny Blueprint: usługa `asolar-v2` + baza `asolar-v2-postgres`), `v2/docker-compose.yml` (v2 + PostgreSQL), aplikacja desktopowa `v2/desktop` (Electron: klient serwera v2 albo serwer na komputerze; tagi `v2.*` budują .exe jako wydanie wstępne). CI uruchamia obraz Docker z testem dymnym (`v2/scripts/smoke_test.py`).
 
 ## Architektura
 

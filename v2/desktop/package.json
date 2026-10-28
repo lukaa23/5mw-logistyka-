@@ -1,0 +1,86 @@
+{
+  "name": "asolar-v2-desktop",
+  "productName": "ASOLAR v2",
+  "version": "2.0.0",
+  "description": "ASOLAR v2 — aplikacja desktopowa (serwer wielu budów lub klient serwera w chmurze)",
+  "author": "ASOLAR Sp. z o.o.",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/*.test.js\"",
+    "prebuild:frontend": "npm --prefix ../frontend ci",
+    "build:frontend": "npm --prefix ../frontend run build",
+    "dist": "npm run build:frontend && electron-builder --win nsis portable",
+    "dist:dir": "electron-builder --win dir"
+  },
+  "build": {
+    "appId": "pl.asolar.v2",
+    "productName": "ASOLAR v2",
+    "copyright": "ASOLAR Sp. z o.o.",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "lib.js",
+      "setup.js",
+      "setup.html",
+      "preload.js",
+      "build/icon.ico",
+      "build/icon.png",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend/asolar2",
+        "to": "backend/asolar2",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**"
+        ]
+      },
+      {
+        "from": "../backend/server.py",
+        "to": "backend/server.py"
+      },
+      {
+        "from": "../backend/requirements.txt",
+        "to": "backend/requirements.txt"
+      },
+      {
+        "from": "../frontend/dist",
+        "to": "frontend/dist"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "ASOLAR-v2-${version}-${arch}-${target}.${ext}"
+    },
+    "portable": {
+      "artifactName": "ASOLAR-v2-${version}-portable.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ASOLAR v2",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "ASOLAR-v2-${version}-instalator.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "44.9.0",
+    "electron-builder": "26.15.3"
+  }
+}

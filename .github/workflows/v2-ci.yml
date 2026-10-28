@@ -67,3 +67,52 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+  docker:
+    name: Obraz Docker v2 jak na Render + test dymny (restart, izolacja)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: asolar
+          POSTGRES_PASSWORD: asolar
+          POSTGRES_DB: asolar_v2
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Budowanie obrazu (kontekst v2/, jak w v2/render.yaml)
+        run: docker build -t asolar-v2:ci v2
+      - name: Bez ASOLAR_SECRET serwer z PostgreSQL odmawia startu
+        run: |
+          if docker run --rm --network host -e DATABASE_URL=postgres://asolar:asolar@localhost:5432/asolar_v2 -e PORT=10001 -e ASOLAR_ADMIN_PASSWORD=x asolar-v2:ci timeout 20 python server.py; then
+            echo "Serwer wystartował bez ASOLAR_SECRET" && exit 1
+          fi
+      - name: Start kontenera
+        run: |
+          docker run -d --name asolar-v2 --network host \
+            -e DATABASE_URL=postgres://asolar:asolar@localhost:5432/asolar_v2 \
+            -e PORT=10000 -e ASOLAR_SECRET="$ASOLAR_SECRET" -e ASOLAR_ADMIN_PASSWORD="$ASOLAR_ADMIN_PASSWORD" asolar-v2:ci
+      - name: Test dymny — dane dwóch budów
+        run: python v2/scripts/smoke_test.py http://localhost:10000 setup
+      - name: Restart i weryfikacja trwałości oraz izolacji
+        run: |
+          docker restart asolar-v2
+          python v2/scripts/smoke_test.py http://localhost:10000 verify
+      - name: Dziennik kontenera
+        if: always()
+        run: docker logs asolar-v2 2>&1 | tail -80
+
+  desktop:
+    name: Aplikacja desktopowa v2 — testy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: v2/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm test

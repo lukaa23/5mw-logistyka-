@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:" />
+  <title>ASOLAR v2 — połączenie</title>
+  <style>
+    :root { color-scheme: light; font-family: "Segoe UI", system-ui, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b2b21; color: #18251f; }
+    main { width: min(620px, calc(100% - 32px)); background: #fff; border-radius: 16px; padding: 28px; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+    .mark { width: 44px; height: 44px; border-radius: 12px; background: #f4c64e; color: #0b2b21; display: grid; place-items: center; font-weight: 800; font-size: 22px; }
+    h1 { font-size: 22px; margin: 0; color: #123e30; }
+    p { line-height: 1.55; color: #33443c; }
+    .option { border: 1px solid #dce4df; border-radius: 12px; padding: 16px; margin-top: 14px; }
+    .option.primary-option { border-color: #217158; background: #eef7f2; }
+    .option h2 { margin: 0 0 6px; font-size: 16px; }
+    label { display: block; font-size: 13px; font-weight: 600; margin-top: 10px; }
+    input { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 11px 12px; font: inherit; border: 1px solid #c9d6d0; border-radius: 9px; }
+    input:focus { outline: 2px solid #3e9b77; border-color: #3e9b77; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    button { font: inherit; font-weight: 700; padding: 11px 16px; border-radius: 9px; cursor: pointer; border: 1px solid #c9d6d0; background: #fff; color: #123e30; }
+    button.primary { background: #123e30; color: #fff; border-color: #123e30; }
+    button:disabled { opacity: .6; cursor: progress; }
+    .message { margin-top: 12px; padding: 10px 12px; border-radius: 9px; font-size: 14px; display: none; }
+    .message.error { display: block; background: #fce9e6; color: #9f3029; }
+    .message.info { display: block; background: #e6f0f8; color: #23577f; }
+    .message.ok { display: block; background: #e5f4ed; color: #227356; }
+    small { color: #68766f; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand"><div class="mark">A</div><div><h1>Połączenie z serwerem ASOLAR v2</h1><small id="version"></small></div></div>
+    <p id="intro">Wybierz, gdzie są dane budowy. Ustawienie możesz zmienić później w menu <b>Serwer → Ustaw adres serwera…</b></p>
+    <div id="status" class="message" role="status" aria-live="polite"></div>
+
+    <section class="option primary-option">
+      <h2>Serwer w chmurze (zalecane)</h2>
+      <p>Komputer kierownika i telefony brygadzistów pracują na wspólnym serwerze v2 (wszystkie budowy) pod jednym adresem HTTPS. Lokalny serwer Pythona nie jest uruchamiany.</p>
+      <form id="remote-form">
+        <label for="url">Adres serwera</label>
+        <input id="url" type="url" inputmode="url" autocomplete="url" placeholder="https://asolar-v2.onrender.com" required />
+        <div class="actions"><button class="primary" id="connect" type="submit">Sprawdź i połącz</button><button type="button" id="retry" hidden>Spróbuj ponownie</button></div>
+        <small>Darmowy serwer może się wybudzać do około minuty — sprawdzenie poczeka.</small>
+      </form>
+    </section>
+
+    <section class="option">
+      <h2>Serwer na tym komputerze</h2>
+      <p>Dane na tym komputerze: rejestr budów i osobny plik SQLite każdej budowy. Wymaga Pythona 3.11. Telefony mogą się łączyć w tej samej sieci Wi-Fi.</p>
+      <div class="actions"><button type="button" id="local">Uruchom serwer na tym komputerze</button></div>
+    </section>
+  </main>
+  <script src="setup.js"></script>
+</body>
+</html>

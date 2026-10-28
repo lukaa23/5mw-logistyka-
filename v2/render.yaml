@@ -1,0 +1,34 @@
+# Render Blueprint dla ASOLAR v2 — OSOBNA usługa i OSOBNA baza (v1 działa dalej bez zmian).
+# W Render: New → Blueprint → to repozytorium → „Blueprint Path”: v2/render.yaml.
+# Każda budowa dostaje w tej bazie własny schemat proj_<id>.
+databases:
+  - name: asolar-v2-postgres
+    plan: free
+    region: frankfurt
+    postgresMajorVersion: "16"
+    databaseName: asolar_v2
+    user: asolar_v2
+
+services:
+  - type: web
+    name: asolar-v2
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerContext: ./v2
+    dockerfilePath: ./v2/Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    buildFilter:
+      paths: ["v2/**"]
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: asolar-v2-postgres
+          property: connectionString
+      - key: ASOLAR_SECRET
+        generateValue: true
+      - key: ASOLAR_ADMIN_USERNAME
+        value: kierownik
+      - key: ASOLAR_ADMIN_PASSWORD
+        sync: false

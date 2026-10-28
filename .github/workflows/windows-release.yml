@@ -4,7 +4,8 @@ name: Windows — instalator ASOLAR
 
 on:
   push:
-    tags: ["v*"]
+    # Tagi v2.* budują osobną aplikację ASOLAR v2 (v2-windows-release.yml).
+    tags: ["v*", "!v2.*"]
   workflow_dispatch:
 
 permissions:
