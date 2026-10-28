@@ -1,0 +1,28 @@
+/* ASOLAR v2 — układ bez bocznego menu: górny pasek z przełącznikiem budów. */
+.app-shell.v2 { display: block; }
+.v2-topbar { left: 0 !important; display: flex; align-items: center; gap: 1rem; padding: 0 clamp(1rem, 3vw, 2.4rem); }
+.v2-topbar .home-link { display: flex; align-items: center; gap: .55rem; border: 0; background: none; cursor: pointer; color: var(--green-900); }
+.v2-topbar .project-select { flex: 1 1 260px; max-width: 420px; }
+.v2-topbar .project-select select { width: 100%; }
+.top-links { display: flex; gap: .3rem; margin-left: auto; }
+.top-links button { border: 0; background: none; padding: .55rem .8rem; border-radius: 8px; font-weight: 700; color: var(--muted); cursor: pointer; }
+.top-links button.active { background: var(--green-50); color: var(--green-900); }
+.v2-content { margin-left: 0 !important; padding-top: 96px; max-width: 1240px; margin-inline: auto !important; }
+.project-tabs { margin: 0 0 1.2rem; flex-wrap: wrap; }
+.project-stats { display: flex; flex-wrap: wrap; gap: .4rem .9rem; font-size: .72rem; color: var(--muted); margin: .4rem 0 .8rem; }
+.project-stats b { color: var(--green-900); }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: .4rem 1rem; margin: 0 0 1rem; font-size: .82rem; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; font-weight: 600; }
+.event-row { display: grid; gap: .1rem; padding: .55rem 0; border-bottom: 1px solid var(--line); font-size: .8rem; }
+.zone-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem; padding: .7rem 0; border-bottom: 1px solid var(--line); }
+.zone-row > div:first-child { display: grid; gap: .15rem; }
+.zone-row.editing { display: grid; grid-template-columns: 1fr 1fr auto; padding: .6rem; border-radius: 10px; }
+.new-project { width: min(560px, 100%); }
+@media (max-width: 720px) {
+  .v2-topbar { flex-wrap: wrap; height: auto !important; padding: .5rem 16px; gap: .5rem; }
+  .v2-topbar .project-select { order: 3; flex-basis: 100%; max-width: none; }
+  .top-links { margin-left: auto; }
+  .v2-content { padding-top: 140px; }
+  .zone-row.editing { grid-template-columns: 1fr; }
+}
