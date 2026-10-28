@@ -9,7 +9,7 @@ import { useLoad } from "./useLoad";
 const STATUSES = [["", "Wszystkie"], ["todo", "Do montażu"], ["built", "Zamontowane, bez odbioru"], ["qc", "Odebrane"]];
 
 /** Niewysłane zmiany z kolejki tego urządzenia — odświeżane po każdej zmianie kolejki. */
-function usePending() {
+export function usePending() {
   const [items, setItems] = useState([]);
   const reload = useCallback(() => pendingItems().then(setItems), []);
   useEffect(() => {
@@ -21,20 +21,20 @@ function usePending() {
   return [items, reload];
 }
 
-function useSynced(handler) {
+export function useSynced(handler) {
   useEffect(() => {
     window.addEventListener("asolar2:synced", handler);
     return () => window.removeEventListener("asolar2:synced", handler);
   }, [handler]);
 }
 
-function PhotoThumb({ base, photo, canDelete, onDelete }) {
+export function PhotoThumb({ url: fileUrl, photo, canDelete, onDelete }) {
   const [url, setUrl] = useState("");
   useEffect(() => {
     let active = true, objectUrl = "";
-    api(`${base}/photos/${photo.id}/file`).then(blob => { if (!active) return; objectUrl = URL.createObjectURL(blob); setUrl(objectUrl); }).catch(() => {});
+    api(fileUrl).then(blob => { if (!active) return; objectUrl = URL.createObjectURL(blob); setUrl(objectUrl); }).catch(() => {});
     return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [base, photo.id]);
+  }, [fileUrl]);
   return <figure className="photo-thumb" data-testid="photo">
     {url ? <a href={url} target="_blank" rel="noopener noreferrer"><img src={url} alt={photo.filename} /></a> : <div className="photo-placeholder">…</div>}
     <figcaption>{photo.author} · {fmt(photo.created_at)}</figcaption>
@@ -139,7 +139,7 @@ function TablePanel({ project, table, user, access, notify, onClose, onChanged }
         <input ref={fileInput} hidden type="file" accept="image/*" capture="environment" multiple aria-label="Zdjęcia stołu" onChange={event => addPhotos(event.target.files)} /></div>}
       <div className="photo-grid">
         {queuedPhotos.map(item => <figure className="photo-thumb pending" key={`q-${item.seq}`}><div className="photo-placeholder">{item.failed ? "błąd wysyłki" : "czeka na wysłanie"}</div><figcaption>{item.name}</figcaption><button type="button" className="danger-button small" onClick={() => discardPhoto(item)}>Odrzuć</button></figure>)}
-        {(photos.data || []).map(photo => <PhotoThumb key={photo.id} base={base} photo={photo} canDelete={canWrite && (access.isManager || photo.uploaded_by === user.id)} onDelete={deletePhoto} />)}
+        {(photos.data || []).map(photo => <PhotoThumb key={photo.id} url={`${base}/photos/${photo.id}/file`} photo={photo} canDelete={canWrite && (access.isManager || photo.uploaded_by === user.id)} onDelete={deletePhoto} />)}
       </div>
       {!queuedPhotos.length && !photos.data?.length && !photos.loading && <p className="hint">Brak zdjęć.</p>}
     </section>

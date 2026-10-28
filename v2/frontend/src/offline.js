@@ -89,6 +89,8 @@ const LABELS = [
   [/\/tables\/\d+\/progress$/, () => "Postęp stołu"],
   [/\/tables\/\d+\/notes\/\d+$/, method => (method === "DELETE" ? "Usunięcie notatki" : "Edycja notatki")],
   [/\/tables\/\d+\/notes$/, () => "Notatka do stołu"],
+  [/\/deliveries(\/\d+)?$/, method => (method === "POST" ? "Dostawa WZ" : method === "DELETE" ? "Usunięcie WZ" : "Edycja WZ")],
+  [/\/worklogs(\/\d+)?$/, method => (method === "POST" ? "Meldunek" : method === "DELETE" ? "Usunięcie meldunku" : "Edycja meldunku")],
 ];
 export function describe(path, method) {
   const found = LABELS.find(([pattern]) => pattern.test(path));
@@ -106,6 +108,7 @@ export async function mutate(path, method, body = {}) {
 }
 
 export const noteClientId = () => `note-${newId()}`;
+export const clientId = prefix => `${prefix}-${newId()}`;
 
 function photoForm(item, file) {
   const form = new FormData();
@@ -115,12 +118,13 @@ function photoForm(item, file) {
   return form;
 }
 
-/** Zdjęcia: online wysyła od razu, bez zasięgu zapisuje bajty w IndexedDB i wyśle później. */
-export async function savePhotos(path, files, label = "Zdjęcie stołu") {
+/** Zdjęcia: online wysyła od razu, bez zasięgu zapisuje bajty w IndexedDB i wyśle później.
+ *  queue=true: od razu do kolejki (np. zdjęcia meldunku, który sam czeka w kolejce — wyślą się po nim). */
+export async function savePhotos(path, files, label = "Zdjęcie stołu", { queue = false } = {}) {
   let sent = 0, queued = 0;
   for (const file of Array.from(files || [])) {
     const item = { kind: "photo", path, clientId: `photo-${newId()}`, name: file.name || "zdjecie.jpg", type: file.type || "image/jpeg", size: file.size, queuedAt: new Date().toISOString(), label };
-    if (online()) {
+    if (online() && !queue) {
       try { await api(path, { method: "POST", body: photoForm(item, file) }); sent += 1; continue; }
       catch (error) { if (!isNetworkError(error)) throw error; }
     }

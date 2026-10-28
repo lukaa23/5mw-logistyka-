@@ -11,9 +11,9 @@ w rejestrze centralnym, który przy SQLite jest osobnym plikiem).
 import re
 import threading
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, MetaData, String, Text, create_engine, event, inspect, text
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, LargeBinary, MetaData, String, Text, create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from .config import IS_POSTGRES, PROJECTS_DIR
@@ -143,6 +143,69 @@ class Photo(ProjectBase):
     id: Mapped[int] = mapped_column(primary_key=True)
     client_id: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
     table_id: Mapped[int] = mapped_column(ForeignKey("site_tables.id", ondelete="CASCADE"), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    mime_type: Mapped[str] = mapped_column(String(100))
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    content: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    uploaded_by: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+# --- logistyka i meldunki (etap 4b) ----------------------------------------------------------------
+
+class Delivery(ProjectBase):
+    """Dostawa na budowę (dokument WZ)."""
+    __tablename__ = "deliveries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
+    delivery_date: Mapped[date] = mapped_column(Date, index=True)
+    wz_number: Mapped[str] = mapped_column(String(100))
+    supplier: Mapped[str] = mapped_column(String(180), default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    updated_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class DeliveryItem(ProjectBase):
+    """Pozycja WZ. material_key wiąże ją z pozycją zapotrzebowania; nazwa/kod/spec to kopia z chwili przyjęcia."""
+    __tablename__ = "delivery_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    delivery_id: Mapped[int] = mapped_column(ForeignKey("deliveries.id", ondelete="CASCADE"), index=True)
+    material_key: Mapped[str] = mapped_column(String(400), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    code: Mapped[str] = mapped_column(String(120), default="")
+    spec: Mapped[str] = mapped_column(String(160), default="")
+    unit: Mapped[str] = mapped_column(String(20), default="szt.")
+    quantity_received: Mapped[float] = mapped_column(Float)
+    quantity_damaged: Mapped[float] = mapped_column(Float, default=0)
+
+
+class WorkLog(ProjectBase):
+    """Meldunek dzienny brygady (z telefonu, także offline)."""
+    __tablename__ = "work_logs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
+    work_date: Mapped[date] = mapped_column(Date, index=True)
+    team: Mapped[str] = mapped_column(String(120))
+    stage: Mapped[str] = mapped_column(Text)
+    people: Mapped[int] = mapped_column(Integer)
+    hours: Mapped[float] = mapped_column(Float)
+    tables_completed: Mapped[float] = mapped_column(Float, default=0)
+    table_id: Mapped[int | None] = mapped_column(ForeignKey("site_tables.id", ondelete="SET NULL"), nullable=True)
+    qc_notes: Mapped[str] = mapped_column(Text, default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    author_id: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class WorkLogPhoto(ProjectBase):
+    __tablename__ = "work_log_photos"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
+    work_log_id: Mapped[int] = mapped_column(ForeignKey("work_logs.id", ondelete="CASCADE"), index=True)
     filename: Mapped[str] = mapped_column(String(255))
     mime_type: Mapped[str] = mapped_column(String(100))
     size: Mapped[int] = mapped_column(Integer, default=0)

@@ -3,7 +3,8 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from collections import defaultdict
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
@@ -18,9 +19,10 @@ from sqlalchemy.orm import Session
 from .config import APP_VERSION, IS_POSTGRES, SERVER_MODE
 from .registry import Membership, Project, RegistryEvent, RegistrySession, User, init_registry, now
 from .security import create_token, decode_token, hash_password, verify_password
-from . import imports, structure, tenancy
+from . import imports, logistics, structure, tenancy
 from .imports import document_dict, suggestion_dict
-from .tenancy import BomItem, CatalogItem, Document, Photo, ProjectEvent, SiteRow, SiteTable, StructureType, Suggestion, TableNote, TorqueSpec, Zone
+from .tenancy import (BomItem, CatalogItem, Delivery, DeliveryItem, Document, Photo, ProjectEvent, SiteRow, SiteTable, StructureType, Suggestion,
+                      TableNote, TorqueSpec, WorkLog, WorkLogPhoto, Zone)
 
 app = FastAPI(title="ASOLAR v2 — wiele budów", version=APP_VERSION)
 
@@ -1093,6 +1095,275 @@ def delete_photo(photo_id: int, access: Access = Depends(project_access)):
         if not access.is_manager and photo.uploaded_by != access.user.id:
             raise HTTPException(403, "Brygadzista może usuwać tylko własne zdjęcia")
         project_event(session, access, "delete", "photo", photo.id, photo.filename)
+        session.delete(photo)
+        session.commit()
+    return {"ok": True}
+
+
+# --- API: dostawy WZ, stan materiałów, meldunki (etap 4b) ------------------------------------------
+
+class DeliveryItemIn(BaseModel):
+    material_key: str = Field(min_length=1, max_length=400)
+    quantity_received: float = Field(gt=0, le=10_000_000)
+    quantity_damaged: float = Field(default=0, ge=0, le=10_000_000)
+
+
+class DeliveryIn(BaseModel):
+    delivery_date: date
+    wz_number: str = Field(min_length=1, max_length=100)
+    supplier: str = Field(default="", max_length=180)
+    note: str = Field(default="", max_length=5000)
+    client_id: str | None = Field(default=None, max_length=80)
+    client_time: datetime | None = None
+    items: list[DeliveryItemIn] = Field(min_length=1, max_length=500)
+
+
+class WorkLogIn(BaseModel):
+    work_date: date
+    team: str = Field(min_length=1, max_length=120)
+    stage: str = Field(min_length=1, max_length=5000)
+    people: int = Field(ge=1, le=1000)
+    hours: float = Field(gt=0, le=24)
+    tables_completed: float = Field(default=0, ge=0, le=100000)
+    table_id: int | None = None
+    qc_notes: str = Field(default="", max_length=10000)
+    note: str = Field(default="", max_length=10000)
+    client_id: str | None = Field(default=None, max_length=80)
+    client_time: datetime | None = None
+
+
+def delivery_dict(item: Delivery, lines: list[DeliveryItem], names: dict):
+    return {"id": item.id, "delivery_date": item.delivery_date, "wz_number": item.wz_number, "supplier": item.supplier, "note": item.note,
+            "created_by": names.get(item.created_by, "—"), "created_at": item.created_at, "updated_by": names.get(item.updated_by) if item.updated_by else None,
+            "updated_at": item.updated_at,
+            "items": [{"material_key": l.material_key, "name": l.name, "code": l.code, "spec": l.spec, "unit": l.unit,
+                       "quantity_received": l.quantity_received, "quantity_damaged": l.quantity_damaged} for l in lines]}
+
+
+def delivery_lines(session, delivery: Delivery, items: list[DeliveryItemIn], known: dict):
+    for line in items:
+        info = known[line.material_key]
+        session.add(DeliveryItem(delivery_id=delivery.id, material_key=line.material_key, name=info["name"], code=info.get("code", ""), spec=info.get("spec", ""),
+                                 unit=info.get("unit", "szt."), quantity_received=line.quantity_received, quantity_damaged=line.quantity_damaged))
+
+
+@app.get("/api/projects/{project_id}/materials")
+def list_materials(access: Access = Depends(project_access)):
+    """Katalog materiałów do wyboru w WZ (z zapotrzebowaniem, jeśli jest)."""
+    with tenancy.project_session(access.project.storage_key) as session:
+        needs = {line["key"]: line["total"] for line in structure.requirements(session)["totals"]}
+        return [{**item, "required": needs.get(key, 0)} for key, item in logistics.catalogue(session).items()]
+
+
+@app.get("/api/projects/{project_id}/stock")
+def material_stock(zone_id: int | None = None, access: Access = Depends(project_access)):
+    with tenancy.project_session(access.project.storage_key) as session:
+        return logistics.stock(session, zone_id)
+
+
+@app.get("/api/projects/{project_id}/deliveries")
+def list_deliveries(access: Access = Depends(project_access)):
+    names = user_names(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        lines = defaultdict(list)
+        for line in session.scalars(select(DeliveryItem).order_by(DeliveryItem.id)).all():
+            lines[line.delivery_id].append(line)
+        items = session.scalars(select(Delivery).order_by(Delivery.delivery_date.desc(), Delivery.id.desc())).all()
+        return [delivery_dict(item, lines[item.id], names) for item in items]
+
+
+@app.post("/api/projects/{project_id}/deliveries")
+def create_delivery(data: DeliveryIn, access: Access = Depends(project_access)):
+    """Przyjęcie WZ (kierownik lub brygadzista, także z kolejki offline — client_id bez duplikatów)."""
+    field_writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        if data.client_id:
+            existing = session.scalar(select(Delivery).where(Delivery.client_id == data.client_id))
+            if existing is not None:
+                return {"id": existing.id, "duplicate": True}
+        try:
+            known = logistics.validate_items(session, data.items)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from None
+        delivery = Delivery(client_id=data.client_id, delivery_date=data.delivery_date, wz_number=data.wz_number.strip(), supplier=data.supplier.strip(),
+                            note=data.note.strip(), created_by=access.user.id, created_at=effective_time(data.client_time))
+        session.add(delivery)
+        session.flush()
+        delivery_lines(session, delivery, data.items, known)
+        project_event(session, access, "create", "delivery", delivery.id, f"WZ {delivery.wz_number} ({len(data.items)} poz.)")
+        session.commit()
+        return {"id": delivery.id}
+
+
+@app.put("/api/projects/{project_id}/deliveries/{delivery_id}")
+def update_delivery(delivery_id: int, data: DeliveryIn, access: Access = Depends(project_access)):
+    """Edycja WZ (kierownik). Pozycje są zastępowane w całości; stan liczy się na bieżąco z pozycji."""
+    writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        delivery = get_or_404(session, Delivery, delivery_id, "Nie znaleziono dostawy (mogła zostać usunięta)")
+        old = session.scalars(select(DeliveryItem).where(DeliveryItem.delivery_id == delivery.id)).all()
+        previous = {l.material_key: {"name": l.name, "code": l.code, "spec": l.spec, "unit": l.unit} for l in old}
+        try:
+            known = logistics.validate_items(session, data.items, previous)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from None
+        before = {l.material_key: [l.quantity_received, l.quantity_damaged] for l in old}
+        for line in old:
+            session.delete(line)
+        session.flush()
+        delivery.delivery_date, delivery.wz_number, delivery.supplier, delivery.note = data.delivery_date, data.wz_number.strip(), data.supplier.strip(), data.note.strip()
+        delivery.updated_by, delivery.updated_at = access.user.id, now()
+        delivery_lines(session, delivery, data.items, known)
+        project_event(session, access, "update", "delivery", delivery.id,
+                      {"wz": delivery.wz_number, "przed": before, "po": {l.material_key: [l.quantity_received, l.quantity_damaged] for l in data.items}})
+        session.commit()
+        return {"id": delivery.id}
+
+
+@app.delete("/api/projects/{project_id}/deliveries/{delivery_id}")
+def delete_delivery(delivery_id: int, access: Access = Depends(project_access)):
+    writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        delivery = get_or_404(session, Delivery, delivery_id, "Nie znaleziono dostawy (mogła zostać już usunięta)")
+        # Pozycje WZ i zdjęcia meldunków usuwa kaskada w bazie (ON DELETE CASCADE).
+        project_event(session, access, "delete", "delivery", delivery.id, f"WZ {delivery.wz_number}")
+        session.delete(delivery)
+        session.commit()
+    return {"ok": True}
+
+
+def worklog_dict(item: WorkLog, names: dict, photos: int = 0):
+    return {"id": item.id, "work_date": item.work_date, "team": item.team, "stage": item.stage, "people": item.people, "hours": item.hours,
+            "manhours": round(item.people * item.hours, 2), "tables_completed": item.tables_completed, "table_id": item.table_id,
+            "qc_notes": item.qc_notes, "note": item.note, "author_id": item.author_id, "author": names.get(item.author_id, "—"),
+            "created_at": item.created_at, "updated_at": item.updated_at, "photos": photos}
+
+
+def check_table(session, table_id):
+    if table_id is not None and session.get(SiteTable, table_id) is None:
+        raise HTTPException(404, "Nie znaleziono stołu wskazanego w meldunku")
+
+
+@app.get("/api/projects/{project_id}/worklogs")
+def list_worklogs(work_date: date | None = None, access: Access = Depends(project_access)):
+    names = user_names(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        query = select(WorkLog).order_by(WorkLog.work_date.desc(), WorkLog.id.desc())
+        if work_date:
+            query = query.where(WorkLog.work_date == work_date)
+        photos = dict(session.execute(select(WorkLogPhoto.work_log_id, func.count(WorkLogPhoto.id)).group_by(WorkLogPhoto.work_log_id)).all())
+        return [worklog_dict(item, names, photos.get(item.id, 0)) for item in session.scalars(query).all()]
+
+
+@app.post("/api/projects/{project_id}/worklogs")
+def create_worklog(data: WorkLogIn, access: Access = Depends(project_access)):
+    field_writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        if data.client_id:
+            existing = session.scalar(select(WorkLog).where(WorkLog.client_id == data.client_id))
+            if existing is not None:
+                return {"id": existing.id, "duplicate": True}
+        check_table(session, data.table_id)
+        item = WorkLog(**data.model_dump(exclude={"client_time"}), author_id=access.user.id, created_at=effective_time(data.client_time))
+        item.team, item.stage = item.team.strip(), item.stage.strip()
+        session.add(item)
+        session.flush()
+        project_event(session, access, "create", "worklog", item.id, f"{item.work_date} · {item.team}")
+        session.commit()
+        return {"id": item.id}
+
+
+@app.patch("/api/projects/{project_id}/worklogs/{worklog_id}")
+def update_worklog(worklog_id: int, data: WorkLogIn, access: Access = Depends(project_access)):
+    field_writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        item = get_or_404(session, WorkLog, worklog_id, "Nie znaleziono meldunku (mógł zostać usunięty)")
+        if not access.is_manager and item.author_id != access.user.id:
+            raise HTTPException(403, "Brygadzista może zmieniać tylko własne meldunki")
+        check_table(session, data.table_id)
+        for field, value in data.model_dump(exclude={"client_id", "client_time"}).items():
+            setattr(item, field, value.strip() if isinstance(value, str) else value)
+        item.updated_at = effective_time(data.client_time)
+        project_event(session, access, "update", "worklog", item.id, f"{item.work_date} · {item.team}")
+        session.commit()
+        return {"ok": True}
+
+
+@app.delete("/api/projects/{project_id}/worklogs/{worklog_id}")
+def delete_worklog(worklog_id: int, access: Access = Depends(project_access)):
+    writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        item = get_or_404(session, WorkLog, worklog_id, "Nie znaleziono meldunku (mógł zostać już usunięty)")
+        project_event(session, access, "delete", "worklog", item.id, f"{item.work_date} · {item.team}")
+        session.delete(item)
+        session.commit()
+    return {"ok": True}
+
+
+def save_worklog_photo(session, access: Access, worklog: WorkLog, file: UploadFile, client_id: str | None, client_time: datetime | None):
+    if client_id:
+        existing = session.scalar(select(WorkLogPhoto).where(WorkLogPhoto.client_id == client_id))
+        if existing is not None:
+            return {"id": existing.id, "duplicate": True}
+    mime = (file.content_type or "").lower()
+    if mime not in PHOTO_TYPES:
+        raise HTTPException(400, "Dozwolone są zdjęcia JPG, PNG, WEBP lub HEIC")
+    content = file.file.read(MAX_PHOTO_BYTES + 1)
+    if len(content) > MAX_PHOTO_BYTES:
+        raise HTTPException(400, f"Zdjęcie większe niż {MAX_PHOTO_BYTES // (1024 * 1024)} MB")
+    photo = WorkLogPhoto(client_id=client_id, work_log_id=worklog.id, filename=Path(file.filename or "zdjecie.jpg").name[:255], mime_type=mime,
+                         size=len(content), content=content, uploaded_by=access.user.id, created_at=effective_time(client_time))
+    session.add(photo)
+    session.flush()
+    project_event(session, access, "create", "worklog-photo", photo.id, f"meldunek {worklog.id}")
+    session.commit()
+    return {"id": photo.id}
+
+
+@app.post("/api/projects/{project_id}/worklogs/{worklog_id}/photos")
+def upload_worklog_photo(worklog_id: int, file: UploadFile = File(...), client_id: str | None = Form(default=None, max_length=80),
+                         client_time: datetime | None = Form(default=None), access: Access = Depends(project_access)):
+    field_writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        worklog = get_or_404(session, WorkLog, worklog_id, "Nie znaleziono meldunku (mógł zostać usunięty)")
+        return save_worklog_photo(session, access, worklog, file, client_id, client_time)
+
+
+@app.post("/api/projects/{project_id}/worklogs/by-client/{worklog_client_id}/photos")
+def upload_worklog_photo_by_client(worklog_client_id: str, file: UploadFile = File(...), client_id: str | None = Form(default=None, max_length=80),
+                                   client_time: datetime | None = Form(default=None), access: Access = Depends(project_access)):
+    """Zdjęcie do meldunku utworzonego offline — telefon zna tylko client_id meldunku (kolejka wysyła meldunek wcześniej)."""
+    field_writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        worklog = session.scalar(select(WorkLog).where(WorkLog.client_id == worklog_client_id))
+        if worklog is None:
+            raise HTTPException(404, "Meldunek tego zdjęcia nie dotarł jeszcze na serwer")
+        return save_worklog_photo(session, access, worklog, file, client_id, client_time)
+
+
+@app.get("/api/projects/{project_id}/worklogs/{worklog_id}/photos")
+def list_worklog_photos(worklog_id: int, access: Access = Depends(project_access)):
+    names = user_names(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        photos = session.scalars(select(WorkLogPhoto).where(WorkLogPhoto.work_log_id == worklog_id).order_by(WorkLogPhoto.id)).all()
+        return [{"id": p.id, "filename": p.filename, "size": p.size, "uploaded_by": p.uploaded_by, "author": names.get(p.uploaded_by, "—"), "created_at": p.created_at} for p in photos]
+
+
+@app.get("/api/projects/{project_id}/worklog-photos/{photo_id}/file")
+def worklog_photo_file(photo_id: int, access: Access = Depends(project_access)):
+    with tenancy.project_session(access.project.storage_key) as session:
+        photo = get_or_404(session, WorkLogPhoto, photo_id, "Nie znaleziono zdjęcia")
+        return Response(photo.content, media_type=photo.mime_type, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.delete("/api/projects/{project_id}/worklog-photos/{photo_id}")
+def delete_worklog_photo(photo_id: int, access: Access = Depends(project_access)):
+    field_writable(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        photo = get_or_404(session, WorkLogPhoto, photo_id, "Nie znaleziono zdjęcia (mogło zostać już usunięte)")
+        if not access.is_manager and photo.uploaded_by != access.user.id:
+            raise HTTPException(403, "Brygadzista może usuwać tylko własne zdjęcia")
+        project_event(session, access, "delete", "worklog-photo", photo.id, photo.filename)
         session.delete(photo)
         session.commit()
     return {"ok": True}

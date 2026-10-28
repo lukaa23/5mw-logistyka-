@@ -135,3 +135,21 @@
   .field-row { flex-direction: column; align-items: stretch; }
   .field-actions button { flex: 1; }
 }
+/* Etap 4b: dostawy WZ, magazyn, meldunki. */
+.wz-line { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: .4rem; align-items: center; margin: .4rem 0; }
+.wz-entry { padding: .7rem 0; border-bottom: 1px solid var(--line); display: grid; gap: .25rem; }
+.wz-entry small { display: block; color: var(--muted); }
+.wz-entry.pending { background: #fff8ea; padding-inline: .5rem; border-radius: 8px; }
+.cell-sub { display: block; color: var(--muted); font-size: .66rem; }
+.grid-table td.negative { color: #9b1c1c; font-weight: 700; }
+.grid-table .progress { margin-top: .25rem; max-width: 180px; }
+.report-entry.pending { border: 1px dashed #e0b260; }
+.pre { white-space: pre-wrap; }
+@media (max-width: 720px) { .wz-line { grid-template-columns: 1fr 1fr; } .wz-line select { grid-column: 1 / -1; } }
+/* Przycisk główny w .card-actions (styl z v1 nadpisywał kolory — przy najechaniu tekst znikał). */
+.card-actions button.primary { background: var(--green-900); border-color: var(--green-900); color: #fff; }
+.card-actions button.primary:hover:not(:disabled) { background: var(--green-700); border-color: var(--green-700); color: #fff; }
+/* Pozycje WZ w wąskiej kolumnie: materiał w osobnym wierszu, ilości pod nim. */
+.wz-line { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+.wz-line select { grid-column: 1 / -1; }
+#wz-form .form-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }

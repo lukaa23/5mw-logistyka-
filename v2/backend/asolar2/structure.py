@@ -35,6 +35,13 @@ def modules_of(code: str) -> int:
     return total
 
 
+def material_key(code: str, name: str, spec: str, unit: str) -> str:
+    """Stały klucz materiału: kod (albo nazwa) + specyfikacja + jednostka, bez wielkości liter.
+    Wiąże pozycje WZ z zapotrzebowaniem niezależnie od typu konstrukcji."""
+    ident = (code or "").strip().lower() or (name or "").strip().lower()
+    return f"{ident}|{(spec or '').strip().lower()}|{(unit or 'szt.').strip().lower()}"[:400]
+
+
 def table_code(prefix: str, number: int) -> str:
     return f"{prefix.strip().upper()}-{int(number)}"
 
@@ -222,8 +229,8 @@ def requirements(session, zone_id: int | None = None) -> dict:
         count = counts.get(structure.id, 0)
         lines = [{"name": b.name, "code": b.code, "spec": b.spec, "unit": b.unit, "per_table": b.quantity, "total": b.quantity * count} for b in bom_by_type[structure.id]]
         for line in lines:
-            key = (line["code"].lower() or line["name"].lower(), line["spec"].lower(), line["unit"])
-            entry = totals.setdefault(key, {"name": line["name"], "code": line["code"], "spec": line["spec"], "unit": line["unit"], "total": 0, "types": []})
+            key = material_key(line["code"], line["name"], line["spec"], line["unit"])
+            entry = totals.setdefault(key, {"key": key, "name": line["name"], "code": line["code"], "spec": line["spec"], "unit": line["unit"], "total": 0, "types": []})
             entry["total"] += line["total"]
             if count:
                 entry["types"].append(structure.code)

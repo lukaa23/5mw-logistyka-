@@ -2,7 +2,7 @@
 
 Nowa, osobna wersja aplikacji. **Nie zastępuje i nie zmienia** wersji 1 (katalogi `app/`, `frontend/`, `desktop/` w głównym folderze repozytorium), która działa dalej pod dotychczasowym adresem.
 
-## Stan: etap 4a z 5 (etap 4 w trzech częściach)
+## Stan: etap 4b z 5 (etap 4 w trzech częściach)
 
 | Etap | Zakres | Stan |
 |---|---|---|
@@ -10,7 +10,7 @@ Nowa, osobna wersja aplikacji. **Nie zastępuje i nie zmienia** wersji 1 (katalo
 | 2 | Wgrywanie wielu PDF naraz, lokalny parser (tabele BOM, teksty z rysunków, wzorce), ekran przeglądu propozycji | **gotowy** |
 | 3 | Zasilenie budowy zatwierdzonymi danymi: strefy, typy konstrukcji, BOM, stoły/słupy, rzędy | **gotowy** |
 | 4a | Praca w terenie: montaż i odbiór QA/QC stołów, notatki, zdjęcia, kolejka offline, service worker | **gotowy** |
-| 4b | Dostawy WZ wobec zapotrzebowania, stan magazynu, meldunki dzienne | planowany |
+| 4b | Dostawy WZ wobec zapotrzebowania, stan magazynu, meldunki dzienne | **gotowy** |
 | 4c | Planimetria, raport dzienny, pulpit postępu | planowany |
 | 5 | Docker/Render (osobna usługa), aplikacja desktopowa, dokumentacja | planowany |
 
@@ -68,6 +68,12 @@ v2/
 - Panel stołu: notatki (edycja/usuwanie — autor albo kierownik) i zdjęcia z aparatu telefonu.
 - Bez zasięgu: zmiany trafiają do kolejki w IndexedDB (zdjęcia jako bajty), są widoczne od razu jako „czeka na wysłanie” i wysyłane automatycznie po powrocie połączenia. client_id zapobiega duplikatom, client_time zachowuje moment wykonania czynności. Widoki pokazują ostatnią zapisaną kopię danych; service worker uruchamia aplikację bez sieci.
 - Stołów z zapisanym postępem, notatkami lub zdjęciami nie można usunąć ani cofnąć ich numeracji.
+
+**Dostawy i meldunki (etap 4b)**
+
+- „Dostawy i magazyn”: przyjęcie WZ (kierownik i brygadzista, także offline), pozycje wybierane z katalogu materiałów budowy (BOM + zatwierdzone komponenty) — dostawa zawsze trafia do bilansu. Edycja i usuwanie WZ: kierownik.
+- Stan materiałów: zapotrzebowanie (BOM × stoły) wobec dostarczonych − uszkodzonych; status komplet / brak / poza zapotrzebowaniem, filtr „tylko braki”.
+- „Meldunki”: dzienny meldunek brygady (prace, osoby, godziny → rbh, stoły, dziennik QA/QC, zdjęcia). Offline: meldunek i jego zdjęcia czekają w kolejce; zdjęcia trafiają do meldunku po jego client_id.
 
 ## Uruchomienie lokalne
 

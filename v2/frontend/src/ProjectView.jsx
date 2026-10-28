@@ -3,14 +3,15 @@ import { api, send } from "./api";
 import { roleLabel } from "./Dashboard";
 import Documents from "./Documents";
 import Fieldwork from "./Fieldwork";
+import { Deliveries, Worklogs } from "./Logistics";
 import { cachedGet } from "./offline";
 import { Constructions, Requirements, Tables } from "./Structure";
 import { AsyncButton, Empty, fmt, Loader, PageHead, useConfirm, useEscape } from "./ui";
 import { useLoad } from "./useLoad";
 
-export const TABS = [["przeglad", "Przegląd"], ["postep", "Postęp prac"], ["dokumenty", "Dokumenty i import"], ["strefy", "Strefy"], ["konstrukcje", "Konstrukcje i BOM"], ["stoly", "Stoły i rzędy"], ["materialy", "Zapotrzebowanie"], ["zespol", "Zespół"], ["ustawienia", "Ustawienia"]];
+export const TABS = [["przeglad", "Przegląd"], ["postep", "Postęp prac"], ["meldunki", "Meldunki"], ["dostawy", "Dostawy i magazyn"], ["dokumenty", "Dokumenty i import"], ["strefy", "Strefy"], ["konstrukcje", "Konstrukcje i BOM"], ["stoly", "Stoły i rzędy"], ["materialy", "Zapotrzebowanie"], ["zespol", "Zespół"], ["ustawienia", "Ustawienia"]];
 const ACTIONS = { create: "utworzył(a)", update: "zmienił(a)", delete: "usunął(ęła)", upload: "wgrał(a)", assign: "przypisał(a)", progress: "zmienił(a) postęp:", review: "rozpatrzył(a)", "review-bulk": "zatwierdził(a) zbiorczo" };
-const ENTITIES = { project: "budowę", zone: "strefę", document: "dokument", suggestion: "propozycję", type: "typ konstrukcji", bom: "pozycję BOM", row: "rząd", tables: "stoły", table: "stół", note: "notatkę", photo: "zdjęcie" };
+const ENTITIES = { project: "budowę", zone: "strefę", document: "dokument", suggestion: "propozycję", type: "typ konstrukcji", bom: "pozycję BOM", row: "rząd", tables: "stoły", table: "stół", note: "notatkę", photo: "zdjęcie", delivery: "dostawę", worklog: "meldunek", "worklog-photo": "zdjęcie meldunku" };
 
 function eventText(event) {
   if (event.action === "analyze") {
@@ -23,7 +24,7 @@ function eventText(event) {
       return <><strong>{event.user}</strong> stół {details["stół"]}: {what}</>;
     } catch { /* starszy format */ }
   }
-  const detail = ["upload", "delete"].includes(event.action) && event.entity === "document" ? ` „${event.details}”` : event.entity === "zone" && event.action !== "update" ? ` „${event.details}”` : "";
+  const detail = ["delivery", "worklog"].includes(event.entity) && !String(event.details).startsWith("{") ? ` ${event.details}` : ["upload", "delete"].includes(event.action) && event.entity === "document" ? ` „${event.details}”` : event.entity === "zone" && event.action !== "update" ? ` „${event.details}”` : "";
   return <><strong>{event.user}</strong> {ACTIONS[event.action] || event.action} {ENTITIES[event.entity] || event.entity}{detail}</>;
 }
 
@@ -148,6 +149,6 @@ export default function ProjectView({ projectId, tab, user, notify, navigate }) 
   return <>
     <PageHead eyebrow={project.archived ? "BUDOWA ZARCHIWIZOWANA" : "BUDOWA"} title={project.name}><span className="badge neutral">{roleLabel(project.role)}</span></PageHead>
     <nav className="view-switch project-tabs" aria-label="Sekcje budowy">{TABS.map(([id, label]) => <button type="button" key={id} className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => navigate(`#/p/${project.id}/${id}`)}>{label}</button>)}</nav>
-    {tab === "postep" ? <Fieldwork {...common} /> : tab === "konstrukcje" ? <Constructions {...common} /> : tab === "stoly" ? <Tables {...common} /> : tab === "materialy" ? <Requirements {...common} /> : tab === "dokumenty" ? <Documents {...common} onChanged={reload} /> : tab === "strefy" ? <Zones {...common} /> : tab === "zespol" ? <Team {...common} /> : tab === "ustawienia" ? <Settings key={`${project.name}|${project.location}|${project.capacity_mw}|${project.description}|${project.archived}`} {...common} onChanged={reload} onDeleted={() => navigate("#/")} /> : <Overview {...common} navigate={navigate} />}
+    {tab === "postep" ? <Fieldwork {...common} /> : tab === "meldunki" ? <Worklogs {...common} /> : tab === "dostawy" ? <Deliveries {...common} /> : tab === "konstrukcje" ? <Constructions {...common} /> : tab === "stoly" ? <Tables {...common} /> : tab === "materialy" ? <Requirements {...common} /> : tab === "dokumenty" ? <Documents {...common} onChanged={reload} /> : tab === "strefy" ? <Zones {...common} /> : tab === "zespol" ? <Team {...common} /> : tab === "ustawienia" ? <Settings key={`${project.name}|${project.location}|${project.capacity_mw}|${project.description}|${project.archived}`} {...common} onChanged={reload} onDeleted={() => navigate("#/")} /> : <Overview {...common} navigate={navigate} />}
   </>;
 }
