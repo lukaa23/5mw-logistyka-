@@ -13,7 +13,7 @@ const path = require("node:path");
 const lib = require("./lib");
 
 const APP_TITLE = "ASOLAR v2 — budowy PV";
-const DEPS_MARKER = ".asolar2-deps-v2";
+const DEPS_MARKER = ".asolar2-deps-v3"; // zmiana przy nowych pakietach Pythona (v3: ezdxf do rysunków DWG/DXF)
 
 let mainWindow = null;
 let serverProcess = null;

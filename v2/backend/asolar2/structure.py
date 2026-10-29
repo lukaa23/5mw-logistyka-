@@ -151,6 +151,21 @@ def apply_suggestion(session, item: Suggestion, user_id: int | None, confirm_onl
             session.flush()
         return f"catalog:{existing.id}"
 
+    if kind == "drawing_block":
+        # Blok z rysunku CAD: liczba wstawień w całym rysunku (nie „na stół”) — trafia do katalogu jako ilość kontrolna.
+        name, count = str(p.get("name", "")).strip(), p.get("count")
+        if not name or count is None:
+            raise ApplyError("Blok z rysunku bez nazwy lub liczby")
+        existing = session.scalar(select(CatalogItem).where(CatalogItem.kind == "block", func.lower(CatalogItem.name) == name.lower()))
+        layers = ", ".join(p.get("layers") or [])
+        if existing is None:
+            existing = CatalogItem(kind="block", name=name, spec=layers[:160], quantity=float(count), source_suggestion_id=item.id)
+            session.add(existing)
+            session.flush()
+        elif existing.source_suggestion_id != item.id and existing.quantity != float(count):
+            raise ApplyError(f"Blok „{name}” jest już w katalogu z liczbą {existing.quantity:g} (inny rysunek). Odrzuć jedną z wersji.")
+        return f"catalog:{existing.id}"
+
     if kind == "torque":
         bolt, low, high = str(p.get("bolt", "")).strip().upper(), float(p.get("min_nm") or 0), float(p.get("max_nm") or 0)
         if not bolt or low <= 0 or high < low:
@@ -207,7 +222,7 @@ def revert_suggestion(session, item: Suggestion):
     elif item.kind == "bom_line":
         for bom in session.scalars(select(BomItem).where(BomItem.source_suggestion_id == sid)).all():
             session.delete(bom)
-    elif item.kind in ("component", "tool"):
+    elif item.kind in ("component", "tool", "drawing_block"):
         for entry in session.scalars(select(CatalogItem).where(CatalogItem.source_suggestion_id == sid)).all():
             session.delete(entry)
     elif item.kind == "torque":

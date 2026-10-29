@@ -31,4 +31,4 @@ if not SECRET:
         raise RuntimeError("Brak zmiennej ASOLAR_SECRET. Wdrożenie serwerowe wymaga własnego, długiego klucza sesji.")
     SECRET = "asolar-v2-local-change-me"
 
-APP_VERSION = "2.0.1"
+APP_VERSION = "2.1.0"

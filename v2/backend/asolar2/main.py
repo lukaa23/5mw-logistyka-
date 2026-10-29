@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from .config import APP_VERSION, IS_POSTGRES, SERVER_MODE
 from .registry import Membership, Project, RegistryEvent, RegistrySession, User, init_registry, now
 from .security import create_token, decode_token, hash_password, verify_password
-from . import imports, logistics, plans, report, structure, tenancy
+from . import cad, imports, logistics, plans, report, structure, tenancy
 from .imports import document_dict, suggestion_dict
 from .tenancy import (BomItem, CatalogItem, Delivery, DeliveryItem, Document, Photo, ProjectEvent, SiteRow, SiteTable, StructureType, Suggestion,
                       TableNote, TorqueSpec, WorkLog, WorkLogPhoto, Zone)
@@ -400,9 +400,12 @@ def upload_documents(background: BackgroundTasks, files: list[UploadFile] = File
             if len(content) > MAX_FILE_BYTES:
                 rejected.append({"filename": name, "reason": f"Plik większy niż {MAX_FILE_BYTES // (1024 * 1024)} MB"})
                 continue
-            if not content.startswith(b"%PDF-"):
-                rejected.append({"filename": name, "reason": "To nie jest plik PDF"})
+            fmt = cad.detect_format(name, content)
+            if not fmt:
+                rejected.append({"filename": name, "reason": "To nie jest plik PDF, DWG ani DXF"})
                 continue
+            if fmt != "pdf" and cad.format_of(name) == "pdf":
+                name = f"{name}.{fmt}"  # rozszerzenie zgodne z zawartością — od niego zależy podgląd i Planimetria
             digest = hashlib.sha256(content).hexdigest()
             existing = session.scalar(select(Document).where(Document.sha256 == digest))
             if existing or any(item.sha256 == digest for item in accepted):
@@ -433,8 +436,11 @@ def document_file(document_id: int, access: Access = Depends(project_access)):
         document = session.get(Document, document_id)
         if not document:
             raise HTTPException(404, "Nie znaleziono dokumentu")
-        return Response(document.content, media_type="application/pdf",
-                        headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(document.filename)}", "Cache-Control": "private, no-store"})
+        fmt = cad.format_of(document.filename)
+        media = {"dwg": "application/acad", "dxf": "image/vnd.dxf"}.get(fmt, "application/pdf")
+        disposition = "inline" if fmt == "pdf" else "attachment"
+        return Response(document.content, media_type=media,
+                        headers={"Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(document.filename)}", "Cache-Control": "private, no-store"})
 
 
 @app.post("/api/projects/{project_id}/documents/{document_id}/reanalyze")
@@ -892,7 +898,7 @@ def list_catalog(access: Access = Depends(project_access)):
     with tenancy.project_session(access.project.storage_key) as session:
         items = session.scalars(select(CatalogItem).order_by(CatalogItem.kind, CatalogItem.name)).all()
         torques = session.scalars(select(TorqueSpec).order_by(TorqueSpec.bolt, TorqueSpec.min_nm)).all()
-        return {"items": [{"id": i.id, "kind": i.kind, "name": i.name, "code": i.code, "spec": i.spec} for i in items],
+        return {"items": [{"id": i.id, "kind": i.kind, "name": i.name, "code": i.code, "spec": i.spec, "quantity": i.quantity} for i in items],
                 "torques": [{"id": t.id, "bolt": t.bolt, "min_nm": t.min_nm, "max_nm": t.max_nm, "context": t.context} for t in torques]}
 
 
@@ -1413,13 +1419,21 @@ def document_plan(document_id: int, page: int = Query(1, ge=1, le=10000), access
     with tenancy.project_session(access.project.storage_key) as session:
         document = document_content(session, document_id)
         tables = {t.code: {"id": t.id, "built": bool(t.built), "qc_checked": bool(t.qc_checked)} for t in session.scalars(select(SiteTable)).all()}
+        fmt = cad.format_of(document.filename)
         try:
-            info = plans.page_info(document.sha256, document.content, page)
+            if fmt in ("dwg", "dxf"):
+                if page != 1:
+                    raise ValueError("Rysunek CAD ma jedną stronę (przestrzeń modelu)")
+                info = cad.plan_info(document.sha256, document.content, fmt)
+            else:
+                info = plans.page_info(document.sha256, document.content, page)
         except ValueError as error:
             raise HTTPException(400, str(error)) from None
+        except cad.CadError as error:
+            raise HTTPException(422, str(error)) from None
         except Exception as error:
-            raise HTTPException(422, f"Nie udało się odczytać strony PDF ({type(error).__name__})") from None
-    return {"document_id": document_id, "page": page, "pages": info["pages"], "width": info["width"], "height": info["height"],
+            raise HTTPException(422, f"Nie udało się odczytać rysunku ({type(error).__name__})") from None
+    return {"document_id": document_id, "format": fmt, "page": page, "pages": info["pages"], "width": info["width"], "height": info["height"],
             "has_text": info["has_text"], "codes_on_page": len(info["codes"]), **plans.markers(info, tables)}
 
 
@@ -1434,6 +1448,21 @@ def document_page_image(document_id: int, page: int, scale: float = Query(2.0, g
         except Exception as error:
             raise HTTPException(422, f"Nie udało się wyrenderować strony PDF ({type(error).__name__})") from None
     return Response(image, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/api/projects/{project_id}/documents/{document_id}/pages/{page}.svg")
+def document_page_svg(document_id: int, page: int, access: Access = Depends(project_access)):
+    """Geometria rysunku CAD (DWG/DXF) jako SVG — w tym samym układzie co pozycje znaczników z /plan."""
+    with tenancy.project_session(access.project.storage_key) as session:
+        document = document_content(session, document_id)
+        fmt = cad.format_of(document.filename)
+        if fmt not in ("dwg", "dxf") or page != 1:
+            raise HTTPException(400, "Obraz SVG jest dostępny dla rysunków DWG/DXF (strona 1)")
+        try:
+            image = cad.render_svg(document.sha256, document.content, fmt)
+        except cad.CadError as error:
+            raise HTTPException(422, str(error)) from None
+    return Response(image, media_type="image/svg+xml", headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.get("/api/projects/{project_id}/dashboard")

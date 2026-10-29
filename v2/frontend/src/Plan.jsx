@@ -9,7 +9,7 @@ import { useLoad } from "./useLoad";
 
 const ZOOMS = [0.5, 0.75, 1, 1.5, 2, 3];
 const STATUS = [["", "Wszystkie"], ["todo", "Do montażu"], ["built", "Zamontowane"], ["qc", "Odebrane"]];
-const hasNumbering = doc => (doc.summary?.suggestions?.numbering ? 1 : 0);
+const hasNumbering = doc => (doc.summary?.suggestions?.numbering ? 1 : 0) + (doc.format === "dwg" || doc.format === "dxf" ? 1 : 0);
 const statusOf = table => (table.qc_checked ? "qc" : table.built ? "built" : "todo");
 
 /** Obraz strony pobrany z nagłówkiem autoryzacji; spóźniona odpowiedź (inna strona) jest ignorowana. */
@@ -43,7 +43,9 @@ export function PlanView({ project, access, user, notify }) {
     .sort((a, b) => (b.category === "rysunek") - (a.category === "rysunek") || hasNumbering(b) - hasNumbering(a) || a.filename.localeCompare(b.filename, "pl"));
   const selected = ready.find(d => String(d.id) === String(docId)) || ready[0];
   const plan = useLoad(() => (selected ? api(`${base}/documents/${selected.id}/plan?page=${page}`) : Promise.resolve(null)), [base, selected?.id, page]);
-  const image = usePageImage(selected ? `${base}/documents/${selected.id}/pages/${page}.png?scale=2` : "");
+  const cadDrawing = selected && (selected.format === "dwg" || selected.format === "dxf");
+  // Rysunek CAD: geometria jako SVG w tym samym układzie co pozycje znaczników; PDF: strona jako PNG.
+  const image = usePageImage(selected ? (cadDrawing ? `${base}/documents/${selected.id}/pages/1.svg` : `${base}/documents/${selected.id}/pages/${page}.png?scale=2`) : "");
   const reloadTables = tables.reload;
   useSynced(useCallback(() => reloadTables(), [reloadTables]));
   // Stan znacznika z bieżącej listy stołów (z niewysłanymi zmianami tego urządzenia), nie z chwili odczytu rysunku.
@@ -62,8 +64,8 @@ export function PlanView({ project, access, user, notify }) {
   return <>
     <section className="card plan-toolbar">
       <div className="filters">
-        <select aria-label="Rysunek" value={selected?.id || ""} onChange={e => { setDocId(e.target.value); setPage(1); }}>{ready.map(d => <option key={d.id} value={d.id}>{d.category === "rysunek" ? "▣ " : ""}{d.filename} ({d.pages} str.)</option>)}</select>
-        <label className="inline-label">Strona<input type="number" min="1" max={selected?.pages || 1} value={page} onChange={e => setPage(Math.min(selected.pages, Math.max(1, Number(e.target.value) || 1)))} /></label>
+        <select aria-label="Rysunek" value={selected?.id || ""} onChange={e => { setDocId(e.target.value); setPage(1); }}>{ready.map(d => <option key={d.id} value={d.id}>{d.category === "rysunek" ? "▣ " : ""}{d.filename} ({d.format === "dwg" || d.format === "dxf" ? d.format.toUpperCase() : `${d.pages} str.`})</option>)}</select>
+{!cadDrawing &&         <label className="inline-label">Strona<input type="number" min="1" max={selected?.pages || 1} value={page} onChange={e => setPage(Math.min(selected.pages, Math.max(1, Number(e.target.value) || 1)))} /></label>}
         <select aria-label="Pokaż stoły" value={filter} onChange={e => setFilter(e.target.value)}>{STATUS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>
         <div className="zoom-buttons" role="group" aria-label="Powiększenie">
           <button type="button" className="secondary" aria-label="Pomniejsz" disabled={zoom <= ZOOMS[0]} onClick={() => setZoom(ZOOMS[Math.max(0, ZOOMS.indexOf(zoom) - 1)])}>−</button>

@@ -139,9 +139,9 @@ export function Constructions({ project, access, notify }) {
     </div>
     {types.loading && !types.data ? <Loader /> : (types.data || []).map(type => <TypeCard key={`${type.id}-${type.posts_per_table}`} type={type} canEdit={canEdit} project={project} notify={notify} reload={reloadAll} nextNumber={nextNumber} />)}
     <div className="split">
-      <section className="card"><div className="card-head"><h2>Komponenty i narzędzia</h2><span className="badge neutral">{items.length}</span></div>
+      <section className="card"><div className="card-head"><h2>Komponenty, narzędzia, bloki z rysunków</h2><span className="badge neutral">{items.length}</span></div>
         {!items.length ? <Empty>Brak — pojawią się po zatwierdzeniu propozycji „Komponenty” i „Narzędzia”.</Empty>
-          : <ul className="plain-list">{items.map(item => <li key={item.id}><span className="badge neutral">{item.kind === "tool" ? "narzędzie" : "komponent"}</span> <strong>{item.name}</strong> <small>{[item.code, item.spec].filter(Boolean).join(" · ")}</small></li>)}</ul>}
+          : <ul className="plain-list">{items.map(item => <li key={item.id}><span className="badge neutral">{item.kind === "tool" ? "narzędzie" : item.kind === "block" ? "blok z rysunku" : "komponent"}</span> <strong>{item.name}</strong>{item.quantity != null && <span className="suggestion-value">{qty(item.quantity)} szt. w rysunku</span>} <small>{[item.code, item.spec].filter(Boolean).join(" · ")}</small></li>)}</ul>}
       </section>
       <section className="card"><div className="card-head"><h2>Momenty dokręcania</h2></div>
         {!catalog.data?.torques?.length ? <Empty>Brak zatwierdzonych momentów.</Empty>

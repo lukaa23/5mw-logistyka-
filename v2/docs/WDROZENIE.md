@@ -53,6 +53,16 @@ cd v2/frontend && npm ci && npm run build
 cd ../desktop && npm ci && npm test && npx electron-builder --win nsis portable
 ```
 
+## Rysunki DWG (konwerter)
+
+DXF jest czytany bezpośrednio (biblioteka `ezdxf`). DWG trzeba najpierw zamienić na DXF zewnętrznym konwerterem — serwer szuka go w kolejności:
+
+1. `ASOLAR_DWG_CONVERTER` — polecenie z `{input}` i `{output}`, np. `dwg2dxf -y -o {output} {input}`,
+2. **ODA File Converter** (bezpłatny, Open Design Alliance; Windows/Linux/macOS) — wykrywany automatycznie,
+3. **LibreDWG** `dwg2dxf` w `PATH`.
+
+Bez konwertera DWG kończy się komunikatem z instrukcją (zapisz jako DXF). W obrazie Docker konwertera nie ma — doinstaluj go we własnym obrazie albo wgrywaj DXF. Aplikacja desktopowa korzysta z konwertera zainstalowanego na komputerze.
+
 ## Aktualizacje schematu bazy
 
 Przy starcie serwer uzupełnia przestrzeń każdej budowy o nowe tabele i kolumny (migracja addytywna). Nie trzeba uruchamiać skryptów ręcznie.

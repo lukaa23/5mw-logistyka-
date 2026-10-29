@@ -3,7 +3,10 @@ import { api, send } from "./api";
 import { AsyncButton, Empty, fmt, Loader, qty, useConfirm, useEscape } from "./ui";
 import { useLoad } from "./useLoad";
 
-/* Etap 2: wiele PDF naraz → lokalny parser → propozycje, które kierownik zatwierdza, poprawia lub odrzuca. */
+/* Etap 2: wiele PDF / DWG / DXF naraz → lokalny parser → propozycje, które kierownik zatwierdza, poprawia lub odrzuca. */
+
+const ACCEPTED = /\.(pdf|dwg|dxf)$/i;
+const isCad = document => document.format === "dwg" || document.format === "dxf";
 
 export const KINDS = [
   ["zone", "Strefy", "Zatwierdzona strefa trafia do zakładki „Strefy”."],
@@ -13,6 +16,7 @@ export const KINDS = [
   ["component", "Komponenty (bez ilości)", "Elementy z tabel bez kolumny ilości."],
   ["tool", "Narzędzia", "Tabele narzędzi montażowych."],
   ["torque", "Momenty dokręcania", "Wartości odczytane z tekstu — sprawdź z instrukcją producenta."],
+  ["drawing_block", "Bloki z rysunków DWG/DXF", "Liczba wstawień bloku w całym rysunku (np. pale, moduły, stoły). Rysunek nie mówi, ile przypada na jeden stół — po zatwierdzeniu liczba trafia do katalogu jako ilość kontrolna dla zapotrzebowania."],
 ];
 const FIELDS = {
   bom_line: [["name", "Nazwa"], ["code", "Kod"], ["spec", "Specyfikacja"], ["quantity", "Ilość", "number"], ["unit", "J.m."], ["group", "Typ konstrukcji"]],
@@ -22,8 +26,9 @@ const FIELDS = {
   zone: [["name", "Nazwa strefy"]],
   numbering: [["prefix", "Prefiks"], ["first", "Od", "number"], ["last", "Do", "number"]],
   torque: [["bolt", "Śruba"], ["min_nm", "Min [N·m]", "number"], ["max_nm", "Max [N·m]", "number"]],
+  drawing_block: [["name", "Nazwa bloku"], ["count", "Liczba w rysunku", "number"]],
 };
-const REQUIRED = { bom_line: ["name"], component: ["name"], tool: ["name"], structure_type: ["code"], zone: ["name"], numbering: ["prefix"], torque: ["bolt"] };
+const REQUIRED = { drawing_block: ["name"], bom_line: ["name"], component: ["name"], tool: ["name"], structure_type: ["code"], zone: ["name"], numbering: ["prefix"], torque: ["bolt"] };
 const STATUS_LABEL ={ nowa: "Do przeglądu", zatwierdzona: "Zatwierdzona", odrzucona: "Odrzucona" };
 const DOC_STATUS = { oczekuje: ["W kolejce", "neutral"], analiza: ["Analiza…", "warning"], gotowy: ["Przeanalizowany", "success"], "błąd": ["Błąd odczytu", "danger"] };
 const CATEGORIES = [["auto", "Rozpoznaj automatycznie"], ["bom", "BOM / zestawienie materiałów"], ["rysunek", "Rysunek / planimetria"], ["instrukcja", "Instrukcja montażu"], ["inne", "Inne"]];
@@ -41,7 +46,8 @@ export function describe(item) {
     case "tool": return { title: p.name, detail: p.spec };
     case "structure_type": return { title: p.code, detail: `moduły na stół: ${p.modules}${p.tables ? ` · liczba stołów wg dokumentu: ${p.tables}` : ""} · ${p.occurrences}× w dokumentach` };
     case "zone": return { title: p.name, detail: `${p.occurrences}× w dokumentach` };
-    case "numbering": return { title: `${p.prefix} ${p.first}–${p.last}`, detail: `${p.count} oznaczeń, np. ${p.example}${p.missing?.length ? ` · brak w zakresie: ${p.missing.slice(0, 12).join(", ")}${p.missing.length > 12 ? "…" : ""}` : ""}` };
+    case "numbering": return { title: `${p.prefix} ${p.first}–${p.last}`, detail: `${p.count} oznaczeń, np. ${p.example}${p.missing?.length ? ` · brak w zakresie: ${p.missing.slice(0, 12).join(", ")}${p.missing.length > 12 ? "…" : ""}` : ""}${p.layers?.length ? ` · warstwy: ${p.layers.join(", ")}` : ""}` };
+    case "drawing_block": return { title: p.name, detail: p.layers?.length ? `warstwy: ${p.layers.join(", ")}` : "", value: `${qty(p.count)} szt. w rysunku` };
     case "torque": return { title: p.bolt, detail: p.context, value: p.min_nm === p.max_nm ? `${qty(p.min_nm)} N·m` : `${qty(p.min_nm)}–${qty(p.max_nm)} N·m` };
     default: return { title: item.key, detail: "" };
   }
@@ -55,11 +61,11 @@ function Upload({ project, notify, onUploaded }) {
   async function upload(list) {
     const files = Array.from(list || []);
     if (!files.length) return;
-    const pdfs = files.filter(file => /\.pdf$/i.test(file.name) || file.type === "application/pdf");
+    const pdfs = files.filter(file => ACCEPTED.test(file.name) || file.type === "application/pdf");
     const skipped = files.length - pdfs.length;
     const tooBig = pdfs.filter(file => file.size > MAX_MB * 1048576);
     const ready = pdfs.filter(file => file.size <= MAX_MB * 1048576);
-    if (skipped) notify(`Pominięto ${skipped} plik(ów) innych niż PDF`, "error");
+    if (skipped) notify(`Pominięto ${skipped} plik(ów) innych niż PDF, DWG lub DXF`, "error");
     if (tooBig.length) notify(`Za duże (powyżej ${MAX_MB} MB): ${tooBig.map(file => file.name).join(", ")}`, "error");
     if (!ready.length) return;
     setBusy(true);
@@ -82,13 +88,13 @@ function Upload({ project, notify, onUploaded }) {
     <div className={`drop-zone ${over ? "over" : ""}`} data-testid="drop-zone"
       onDragOver={event => { event.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
       onDrop={event => { event.preventDefault(); setOver(false); if (!busy) upload(event.dataTransfer.files); }}>
-      <strong>{busy ? "Wysyłanie…" : "Przeciągnij tutaj pliki PDF"}</strong>
+      <strong>{busy ? "Wysyłanie…" : "Przeciągnij tutaj pliki PDF, DWG lub DXF"}</strong>
       <small>BOM, rysunki, planimetrie, instrukcje — wiele plików naraz (do {MAX_MB} MB każdy)</small>
       <button type="button" className="secondary" disabled={busy} onClick={() => input.current?.click()}>Wybierz pliki…</button>
-      <input ref={input} type="file" accept="application/pdf,.pdf" multiple hidden aria-label="Pliki PDF" onChange={event => upload(event.target.files)} />
+      <input ref={input} type="file" accept="application/pdf,.pdf,.dwg,.dxf" multiple hidden aria-label="Pliki PDF, DWG lub DXF" onChange={event => upload(event.target.files)} />
     </div>
     <label>Rodzaj dokumentów (opcjonalnie)<select value={category} onChange={event => setCategory(event.target.value)}>{CATEGORIES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
-    <p className="hint">Analiza działa lokalnie na serwerze aplikacji — pliki nie są wysyłane do usług zewnętrznych. Strony zapisane jako obraz (skany) wymagają OCR, którego ta wersja jeszcze nie wykonuje.</p>
+    <p className="hint">Analiza działa lokalnie na serwerze aplikacji — pliki nie są wysyłane do usług zewnętrznych. Strony zapisane jako obraz (skany) wymagają OCR, którego ta wersja jeszcze nie wykonuje. Rysunki DXF są czytane zawsze; DWG wymaga na serwerze konwertera (ODA File Converter lub LibreDWG) — bez niego zapisz rysunek jako DXF.</p>
   </section>;
 }
 
@@ -100,7 +106,11 @@ function DocumentRow({ document, project, canEdit, notify, onChanged }) {
     try {
       const blob = await api(`/api/projects/${project.id}/documents/${document.id}/file`);
       const url = URL.createObjectURL(blob);
-      window.open(url, "_blank", "noopener");
+      if (isCad(document)) {
+        // DWG/DXF nie otworzy się w przeglądarce — zapis pliku (podgląd rysunku jest w Planimetrii).
+        const link = window.document.createElement("a");
+        link.href = url; link.download = document.filename; link.click();
+      } else window.open(url, "_blank", "noopener");
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (failure) { notify(failure.message, "error"); }
   }
@@ -113,14 +123,14 @@ function DocumentRow({ document, project, canEdit, notify, onChanged }) {
   }
   return <div className="doc-row" data-testid="document-row">
     <div className="doc-main">
-      <strong>{document.filename}</strong>
-      <small>{size(document.size)}{document.pages ? ` · ${document.pages} str.` : ""} · {fmt(document.uploaded_at)}{document.status === "gotowy" ? ` · ${counts} propozycji` : ""}</small>
+      <strong>{document.filename} {isCad(document) && <span className="badge neutral">{document.format.toUpperCase()}</span>}</strong>
+      <small>{size(document.size)}{document.pages && !isCad(document) ? ` · ${document.pages} str.` : ""} · {fmt(document.uploaded_at)}{document.status === "gotowy" ? ` · ${counts} propozycji` : ""}</small>
       {document.error && <small className="doc-warning">{document.error}</small>}
       {(document.warnings || []).map(warning => <small className="doc-warning" key={warning}>⚠ {warning}</small>)}
     </div>
     <span className={`badge ${tone}`}>{label}</span>
     <div className="card-actions">
-      <button type="button" onClick={open}>Otwórz</button>
+      <button type="button" onClick={open}>{isCad(document) ? "Pobierz" : "Otwórz"}</button>
       {canEdit && <AsyncButton onClick={reanalyze} busyLabel="…" disabled={document.status === "analiza" || document.status === "oczekuje"}>Analizuj ponownie</AsyncButton>}
       {canEdit && <button type="button" className="danger-button" onClick={remove}>Usuń</button>}
     </div>
@@ -151,7 +161,9 @@ function SuggestionRow({ item, canEdit, onUpdate }) {
   const info = describe(item);
   const [level, tone] = confidence(item.confidence);
   const conflict = item.payload.conflict;
-  const pages = item.sources.slice(0, 4).map(source => `${source.filename} s. ${source.page}`).join("; ");
+  // Rysunek CAD ma jedną „stronę” (przestrzeń modelu) — numer strony nic nie mówi.
+  const where = source => (/\.(dwg|dxf)$/i.test(source.filename) ? source.filename : `${source.filename} s. ${source.page}`);
+  const pages = item.sources.slice(0, 4).map(where).join("; ");
   async function save(changes) { if (await onUpdate(item, { status: "zatwierdzona", ...(Object.keys(changes).length ? { payload: changes } : {}) })) setEditing(false); }
   return <div className={`suggestion-row status-${item.status}`} data-testid="suggestion-row">
     <div className="suggestion-main">
@@ -266,7 +278,7 @@ function Review({ project, canEdit, notify, suggestions, reload, onChanged }) {
       <input type="search" aria-label="Szukaj w propozycjach" placeholder="Szukaj (nazwa, kod, plik)…" value={query} onChange={event => setQuery(event.target.value)} />
     </div>
     {!canEdit && <p className="hint">Propozycje zatwierdza kierownik budowy. Masz podgląd.</p>}
-    {!all.length && <Empty>Brak propozycji. Wgraj dokumenty PDF — po analizie pojawią się tutaj.</Empty>}
+    {!all.length && <Empty>Brak propozycji. Wgraj dokumenty PDF, DWG lub DXF — po analizie pojawią się tutaj.</Empty>}
     {all.length > 0 && !visible.length && <Empty>Brak propozycji w tym widoku.</Empty>}
     {KINDS.map(([kind, title, hint]) => {
       const items = visible.filter(item => item.kind === kind);

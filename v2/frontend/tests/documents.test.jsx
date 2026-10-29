@@ -107,15 +107,28 @@ describe("dokumenty i przegląd propozycji", () => {
     expect(screen.getByText(/Masz podgląd/)).toBeTruthy();
   });
 
-  it("wgrywa wiele PDF jednym żądaniem i pomija pliki innego typu", async () => {
+  it("wgrywa wiele PDF, DWG i DXF jednym żądaniem i pomija pliki innego typu", async () => {
     show();
     await screen.findByText("montaz.pdf");
-    const files = [new File(["%PDF-1"], "a.pdf", { type: "application/pdf" }), new File(["%PDF-1"], "b.pdf", { type: "application/pdf" }), new File(["x"], "c.docx", { type: "application/msword" })];
-    fireEvent.change(screen.getByLabelText("Pliki PDF"), { target: { files } });
+    const files = [new File(["%PDF-1"], "a.pdf", { type: "application/pdf" }), new File(["AC1032"], "plan.dwg"), new File(["0 SECTION"], "plan.DXF"), new File(["x"], "c.docx", { type: "application/msword" })];
+    fireEvent.change(screen.getByLabelText("Pliki PDF, DWG lub DXF"), { target: { files } });
     await waitFor(() => expect(server.calls.some(call => call.path.includes("/documents?category=auto"))).toBe(true));
     const upload = server.calls.find(call => call.path.includes("/documents?category=auto"));
-    expect(upload.body.getAll("files").map(file => file.name)).toEqual(["a.pdf", "b.pdf"]);
-    expect(notify).toHaveBeenCalledWith("Pominięto 1 plik(ów) innych niż PDF", "error");
+    expect(upload.body.getAll("files").map(file => file.name)).toEqual(["a.pdf", "plan.dwg", "plan.DXF"]);
+    expect(notify).toHaveBeenCalledWith("Pominięto 1 plik(ów) innych niż PDF, DWG lub DXF", "error");
+  });
+
+  it("rysunek DWG: znacznik formatu, „Pobierz” zamiast podglądu, bloki z rysunku w propozycjach", async () => {
+    server.documents.push({ id: 3, filename: "GA.dwg", format: "dwg", size: 419000, status: "gotowy", pages: 1, summary: { suggestions: { drawing_block: 1 } }, warnings: [], error: "", uploaded_at: "2026-10-29T08:00:00" });
+    server.suggestions.push(suggestion(9, "drawing_block", { name: "PALO", count: 2063, layers: ["PALI"] }));
+    show();
+    const row = (await screen.findAllByTestId("document-row")).find(item => item.textContent.includes("GA.dwg"));
+    expect(within(row).getByText("DWG")).toBeTruthy();
+    expect(within(row).getByText("Pobierz")).toBeTruthy();
+    const blocks = await screen.findByTestId("section-drawing_block");
+    expect(within(blocks).getByText("PALO")).toBeTruthy();
+    expect(within(blocks).getByText("2063 szt. w rysunku")).toBeTruthy();
+    expect(within(blocks).getByText("warstwy: PALI")).toBeTruthy();
   });
 
   it("opisuje propozycje czytelnie", () => {

@@ -12,6 +12,7 @@ from collections import defaultdict
 from sqlalchemy import select
 
 from . import tenancy
+from . import cad
 from .pdfparse import PARSER_VERSION, analyze_pdf
 from .tenancy import Document, ProjectEvent, Suggestion, now
 
@@ -29,6 +30,7 @@ EDITABLE = {
     "zone": {"name": str},
     "numbering": {"prefix": str, "first": int, "last": int},
     "torque": {"bolt": str, "min_nm": float, "max_nm": float},
+    "drawing_block": {"name": str, "count": int},
 }
 
 # Analizy wykonujemy po kolei — parser jest ciężki dla CPU, a scalanie propozycji jednej budowy
@@ -48,7 +50,7 @@ def dumps(value) -> str:
 
 
 def document_dict(document: Document) -> dict:
-    return {"id": document.id, "filename": document.filename, "size": document.size, "category": document.category, "status": document.status,
+    return {"id": document.id, "filename": document.filename, "format": cad.format_of(document.filename), "size": document.size, "category": document.category, "status": document.status,
             "pages": document.pages, "summary": loads(document.summary_json, {}), "warnings": loads(document.warnings_json, []), "error": document.error,
             "parser_version": document.parser_version, "uploaded_by": document.uploaded_by, "uploaded_at": document.uploaded_at, "analyzed_at": document.analyzed_at}
 
@@ -154,15 +156,24 @@ def analyze_document(storage_key: str, document_id: int):
                 return
             document.status, document.error = "analiza", ""
             session.commit()
-            content = document.content
+            content, filename = document.content, document.filename
         try:
-            analysis = analyze_pdf(content)
+            fmt = cad.detect_format(filename, content)
+            analysis = cad.analyze_cad(content, filename) if fmt in ("dwg", "dxf") else analyze_pdf(content)
+        except cad.CadError as error:  # np. brak konwertera DWG — komunikat już jest dla użytkownika
+            with tenancy.project_session(storage_key) as session:
+                document = session.get(Document, document_id)
+                if document is not None:
+                    document.status, document.error = "błąd", str(error)
+                    document.analyzed_at, document.parser_version = now(), PARSER_VERSION
+                    session.commit()
+            return
         except Exception as error:  # uszkodzony / zaszyfrowany PDF itp.
             log.warning("Analiza dokumentu %s/%s nie powiodła się: %s", storage_key, document_id, error)
             with tenancy.project_session(storage_key) as session:
                 document = session.get(Document, document_id)
                 if document is not None:
-                    document.status, document.error = "błąd", f"Nie udało się odczytać pliku PDF ({type(error).__name__}: {str(error)[:300]})"
+                    document.status, document.error = "błąd", f"Nie udało się odczytać pliku ({type(error).__name__}: {str(error)[:300]})"
                     document.analyzed_at, document.parser_version = now(), PARSER_VERSION
                     session.commit()
             return

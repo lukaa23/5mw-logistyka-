@@ -27,6 +27,7 @@ v2/
     registry.py   rejestr centralny: konta, budowy, członkostwa (rola per budowa), dziennik
     tenancy.py    izolowana przestrzeń każdej budowy (strefy, dziennik, dokumenty, propozycje)
     pdfparse.py   lokalny parser PDF (pdfplumber) — bez danych wpisanych na sztywno
+    cad.py        rysunki DWG/DXF (ezdxf): teksty z warstw, zliczone bloki, geometria SVG do Planimetrii
     imports.py    analiza w tle, scalanie propozycji z wielu plików, decyzje kierownika
     structure.py  zastosowanie/cofnięcie zatwierdzonych propozycji, zapotrzebowanie materiałów
     logistics.py  katalog materiałów, stan magazynu wobec zapotrzebowania
@@ -87,6 +88,13 @@ v2/
 - „Planimetria”: strona rysunku PDF ze znacznikami stołów w kolorze stanu (do montażu / zamontowany / odebrany). Położenie to współrzędne oznaczeń (np. T.48) z warstwy tekstowej rysunku — nic nie jest zgadywane. Kliknięcie znacznika otwiera panel stołu (notatki, zdjęcia). Rysunek-skan wyświetla się bez znaczników, z wyjaśnieniem.
 - „Przegląd”: pulpit postępu (zamontowane, odebrane, dziś, braki materiałów, montaż z 14 dni) i prognoza zakończenia liczona z dat montażu — tylko przy danych z ≥ 2 dni, zawsze z wypisanymi założeniami.
 - Raport dzienny PDF: liczby dnia, postęp wg stref, zamontowane stoły, meldunki, dziennik QA/QC, notatki, dostawy.
+
+**Rysunki DWG i DXF (2.1.0)**
+
+- W „Dokumenty i import” można wgrywać pliki `.dwg` i `.dxf` razem z PDF (rozpoznawane po zawartości, nie tylko po rozszerzeniu).
+- Z rysunku: teksty i atrybuty bloków z warstw (numeracja stołów z nazwą warstwy, strefy, typy konstrukcji, momenty), bloki z liczbą wstawień (np. pale, moduły — jako ilość kontrolna w katalogu; rysunek nie mówi, ile przypada na stół), geometria i położenie oznaczeń w Planimetrii (SVG).
+- Propozycje trafiają na ten sam ekran przeglądu co z PDF.
+- DXF czytany bezpośrednio. **DWG wymaga konwertera** na serwerze/komputerze: ODA File Converter (bezpłatny), LibreDWG `dwg2dxf` albo własne polecenie w `ASOLAR_DWG_CONVERTER` (szablon z `{input}` i `{output}`). Bez konwertera dokument dostaje komunikat z instrukcją (np. zapisz jako DXF).
 
 ## Uruchomienie lokalne
 

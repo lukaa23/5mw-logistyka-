@@ -36,6 +36,7 @@ beforeEach(async () => {
     if (path.endsWith("/tables")) return json(server.tables);
     if (path.includes("/plan?page=")) return json(server.plan);
     // Bajty zamiast Blob z jsdom — Response z Node 22 nie umie czytać Blob z jsdom.
+    if (path.includes(".svg")) return new Response("<svg xmlns='http://www.w3.org/2000/svg'/>", { headers: { "Content-Type": "image/svg+xml" } });
     if (path.includes(".png")) return new Response(new Uint8Array([137, 80]), { headers: { "Content-Type": "image/png" } });
     if (/\/tables\/\d+\/(notes|photos)$/.test(path)) return json([]);
     if (path.endsWith("/dashboard")) return json({ tables_total: 10, tables_built: 3, tables_qc: 1, built_pct: 30, qc_pct: 10, built_today: 1, materials_missing: 2, materials_required: 5, worklogs_today: 1, manhours_today: 24,
@@ -68,6 +69,19 @@ describe("Planimetria", () => {
     fireEvent.change(screen.getByLabelText("Strona"), { target: { value: "2" } });
     await waitFor(() => expect(server.calls.some(c => c.path.endsWith("/documents/2/plan?page=2"))).toBe(true));
     expect(server.calls.some(c => c.path.endsWith("/documents/2/pages/2.png?scale=2"))).toBe(true);
+  });
+});
+
+describe("Planimetria z rysunku DWG/DXF", () => {
+  it("rysunek CAD: obraz SVG geometrii, bez wyboru strony, znaczniki z tekstów rysunku", async () => {
+    server.documents.push({ id: 4, filename: "GA.dwg", format: "dwg", status: "gotowy", pages: 1, category: "rysunek", summary: { suggestions: { numbering: 1 } } });
+    localStorage.setItem("asolar2_plan_8", "4");
+    render(<DialogProvider><PlanView project={project} access={manager} user={user} notify={notify} /></DialogProvider>);
+    expect(await screen.findAllByTestId("plan-marker")).toHaveLength(2);
+    expect(server.calls.some(c => c.path.endsWith("/documents/4/pages/1.svg"))).toBe(true);
+    expect(server.calls.some(c => c.path.endsWith("/documents/4/plan?page=1"))).toBe(true);
+    expect(screen.queryByLabelText("Strona")).toBeNull();
+    expect(screen.getByRole("option", { name: /GA\.dwg \(DWG\)/ })).toBeTruthy();
   });
 });
 

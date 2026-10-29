@@ -28,6 +28,12 @@ Jedno konto może mieć różne role na różnych budowach. Osoba spoza zespołu
 
 Nic nie trafia do danych budowy bez zatwierdzenia. Aplikacja niczego nie dopowiada — brakujące dane są puste i oznaczone.
 
+## Rysunki DWG i DXF
+
+- Wgraj `.dwg` lub `.dxf` w „Dokumenty i import” (razem z PDF). Plik DWG/DXF nie otworzy się w przeglądarce — przycisk „Pobierz”, a podgląd rysunku jest w zakładce **Planimetria**.
+- Z rysunku powstają propozycje: numeracja stołów (z warstwą, na której jest), strefy, typy konstrukcji, momenty oraz **bloki z liczbą wstawień** (np. `PALO` × 2063). Zatwierdzony blok trafia do katalogu jako ilość kontrolna — porównaj ją z zapotrzebowaniem z BOM.
+- **DWG** wymaga konwertera. Jeśli dokument ma status „Błąd odczytu” z prośbą o konwerter: w AutoCAD lub bezpłatnym DWG TrueView zapisz rysunek jako **DXF** i wgraj plik `.dxf` — albo poproś administratora o instalację ODA File Converter.
+
 ## Struktura budowy
 
 - **Konstrukcje i BOM:** typy stołów, liczba słupów na stół (uzupełnij — inaczej „wymaga potwierdzenia”), ilości BOM na jeden stół.

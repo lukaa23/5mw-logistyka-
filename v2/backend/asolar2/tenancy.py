@@ -75,11 +75,12 @@ class CatalogItem(ProjectBase):
     """Komponenty (bez ilości) i narzędzia z dokumentów."""
     __tablename__ = "catalog_items"
     id: Mapped[int] = mapped_column(primary_key=True)
-    kind: Mapped[str] = mapped_column(String(20))  # component | tool
+    kind: Mapped[str] = mapped_column(String(20))  # component | tool | block (z rysunku CAD)
     name: Mapped[str] = mapped_column(String(255))
     code: Mapped[str] = mapped_column(String(120), default="")
     spec: Mapped[str] = mapped_column(String(160), default="")
     source_suggestion_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quantity: Mapped[float | None] = mapped_column(Float, nullable=True)  # blok z rysunku: liczba wstawień (całość rysunku)
 
 
 class TorqueSpec(ProjectBase):
