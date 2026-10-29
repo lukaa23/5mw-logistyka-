@@ -51,6 +51,7 @@ class StructureType(ProjectBase):
     code: Mapped[str] = mapped_column(String(60), unique=True)
     modules: Mapped[int] = mapped_column(Integer, default=0)
     posts_per_table: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    planned_tables: Mapped[int | None] = mapped_column(Integer, nullable=True)  # liczba stołów tego typu wg BOM (np. „Number of array”)
     description: Mapped[str] = mapped_column(Text, default="")
     source_suggestion_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)

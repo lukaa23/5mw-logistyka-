@@ -52,6 +52,23 @@ def same_item(model, code: str, name: str, spec: str):
     return identity, func.lower(model.spec) == spec.lower()
 
 
+def find_same_bom(session, type_id: int, code: str, name: str, spec: str):
+    """Ta sama pozycja BOM w typie. Bez specyfikacji (np. tabela w instrukcji) porównujemy po nazwie —
+    inaczej „Pole 1” z instrukcji i „Pole 1 / C120…” z BOM policzyłyby się dwa razy."""
+    if code:
+        return session.scalar(select(BomItem).where(BomItem.structure_type_id == type_id, func.lower(BomItem.code) == code.lower()))
+    same_name = session.scalars(select(BomItem).where(BomItem.structure_type_id == type_id, func.lower(BomItem.name) == name.lower())).all()
+    if spec:
+        exact = [b for b in same_name if b.spec.lower() == spec.lower()]
+        if exact:
+            return exact[0]
+        unspecified = [b for b in same_name if not b.spec]
+        return unspecified[0] if unspecified else None
+    if len(same_name) > 1:
+        raise ApplyError(f"Typ ma kilka pozycji „{name}” różniących się specyfikacją — uzupełnij specyfikację (Popraw), żeby wskazać właściwą")
+    return same_name[0] if same_name else None
+
+
 def get_or_create_type(session, code: str, modules: int = 0, source_id: int | None = None) -> StructureType:
     code = normalize_type_code(code)
     item = session.scalar(select(StructureType).where(StructureType.code == code))
@@ -66,7 +83,7 @@ def get_or_create_type(session, code: str, modules: int = 0, source_id: int | No
 
 # --- zastosowanie zatwierdzonej propozycji -------------------------------------------------------
 
-def apply_suggestion(session, item: Suggestion, user_id: int | None) -> str:
+def apply_suggestion(session, item: Suggestion, user_id: int | None, confirm_only: bool = False) -> str:
     """Najpierw walidacja (ApplyError przed jakimkolwiek zapisem), potem zapis. Zwraca applied_ref."""
     p = loads(item.payload_json, {})
     kind = item.kind
@@ -91,6 +108,8 @@ def apply_suggestion(session, item: Suggestion, user_id: int | None) -> str:
         if structure.source_suggestion_id is None:
             # Typ utworzony wcześniej pośrednio (przez pozycję BOM) — teraz zatwierdzony wprost.
             structure.source_suggestion_id = item.id
+        if p.get("tables"):
+            structure.planned_tables = int(p["tables"])
         return f"type:{structure.id}"
 
     if kind == "bom_line":
@@ -102,13 +121,20 @@ def apply_suggestion(session, item: Suggestion, user_id: int | None) -> str:
             raise ApplyError(f"„{name}”: brak ilości")
         structure = session.scalar(select(StructureType).where(StructureType.code == group))
         if structure is not None:
-            identity, same_spec = same_item(BomItem, code, name, spec)
-            clash = session.scalar(select(BomItem).where(BomItem.structure_type_id == structure.id, identity, same_spec))
+            clash = find_same_bom(session, structure.id, code, name, spec)
             if clash is not None and clash.source_suggestion_id != item.id:
-                raise ApplyError(f"Typ {group} ma już pozycję „{clash.name}” w ilości {clash.quantity:g} {clash.unit}. "
-                                 "Odrzuć jedną z wersji albo popraw istniejącą pozycję w zakładce „Konstrukcje i BOM”.")
+                if abs(clash.quantity - float(p["quantity"])) < 1e-9:
+                    # To samo z innego dokumentu (np. BOM i instrukcja) — potwierdzenie, nie druga pozycja.
+                    return f"bom:{clash.id}"
+                raise ApplyError(f"Typ {group} ma już pozycję „{clash.name}”{f' ({clash.spec})' if clash.spec else ''} w ilości {clash.quantity:g} {clash.unit} na stół, "
+                                 f"a ta propozycja podaje {float(p['quantity']):g}. Odrzuć jedną z wersji albo popraw istniejącą pozycję w zakładce „Konstrukcje i BOM”.")
             if clash is not None:
                 return f"bom:{clash.id}"
+        if confirm_only:
+            # Pozycja bez typu przypisana zbiorczo do typu, który ma już BOM: tylko potwierdza istniejące pozycje.
+            # Dodanie jej pod inną nazwą policzyłoby ten sam materiał dwa razy.
+            raise ApplyError(f"„{name}”{f' ({spec})' if spec else ''} nie występuje w BOM typu {group} — nie dodano, żeby nie liczyć materiału dwa razy. "
+                             "Jeśli to brakujący materiał, popraw nazwę na zgodną z BOM albo dodaj pozycję ręcznie w „Konstrukcje i BOM”.")
         structure = structure or get_or_create_type(session, group)
         bom = BomItem(structure_type_id=structure.id, name=name, code=code, spec=spec, quantity=float(p["quantity"]), unit=str(p.get("unit") or "szt."), source_suggestion_id=item.id)
         session.add(bom)
@@ -239,7 +265,7 @@ def requirements(session, zone_id: int | None = None) -> dict:
                 posts_known = False
             else:
                 posts_total += structure.posts_per_table * count
-        per_type.append({"type_id": structure.id, "code": structure.code, "modules": structure.modules, "tables": count, "posts_per_table": structure.posts_per_table,
+        per_type.append({"type_id": structure.id, "code": structure.code, "modules": structure.modules, "tables": count, "planned_tables": structure.planned_tables, "posts_per_table": structure.posts_per_table,
                          "modules_total": structure.modules * count, "bom_missing": not lines, "lines": lines})
     warnings = []
     if without_type:
@@ -247,6 +273,10 @@ def requirements(session, zone_id: int | None = None) -> dict:
     for entry in per_type:
         if entry["tables"] and entry["bom_missing"]:
             warnings.append(f"Typ {entry['code']}: {entry['tables']} stołów, ale brak zatwierdzonego BOM (wymaga potwierdzenia).")
+    for structure in types:
+        assigned = counts.get(structure.id, 0)
+        if zone_id is None and structure.planned_tables and assigned != structure.planned_tables:
+            warnings.append(f"Typ {structure.code}: wg BOM {structure.planned_tables} stołów, w budowie przypisano {assigned} — utwórz lub przypisz stoły (Konstrukcje i BOM → „Utwórz stoły”).")
     if not posts_known:
         warnings.append("Liczba słupów na stół nie jest podana dla wszystkich użytych typów — suma słupów niepełna (wymaga potwierdzenia).")
     return {"types": per_type, "totals": sorted((e for e in totals.values() if e["total"]), key=lambda e: (e["name"].lower(), e["spec"])),

@@ -189,3 +189,9 @@
 .plan-marker.todo { background: rgba(214, 69, 65, .18); }
 .plan-marker.built { background: rgba(240, 173, 40, .28); }
 .plan-marker.qc { background: rgba(31, 132, 82, .28); }
+/* Typ konstrukcji wg BOM: brakujące stoły i przypisanie typu do pozycji bez typu. */
+.create-tables { padding: .6rem; margin-bottom: .8rem; border-radius: 10px; background: #fff8ea; font-size: .78rem; }
+.create-tables input { flex: 0 1 90px; }
+.assign-type { display: flex; flex-wrap: wrap; gap: .4rem .6rem; align-items: center; padding: .6rem; margin: .4rem 0 .6rem; border-radius: 10px; background: #fff8ea; font-size: .78rem; }
+.assign-type select { flex: 0 1 180px; }
+.assign-type .hint { flex-basis: 100%; }

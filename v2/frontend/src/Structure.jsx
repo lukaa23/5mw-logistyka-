@@ -37,7 +37,33 @@ function BomRow({ line, canEdit, onSave, onDelete }) {
     <td className="row-actions">{canEdit && <><button type="button" onClick={() => setForm({ name: line.name, code: line.code, spec: line.spec, quantity: line.quantity, unit: line.unit })}>Edytuj</button><button type="button" className="danger-button" onClick={() => onDelete(line)}>Usuń</button></>}</td></tr>;
 }
 
-function TypeCard({ type, canEdit, project, notify, reload }) {
+/** Brakujące stoły typu wg BOM: liczba z dokumentu, oznaczenia (prefiks, numeracja) wybiera kierownik. */
+function CreateTables({ type, project, notify, reload, nextNumber }) {
+  const missing = Math.max(0, (type.planned_tables || 0) - type.tables);
+  const [prefix, setPrefix] = useState("T");
+  const [chosenFirst, setFirst] = useState("");  // puste = następny wolny numer (liczony z aktualnej listy stołów)
+  const first = chosenFirst === "" ? nextNumber(prefix) : chosenFirst;
+  const [busy, setBusy] = useState(false);
+  if (!missing) return null;
+  const last = Number(first) + missing - 1;
+  async function create(event) {
+    event.preventDefault(); setBusy(true);
+    try {
+      const result = await send(`/api/projects/${project.id}/tables/range`, "POST", { prefix, first: Number(first), last, structure_type_id: type.id });
+      notify(`Utworzono ${result.added} stołów typu ${type.code}${result.skipped ? ` (pominięto ${result.skipped} istniejących oznaczeń — sprawdź numerację)` : ""}`);
+      reload();
+    } catch (failure) { notify(failure.message, "error"); } finally { setBusy(false); }
+  }
+  return <form className="inline-form create-tables" onSubmit={create} aria-label={`Utwórz stoły typu ${type.code}`}>
+    <span>Brakuje <b>{missing}</b> stołów tego typu (wg BOM {type.planned_tables}). Utwórz je jako</span>
+    <input aria-label="Prefiks oznaczeń" required pattern="[A-Za-z]{1,10}" value={prefix} onChange={event => { setPrefix(event.target.value); setFirst(""); }} />
+    <input aria-label="Pierwszy numer" type="number" min="0" required value={first} onChange={event => setFirst(event.target.value)} />
+    <span>… {prefix.toUpperCase()}-{last}</span>
+    <button className="primary" disabled={busy}>{busy ? "Tworzenie…" : `Utwórz ${missing} stołów`}</button>
+  </form>;
+}
+
+function TypeCard({ type, canEdit, project, notify, reload, nextNumber }) {
   const confirm = useConfirm();
   const run = useAction(notify);
   const [posts, setPosts] = useState(type.posts_per_table ?? "");
@@ -66,9 +92,11 @@ function TypeCard({ type, canEdit, project, notify, reload }) {
     <div className="card-head"><h2>{type.code}</h2>{type.from_pdf && <span className="badge neutral">z PDF</span>}<span className="badge neutral">{type.tables} stołów</span>
       {canEdit && <div className="card-actions"><button type="button" className="danger-button" onClick={remove} disabled={type.tables > 0} title={type.tables ? "Typ ma przypisane stoły" : undefined}>Usuń typ</button></div>}</div>
     <dl className="facts"><dt>Moduły na stół</dt><dd>{type.modules || <span className="needs">{NEEDS}</span>}</dd>
+      {type.planned_tables != null && <><dt>Stoły wg BOM</dt><dd>{type.planned_tables}{type.tables !== type.planned_tables && <span className="needs"> (w budowie: {type.tables})</span>}</dd></>}
       <dt>Słupy na stół</dt><dd>{canEdit
         ? <span className="inline-field"><input aria-label={`Słupy na stół ${type.code}`} type="number" min="0" value={posts} placeholder={NEEDS} onChange={event => setPosts(event.target.value)} onBlur={savePosts} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} /></span>
         : type.posts_per_table ?? <span className="needs">{NEEDS}</span>}</dd></dl>
+    {canEdit && <CreateTables type={type} project={project} notify={notify} reload={reload} nextNumber={nextNumber} />}
     {type.bom.length ? <div className="table-scroll"><table className="grid-table"><thead><tr><th>Pozycja</th><th>Kod</th><th>Specyfikacja</th><th className="num">Ilość / stół</th><th>J.m.</th><th /></tr></thead>
       <tbody>{type.bom.map(item => <BomRow key={item.id} line={item} canEdit={canEdit} onSave={saveLine} onDelete={deleteLine} />)}</tbody></table></div>
       : <p className="needs">Brak BOM dla tego typu — {NEEDS} (zatwierdź pozycje z PDF albo dodaj ręcznie).</p>}
@@ -85,6 +113,9 @@ function TypeCard({ type, canEdit, project, notify, reload }) {
 
 export function Constructions({ project, access, notify }) {
   const types = useLoad(() => api(`/api/projects/${project.id}/types`), [project.id]);
+  const tables = useLoad(() => api(`/api/projects/${project.id}/tables`), [project.id]);
+  const nextNumber = prefix => 1 + Math.max(0, ...(tables.data || []).filter(t => t.prefix === prefix.trim().toUpperCase()).map(t => t.number));
+  const reloadAll = () => { types.reload(); tables.reload(); };
   const catalog = useLoad(() => api(`/api/projects/${project.id}/catalog`), [project.id]);
   const run = useAction(notify);
   const [form, setForm] = useState({ code: "", modules: "" });
@@ -106,7 +137,7 @@ export function Constructions({ project, access, notify }) {
           <label>Moduły na stół<input type="number" min="0" placeholder="z oznaczenia" value={form.modules} onChange={event => setForm(c => ({ ...c, modules: event.target.value }))} /></label></div>
         <button className="primary wide" disabled={!form.code.trim()}>Dodaj typ</button></form>}
     </div>
-    {types.loading && !types.data ? <Loader /> : (types.data || []).map(type => <TypeCard key={`${type.id}-${type.posts_per_table}`} type={type} canEdit={canEdit} project={project} notify={notify} reload={types.reload} />)}
+    {types.loading && !types.data ? <Loader /> : (types.data || []).map(type => <TypeCard key={`${type.id}-${type.posts_per_table}`} type={type} canEdit={canEdit} project={project} notify={notify} reload={reloadAll} nextNumber={nextNumber} />)}
     <div className="split">
       <section className="card"><div className="card-head"><h2>Komponenty i narzędzia</h2><span className="badge neutral">{items.length}</span></div>
         {!items.length ? <Empty>Brak — pojawią się po zatwierdzeniu propozycji „Komponenty” i „Narzędzia”.</Empty>

@@ -477,15 +477,16 @@ class SuggestionUpdate(BaseModel):
 class BulkStatus(BaseModel):
     ids: list[int] = Field(min_length=1, max_length=2000)
     status: Literal["nowa", "zatwierdzona", "odrzucona"]
+    group: str | None = Field(default=None, max_length=60)  # typ konstrukcji dla pozycji BOM bez typu
 
 
-def set_status(session, item: Suggestion, status: str, user_id: int, reapply: bool = False):
+def set_status(session, item: Suggestion, status: str, user_id: int, reapply: bool = False, confirm_only: bool = False):
     """Zmiana decyzji z jej skutkami w strukturze budowy. ApplyError = nic nie zostało zmienione."""
     if item.status == "zatwierdzona" and (status != "zatwierdzona" or reapply):
         structure.revert_suggestion(session, item)
         item.applied_ref = ""
     if status == "zatwierdzona" and (item.status != "zatwierdzona" or reapply):
-        item.applied_ref = structure.apply_suggestion(session, item, user_id)
+        item.applied_ref = structure.apply_suggestion(session, item, user_id, confirm_only)
     item.status = status
     item.reviewed_by = user_id if status != "nowa" else None
     item.reviewed_at = now() if status != "nowa" else None
@@ -544,17 +545,27 @@ def bulk_suggestions(data: BulkStatus, access: Access = Depends(project_access))
     with tenancy.project_session(access.project.storage_key) as session:
         items = session.scalars(select(Suggestion).where(Suggestion.id.in_(data.ids)).order_by(Suggestion.id)).all()
         updated, failed = 0, []
+        group = structure.normalize_type_code(data.group) if data.group else ""
+        target = session.scalar(select(StructureType).where(StructureType.code == group)) if group else None
+        confirm_only = target is not None and bool(session.scalar(select(func.count(BomItem.id)).where(BomItem.structure_type_id == target.id)))
         for item in items:
             try:
                 # Każda pozycja w osobnym punkcie zapisu: odmowa jednej nie cofa pozostałych.
                 with session.begin_nested():
-                    set_status(session, item, data.status, access.user.id)
+                    if group and item.kind == "bom_line":
+                        payload = imports.loads(item.payload_json, {})
+                        if payload.get("group") != group:
+                            payload["group"] = group
+                            item.payload_json = imports.dumps(payload)
+                            item.edited = True
+                    set_status(session, item, data.status, access.user.id, reapply=bool(group) and item.kind == "bom_line",
+                               confirm_only=confirm_only and item.kind == "bom_line")
                 updated += 1
             except structure.ApplyError as error:
                 failed.append({"id": item.id, "kind": item.kind, "reason": str(error)})
         imports.recompute_conflicts(session)
         session.add(ProjectEvent(user_id=access.user.id, action="review-bulk", entity="suggestion", entity_id=None,
-                                 details=imports.dumps({"status": data.status, "liczba": updated, "odmowy": len(failed)})))
+                                 details=imports.dumps({"status": data.status, "liczba": updated, "odmowy": len(failed), **({"typ": group} if group else {})})))
         session.commit()
         return {"updated": updated, "failed": failed}
 
@@ -592,6 +603,7 @@ class RangeIn(BaseModel):
     prefix: str = Field(min_length=1, max_length=10, pattern=r"^[A-Za-z]{1,10}$")
     first: int = Field(ge=0, le=100000)
     last: int = Field(ge=0, le=100000)
+    structure_type_id: int | None = None  # nowe stoły od razu z typem (np. liczba stołów z BOM)
 
 
 class AssignIn(BaseModel):
@@ -636,7 +648,7 @@ def list_types(access: Access = Depends(project_access)):
         boms = {}
         for item in session.scalars(select(BomItem).order_by(BomItem.id)).all():
             boms.setdefault(item.structure_type_id, []).append(bom_dict(item))
-        return [{"id": t.id, "code": t.code, "modules": t.modules, "posts_per_table": t.posts_per_table, "description": t.description,
+        return [{"id": t.id, "code": t.code, "modules": t.modules, "posts_per_table": t.posts_per_table, "planned_tables": t.planned_tables, "description": t.description,
                  "from_pdf": t.source_suggestion_id is not None, "tables": counts.get(t.id, 0), "bom": boms.get(t.id, [])}
                 for t in session.scalars(select(StructureType).order_by(StructureType.code)).all()]
 
@@ -810,11 +822,13 @@ def add_tables(data: RangeIn, access: Access = Depends(project_access)):
         raise HTTPException(400, f"Najwyżej {structure.MAX_TABLES_FROM_NUMBERING} stołów naraz")
     prefix = data.prefix.upper()
     with tenancy.project_session(access.project.storage_key) as session:
+        if data.structure_type_id is not None:
+            get_or_404(session, StructureType, data.structure_type_id, "Nie znaleziono typu konstrukcji")
         codes = {structure.table_code(prefix, n): n for n in range(data.first, data.last + 1)}
         existing = set(session.scalars(select(SiteTable.code).where(SiteTable.code.in_(list(codes)))).all())
         for code, number in codes.items():
             if code not in existing:
-                session.add(SiteTable(code=code, prefix=prefix, number=number))
+                session.add(SiteTable(code=code, prefix=prefix, number=number, structure_type_id=data.structure_type_id))
         added = len(codes) - len(existing)
         project_event(session, access, "create", "tables", None, f"{prefix} {data.first}–{data.last} (+{added})")
         session.commit()

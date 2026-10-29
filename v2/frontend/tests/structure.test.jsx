@@ -17,9 +17,9 @@ beforeEach(() => {
   server = {
     calls: [],
     tables: [
-      { id: 1, code: "T-1", zone_id: 5, row_id: null, structure_type_id: 9 },
-      { id: 2, code: "T-2", zone_id: null, row_id: null, structure_type_id: null },
-      { id: 3, code: "T-3", zone_id: null, row_id: null, structure_type_id: null },
+      { id: 1, code: "T-1", prefix: "T", number: 1, zone_id: 5, row_id: null, structure_type_id: 9 },
+      { id: 2, code: "T-2", prefix: "T", number: 2, zone_id: null, row_id: null, structure_type_id: null },
+      { id: 3, code: "T-3", prefix: "T", number: 3, zone_id: null, row_id: null, structure_type_id: null },
     ],
     types: [{ id: 9, code: "1x42", modules: 42, posts_per_table: null, description: "", from_pdf: true, tables: 1, bom: [{ id: 70, name: "Purlin 1", code: "LT1-1450", spec: "J60x30x1.8", quantity: 44, unit: "szt.", from_pdf: true }] }],
     zones: [{ id: 5, name: "Strefa A" }],
@@ -86,6 +86,17 @@ describe("stoły i rzędy", () => {
 });
 
 describe("konstrukcje i BOM", () => {
+  it("typ z liczbą stołów wg BOM tworzy brakujące stoły z wybranym prefiksem", async () => {
+    server.types[0] = { ...server.types[0], planned_tables: 5 };
+    show(<Constructions project={project} access={manager} notify={notify} />);
+    const card = await screen.findByTestId("type-1x42");
+    expect(within(card).getByText(/Brakuje/).textContent).toContain("4");
+    await waitFor(() => expect(within(card).getByLabelText("Pierwszy numer").value).toBe("4"));
+    fireEvent.change(within(card).getByLabelText("Prefiks oznaczeń"), { target: { value: "A" } });
+    fireEvent.click(within(card).getByText("Utwórz 4 stołów"));
+    await waitFor(() => expect(writes()[0]).toEqual({ path: "/api/projects/3/tables/range", method: "POST", body: { prefix: "A", first: 1, last: 4, structure_type_id: 9 } }));
+  });
+
   it("pokazuje brak liczby słupów jako „wymaga potwierdzenia” i zapisuje ją", async () => {
     show(<Constructions project={project} access={manager} notify={notify} />);
     const card = await screen.findByTestId("type-1x42");

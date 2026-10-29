@@ -18,7 +18,7 @@ const FIELDS = {
   bom_line: [["name", "Nazwa"], ["code", "Kod"], ["spec", "Specyfikacja"], ["quantity", "Ilość", "number"], ["unit", "J.m."], ["group", "Typ konstrukcji"]],
   component: [["name", "Nazwa"], ["code", "Kod"], ["spec", "Specyfikacja"]],
   tool: [["name", "Nazwa"], ["spec", "Specyfikacja"]],
-  structure_type: [["code", "Oznaczenie"], ["modules", "Moduły na stół", "number"]],
+  structure_type: [["code", "Oznaczenie"], ["modules", "Moduły na stół", "number"], ["tables", "Liczba stołów", "number"]],
   zone: [["name", "Nazwa strefy"]],
   numbering: [["prefix", "Prefiks"], ["first", "Od", "number"], ["last", "Do", "number"]],
   torque: [["bolt", "Śruba"], ["min_nm", "Min [N·m]", "number"], ["max_nm", "Max [N·m]", "number"]],
@@ -36,10 +36,10 @@ const confidence = value => value >= 0.8 ? ["wysoka", "success"] : value >= 0.6 
 export function describe(item) {
   const p = item.payload;
   switch (item.kind) {
-    case "bom_line": return { title: p.name, detail: [p.code, p.spec].filter(Boolean).join(" · "), value: `${qty(p.quantity)} ${p.unit || "szt."}` };
+    case "bom_line": return { title: p.name, detail: [p.position && `poz. ${p.position}`, p.code, p.spec, p.material].filter(Boolean).join(" · ") + (p.check ? ` · ⚠ ${p.check}` : ""), value: `${qty(p.quantity)} ${p.unit || "szt."}${p.per_table || p.group ? " / stół" : ""}` };
     case "component": return { title: p.name, detail: [p.code, p.spec].filter(Boolean).join(" · ") };
     case "tool": return { title: p.name, detail: p.spec };
-    case "structure_type": return { title: p.code, detail: `moduły na stół: ${p.modules} · ${p.occurrences}× w dokumentach` };
+    case "structure_type": return { title: p.code, detail: `moduły na stół: ${p.modules}${p.tables ? ` · liczba stołów wg dokumentu: ${p.tables}` : ""} · ${p.occurrences}× w dokumentach` };
     case "zone": return { title: p.name, detail: `${p.occurrences}× w dokumentach` };
     case "numbering": return { title: `${p.prefix} ${p.first}–${p.last}`, detail: `${p.count} oznaczeń, np. ${p.example}${p.missing?.length ? ` · brak w zakresie: ${p.missing.slice(0, 12).join(", ")}${p.missing.length > 12 ? "…" : ""}` : ""}` };
     case "torque": return { title: p.bolt, detail: p.context, value: p.min_nm === p.max_nm ? `${qty(p.min_nm)} N·m` : `${qty(p.min_nm)}–${qty(p.max_nm)} N·m` };
@@ -179,15 +179,32 @@ function SuggestionRow({ item, canEdit, onUpdate }) {
   </div>;
 }
 
-function KindSection({ kind, title, hint, items, canEdit, onUpdate, onBulk }) {
+const NO_TYPE = "bez przypisanego typu";
+
+/** Pozycje BOM bez typu (np. z tabel instrukcji): wybór typu i zatwierdzenie jednym kliknięciem. */
+function AssignType({ items, typeOptions, onBulk, onReject }) {
+  const [code, setCode] = useState("");
+  const waiting = items.filter(item => item.status === "nowa");
+  if (!waiting.length) return null;
+  return <div className="assign-type">
+    <span className="needs">Te pozycje nie mają typu konstrukcji — ilość „na stół” nie wiadomo, do którego stołu należy.</span>
+    <select aria-label="Typ dla pozycji bez typu" value={code} onChange={event => setCode(event.target.value)}><option value="">Wybierz typ…</option>{typeOptions.map(option => <option key={option} value={option}>{option}</option>)}</select>
+    <button type="button" className="secondary" disabled={!code} onClick={() => onBulk(waiting, NO_TYPE, code)}>Przypisz {code || "typ"} i zatwierdź ({waiting.length})</button>
+    <button type="button" className="danger-button" onClick={() => onReject(waiting)}>Odrzuć pozycje bez typu ({waiting.length})</button>
+    <small className="hint">Typowo to tabele z instrukcji montażu. Jeśli wybrany typ ma już BOM (np. z zestawienia materiałów), te pozycje tylko go potwierdzą — pozycje, których w BOM nie ma, nie zostaną dodane, żeby nie liczyć materiału dwa razy. Gdy typ nie ma BOM, staną się jego BOM.</small>
+  </div>;
+}
+
+function KindSection({ kind, title, hint, items, canEdit, onUpdate, onBulk, onReject, typeOptions = [] }) {
   const [open, setOpen] = useState(items.length <= 40);
   const groups = useMemo(() => {
     if (kind !== "bom_line") return [["", items]];
     const map = new Map();
-    for (const item of items) { const key = item.payload.group || "bez przypisanego typu"; map.set(key, [...(map.get(key) || []), item]); }
+    for (const item of items) { const key = item.payload.group || NO_TYPE; map.set(key, [...(map.get(key) || []), item]); }
     return [...map.entries()].sort(([a], [b]) => a.localeCompare(b, "pl", { numeric: true }));
   }, [kind, items]);
-  const bulkable = items.filter(item => item.status === "nowa" && !item.payload.conflict);
+  // Zbiorczo tylko to, co da się zastosować: bez rozbieżności i (dla BOM) z typem konstrukcji.
+  const bulkable = items.filter(item => item.status === "nowa" && !item.payload.conflict && (kind !== "bom_line" || item.payload.group));
   return <section className="card suggestion-section" data-testid={`section-${kind}`}>
     <div className="card-head"><h2>{title}</h2><span className="badge neutral">{items.length}</span>
       <div className="card-actions">
@@ -198,6 +215,7 @@ function KindSection({ kind, title, hint, items, canEdit, onUpdate, onBulk }) {
     <p className="hint">{hint}</p>
     {open && groups.map(([group, list]) => <div key={group || "all"}>
       {group && <h3 className="suggestion-group">Typ konstrukcji: {group} <small>({list.length})</small></h3>}
+      {group === NO_TYPE && canEdit && <AssignType items={list} typeOptions={typeOptions} onBulk={onBulk} onReject={onReject} />}
       {list.map(item => <SuggestionRow key={item.id} item={item} canEdit={canEdit} onUpdate={onUpdate} />)}
     </div>)}
   </section>;
@@ -210,6 +228,8 @@ function Review({ project, canEdit, notify, suggestions, reload, onChanged }) {
   const all = suggestions || [];
   const counts = all.reduce((sum, item) => ({ ...sum, [item.status]: (sum[item.status] || 0) + 1 }), {});
   const needle = query.trim().toLowerCase();
+  const types = useLoad(() => api(`/api/projects/${project.id}/types`), [project.id, all.length]);
+  const typeOptions = [...new Set([...(Array.isArray(types.data) ? types.data : []).map(type => type.code), ...all.filter(item => item.kind === "structure_type" && item.status !== "odrzucona").map(item => item.payload.code)])].sort();
   const visible = all.filter(item => (status === "wszystkie" || item.status === status) && (!needle || JSON.stringify(item.payload).toLowerCase().includes(needle) || item.sources.some(source => source.filename.toLowerCase().includes(needle))));
   async function update(item, body) {
     try {
@@ -220,15 +240,25 @@ function Review({ project, canEdit, notify, suggestions, reload, onChanged }) {
       return true;
     } catch (failure) { notify(failure.message, "error"); return false; }
   }
-  async function bulk(items, title) {
-    if (!(await confirm({ title: "Zatwierdzić wszystkie?", message: `Zostanie zatwierdzonych ${items.length} propozycji z sekcji „${title}”. Pozycje z rozbieżnością ilości trzeba rozpatrzyć pojedynczo.`, confirmLabel: `Zatwierdź ${items.length}` }))) return;
+  async function bulk(items, title, group) {
+    const message = group
+      ? `${items.length} pozycji BOM bez typu dostanie typ ${group} (ilości jako „na jeden stół ${group}”) i zostanie zatwierdzonych.`
+      : `Zostanie zatwierdzonych ${items.length} propozycji z sekcji „${title}”. Pozycje z rozbieżnością ilości i pozycje BOM bez typu trzeba rozpatrzyć osobno.`;
+    if (!(await confirm({ title: group ? `Przypisać typ ${group}?` : "Zatwierdzić wszystkie?", message, confirmLabel: `Zatwierdź ${items.length}` }))) return;
     try {
-      const result = await send(`/api/projects/${project.id}/suggestions/bulk`, "POST", { ids: items.map(item => item.id), status: "zatwierdzona" });
-      notify(`Zatwierdzono ${result.updated} propozycji`);
+      const result = await send(`/api/projects/${project.id}/suggestions/bulk`, "POST", { ids: items.map(item => item.id), status: "zatwierdzona", ...(group ? { group } : {}) });
+      notify(group ? `Typ ${group}: zatwierdzono ${result.updated} pozycji` : `Zatwierdzono ${result.updated} propozycji`);
       if (result.failed?.length) notify(`Pominięto ${result.failed.length}: ${result.failed.slice(0, 3).map(item => item.reason).join(" · ")}${result.failed.length > 3 ? " …" : ""}`, "error");
       await reload(); onChanged?.();
     }
     catch (failure) { notify(failure.message, "error"); }
+  }
+  async function rejectAll(items) {
+    if (!(await confirm({ title: "Odrzucić pozycje bez typu?", message: `${items.length} pozycji BOM bez typu konstrukcji zostanie odrzuconych. Decyzję można cofnąć w widoku „Odrzucone”.`, danger: true, confirmLabel: `Odrzuć ${items.length}` }))) return;
+    try {
+      const result = await send(`/api/projects/${project.id}/suggestions/bulk`, "POST", { ids: items.map(item => item.id), status: "odrzucona" });
+      notify(`Odrzucono ${result.updated} pozycji`); await reload(); onChanged?.();
+    } catch (failure) { notify(failure.message, "error"); }
   }
   return <>
     <div className="toolbar review-toolbar">
@@ -240,7 +270,7 @@ function Review({ project, canEdit, notify, suggestions, reload, onChanged }) {
     {all.length > 0 && !visible.length && <Empty>Brak propozycji w tym widoku.</Empty>}
     {KINDS.map(([kind, title, hint]) => {
       const items = visible.filter(item => item.kind === kind);
-      return items.length ? <KindSection key={`${kind}-${status}`} kind={kind} title={title} hint={hint} items={items} canEdit={canEdit} onUpdate={update} onBulk={bulk} /> : null;
+      return items.length ? <KindSection key={`${kind}-${status}`} kind={kind} title={title} hint={hint} items={items} canEdit={canEdit} onUpdate={update} onBulk={bulk} onReject={rejectAll} typeOptions={typeOptions} /> : null;
     })}
     {all.length > 0 && <p className="hint">Nic nie trafia do danych budowy bez zatwierdzenia. Cofnięcie decyzji usuwa utworzone dane, o ile nie są już używane.</p>}
   </>;

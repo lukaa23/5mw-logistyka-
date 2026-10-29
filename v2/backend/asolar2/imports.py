@@ -25,7 +25,7 @@ EDITABLE = {
     "bom_line": {"name": str, "code": str, "spec": str, "quantity": float, "unit": str, "group": str},
     "component": {"name": str, "code": str, "spec": str},
     "tool": {"name": str, "spec": str},
-    "structure_type": {"code": str, "modules": int},
+    "structure_type": {"code": str, "modules": int, "tables": int},
     "zone": {"name": str},
     "numbering": {"prefix": str, "first": int, "last": int},
     "torque": {"bolt": str, "min_nm": float, "max_nm": float},

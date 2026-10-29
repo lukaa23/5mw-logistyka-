@@ -123,3 +123,36 @@ describe("dokumenty i przegląd propozycji", () => {
     expect(describeItem({ kind: "numbering", payload: { prefix: "T", first: 1, last: 55, count: 53, example: "T-1", missing: [7, 9] } }).detail).toContain("brak w zakresie: 7, 9");
   });
 });
+
+describe("pozycje BOM bez typu", () => {
+  it("nie wchodzą do „Zatwierdź wszystkie”; można im przypisać typ zbiorczo", async () => {
+    server.suggestions.push(
+      suggestion(6, "bom_line", { name: "Pole 1", code: "", spec: "", quantity: 11, unit: "szt.", group: "" }),
+      suggestion(7, "bom_line", { name: "Pole 2", code: "", spec: "", quantity: 11, unit: "szt.", group: "" }),
+      suggestion(8, "structure_type", { code: "2x26", modules: 52, tables: 157, occurrences: 1 }),
+    );
+    render(<DialogProvider><Documents project={project} access={manager} notify={notify} /></DialogProvider>);
+    const bom = await screen.findByTestId("section-bom_line");
+    expect(within(bom).getByText("Zatwierdź wszystkie (2)")).toBeTruthy();
+    expect(screen.getByText(/liczba stołów wg dokumentu: 157/)).toBeTruthy();
+    const select = await within(bom).findByLabelText("Typ dla pozycji bez typu");
+    await within(select).findByRole("option", { name: "2x26" });
+    fireEvent.change(select, { target: { value: "2x26" } });
+    fireEvent.click(within(bom).getByText("Przypisz 2x26 i zatwierdź (2)"));
+    fireEvent.click(await screen.findByText("Zatwierdź 2"));
+    await waitFor(() => expect(server.calls.some(call => call.path.endsWith("/bulk"))).toBe(true));
+    expect(JSON.parse(server.calls.find(call => call.path.endsWith("/bulk")).body)).toEqual({ ids: [6, 7], status: "zatwierdzona", group: "2x26" });
+  });
+});
+
+describe("odrzucanie pozycji bez typu", () => {
+  it("jednym kliknięciem z potwierdzeniem", async () => {
+    server.suggestions.push(suggestion(6, "bom_line", { name: "Pole 1", code: "", spec: "", quantity: 11, unit: "szt.", group: "" }));
+    render(<DialogProvider><Documents project={project} access={manager} notify={notify} /></DialogProvider>);
+    const bom = await screen.findByTestId("section-bom_line");
+    fireEvent.click(within(bom).getByText("Odrzuć pozycje bez typu (1)"));
+    fireEvent.click(await screen.findByText("Odrzuć 1"));
+    await waitFor(() => expect(server.calls.some(call => call.path.endsWith("/bulk"))).toBe(true));
+    expect(JSON.parse(server.calls.find(call => call.path.endsWith("/bulk")).body)).toEqual({ ids: [6], status: "odrzucona" });
+  });
+});
