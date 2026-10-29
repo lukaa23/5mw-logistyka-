@@ -58,7 +58,7 @@ cd ../desktop && npm ci && npm test && npx electron-builder --win nsis portable
 DXF jest czytany bezpośrednio (biblioteka `ezdxf`). DWG trzeba najpierw zamienić na DXF zewnętrznym konwerterem — serwer szuka go w kolejności:
 
 1. `ASOLAR_DWG_CONVERTER` — polecenie z `{input}` i `{output}`, np. `dwg2dxf -y -o {output} {input}`,
-2. **ODA File Converter** (bezpłatny, Open Design Alliance; Windows/Linux/macOS) — wykrywany automatycznie,
+2. **ODA File Converter** (bezpłatny, Open Design Alliance; Windows/Linux/macOS) — wykrywany automatycznie, także w folderze z numerem wersji (np. `C:\Program Files\ODA\ODAFileConverter 27.9.0`); sprawdzony na rysunkach AutoCAD 2018 (AC1032),
 3. **LibreDWG** `dwg2dxf` w `PATH`.
 
 Bez konwertera DWG kończy się komunikatem z instrukcją (zapisz jako DXF). W obrazie Docker konwertera nie ma — doinstaluj go we własnym obrazie albo wgrywaj DXF. Aplikacja desktopowa korzysta z konwertera zainstalowanego na komputerze.

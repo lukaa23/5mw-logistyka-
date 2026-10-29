@@ -10,7 +10,6 @@ aplikacja nie udaje, że odczytała rysunek. Wyniki trafiają do tego samego ekr
 """
 from __future__ import annotations
 
-import io
 import os
 import re
 import shlex
@@ -33,8 +32,11 @@ DWG_MAGIC = re.compile(rb"^AC10\d\d")
 CONVERT_TIMEOUT = 180
 MAX_INSERTS_EXPANDED = 20000      # rozwijanie bloków (teksty i geometria wewnątrz) — ochrona przed ogromnymi rysunkami
 MAX_PRIMITIVES = 250000
+MAX_POINTS = 600000               # budżet punktów SVG (ok. 10 MB) — duże rysunki są upraszczane
 SVG_SIZE = 10000.0                # dłuższy bok viewBox SVG
 TEXT_TYPES = ("TEXT", "MTEXT", "ATTRIB")
+# Nazwy nadawane automatycznie przez AutoCAD przy kopiuj–wklej jako blok (np. „A$Cd2c4f12b”) — to nie komponenty.
+AUTO_BLOCK = re.compile(r"^A\$C[0-9A-Fa-f]{8}$")
 
 
 class CadError(Exception):
@@ -77,10 +79,28 @@ def find_converter() -> tuple[str, list[str] | str] | None:
         found = shutil.which(name)
         if found:
             return "oda", found
+    installed = installed_oda()
+    if installed:
+        return "oda", installed
     found = shutil.which("dwg2dxf")
     if found:
         return "libredwg", found
     return None
+
+
+def installed_oda() -> str | None:
+    """ODA File Converter instaluje się do folderu z numerem wersji (np. „ODAFileConverter 27.9.0”) —
+    domyślne wyszukiwanie ezdxf go nie znajduje. Bierzemy najnowszą wersję."""
+    roots = [Path(os.environ.get(name, "")) / "ODA" for name in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)") if os.environ.get(name)]
+    roots += [Path("/usr/bin"), Path("/opt/ODAFileConverter"), Path("/Applications/ODAFileConverter.app/Contents/MacOS")]
+    candidates = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        candidates += list(root.glob("ODAFileConverter*/ODAFileConverter.exe")) + list(root.glob("ODAFileConverter.exe")) + list(root.glob("ODAFileConverter"))
+    files = [path for path in candidates if path.is_file()]
+    version = lambda path: tuple(int(part) for part in re.findall(r"\d+", path.parent.name)) or (0,)
+    return str(max(files, key=version)) if files else None
 
 
 MISSING_CONVERTER = ("Plik DWG wymaga konwertera, którego nie ma na tym serwerze. Najprościej: w AutoCAD/DWG TrueView "
@@ -125,30 +145,26 @@ def dwg_to_dxf(content: bytes) -> bytes:
 
 
 def load_document(content: bytes, fmt: str):
+    """Plik DXF czyta ezdxf sam (kodowanie, sekcje binarne, DXF binarny). Uszkodzony plik — tryb naprawy."""
     data = dwg_to_dxf(content) if fmt == "dwg" else content
+    with tempfile.NamedTemporaryFile(suffix=".dxf", delete=False) as handle:
+        handle.write(data)
+        temp = handle.name
     try:
-        if data.startswith(b"AutoCAD Binary DXF"):
-            with tempfile.NamedTemporaryFile(suffix=".dxf", delete=False) as handle:
-                handle.write(data)
-                temp = handle.name
-            try:
-                return ezdxf.readfile(temp)
-            finally:
-                os.unlink(temp)
-        return ezdxf.read(io.StringIO(data.decode(_encoding(data), errors="replace")))
+        try:
+            return ezdxf.readfile(temp)
+        except ezdxf.DXFStructureError:
+            from ezdxf import recover
+            doc, auditor = recover.readfile(temp)
+            if auditor.has_errors:
+                raise CadError(f"Rysunek DXF jest uszkodzony ({len(auditor.errors)} błędów struktury) — zapisz go ponownie w programie CAD.")
+            return doc
     except CadError:
         raise
     except Exception as error:
         raise CadError(f"Nie udało się odczytać rysunku DXF ({type(error).__name__}: {str(error)[:200]}).") from None
-
-
-def _encoding(data: bytes) -> str:
-    match = re.search(rb"\$DWGCODEPAGE\s*\r?\n\s*3\s*\r?\n\s*(\S+)", data[:20000])
-    version = re.search(rb"\$ACADVER\s*\r?\n\s*1\s*\r?\n\s*AC(\d{4})", data[:20000])
-    if version and int(version.group(1)) >= 1021:
-        return "utf-8"  # od AutoCAD 2007 DXF jest w UTF-8
-    codepage = match.group(1).decode().lower() if match else ""
-    return {"ansi_1250": "cp1250", "ansi_1252": "cp1252", "ansi_1251": "cp1251"}.get(codepage, "utf-8")
+    finally:
+        os.unlink(temp)
 
 
 def cached_document(sha: str, content: bytes, fmt: str):
@@ -167,9 +183,28 @@ def _text_of(entity) -> str:
         return ""
 
 
+def blocks_with_text(doc) -> set[str]:
+    """Bloki, które (bezpośrednio lub przez zagnieżdżone bloki) zawierają teksty — tylko te warto rozwijać."""
+    direct, children = set(), {}
+    for block in doc.blocks:
+        kinds = [entity.dxftype() for entity in block]
+        if any(kind in ("TEXT", "MTEXT") for kind in kinds):
+            direct.add(block.name)
+        children[block.name] = {entity.dxf.name for entity in block if entity.dxftype() == "INSERT"}
+    result, changed = set(direct), True
+    while changed:
+        changed = False
+        for name, inner in children.items():
+            if name not in result and inner & result:
+                result.add(name)
+                changed = True
+    return result
+
+
 def iter_texts(msp):
     """(tekst, warstwa, x, y, wysokość) z przestrzeni modelu, atrybutów bloków i tekstów wewnątrz bloków."""
     expanded = 0
+    with_text = blocks_with_text(msp.doc)
     for entity in msp:
         kind = entity.dxftype()
         if kind in ("TEXT", "MTEXT"):
@@ -177,15 +212,28 @@ def iter_texts(msp):
         elif kind == "INSERT":
             for attrib in getattr(entity, "attribs", []):
                 yield from _text_record(attrib, attrib.dxf.layer or entity.dxf.layer)
-            if expanded < MAX_INSERTS_EXPANDED:
+            # Rozwijamy tylko bloki z tekstami (np. drzewa czy śruby bez opisu pomijamy — oszczędza czas).
+            if expanded < MAX_INSERTS_EXPANDED and entity.dxf.name in with_text:
                 expanded += 1
-                try:
-                    for inner in entity.virtual_entities():
-                        if inner.dxftype() in ("TEXT", "MTEXT"):
-                            layer = inner.dxf.layer if inner.dxf.layer not in ("0", "") else entity.dxf.layer
-                            yield from _text_record(inner, layer)
-                except Exception:
-                    continue
+                yield from _texts_in_insert(entity, entity.dxf.layer, with_text, depth=0)
+
+
+def _texts_in_insert(insert, layer, with_text, depth):
+    """Teksty z wnętrza bloku, także z bloków zagnieżdżonych (np. tabliczka z numerem w bloku stołu)."""
+    try:
+        inner_entities = list(insert.virtual_entities())
+    except Exception:
+        return
+    for inner in inner_entities:
+        kind = inner.dxftype()
+        own_layer = inner.dxf.layer if inner.dxf.layer not in ("0", "") else layer
+        if kind in ("TEXT", "MTEXT"):
+            yield from _text_record(inner, own_layer)
+        elif kind == "INSERT" and depth < 3:
+            for attrib in getattr(inner, "attribs", []):
+                yield from _text_record(attrib, attrib.dxf.layer or own_layer)
+            if inner.dxf.name in with_text:
+                yield from _texts_in_insert(inner, own_layer, with_text, depth + 1)
 
 
 def _text_record(entity, layer):
@@ -205,7 +253,7 @@ def block_counts(doc) -> list[dict]:
     counts, layers = Counter(), defaultdict(Counter)
     for insert in doc.modelspace().query("INSERT"):
         name = insert.dxf.name
-        if not name or name.startswith("*") or name.startswith("_"):
+        if not name or name.startswith("*") or name.startswith("_") or AUTO_BLOCK.match(name):
             continue
         block = doc.blocks.get(name)
         if block is not None and (block.block.is_xref or block.block.is_xref_overlay):
@@ -265,10 +313,51 @@ def analyze_cad(content: bytes, filename: str) -> Analysis:
 # --- Planimetria: geometria i położenie oznaczeń ---------------------------------------------------
 
 def _extents(doc):
-    box = ezdxf_bbox.extents(doc.modelspace(), fast=True)
-    if not box.has_data or box.size.x <= 0 or box.size.y <= 0:
+    """Kadr rysunku: obszar, w którym leży niemal cała zawartość. Pojedyncze obiekty daleko poza budową
+    (np. punkt odniesienia w 0,0 przy współrzędnych geodezyjnych) nie mogą zmniejszyć rysunku do kropki."""
+    cache = ezdxf_bbox.Cache()
+    block_boxes: dict[str, object] = {}
+    centers = []
+    for entity in doc.modelspace():
+        if entity.dxftype() == "INSERT":
+            box = _insert_box(doc, entity, block_boxes, cache)
+        else:
+            box = ezdxf_bbox.extents([entity], fast=True, cache=cache)
+        if box is not None and box.has_data:
+            centers.append(((box.extmin.x + box.extmax.x) / 2, (box.extmin.y + box.extmax.y) / 2, box))
+    if not centers:
         raise CadError("Rysunek nie zawiera geometrii w przestrzeni modelu.")
-    return box.extmin.x, box.extmin.y, box.extmax.x, box.extmax.y
+    if len(centers) >= 50:
+        xs, ys = sorted(c[0] for c in centers), sorted(c[1] for c in centers)
+        low, high = int(len(xs) * 0.005), int(len(xs) * 0.995) - 1
+        core = (xs[low], ys[low], xs[high], ys[high])
+        margin_x, margin_y = (core[2] - core[0]) * 0.05 or 1, (core[3] - core[1]) * 0.05 or 1
+        keep = [c[2] for c in centers if core[0] - margin_x <= c[0] <= core[2] + margin_x and core[1] - margin_y <= c[1] <= core[3] + margin_y]
+    else:
+        keep = [c[2] for c in centers]
+    min_x = min(b.extmin.x for b in keep); min_y = min(b.extmin.y for b in keep)
+    max_x = max(b.extmax.x for b in keep); max_y = max(b.extmax.y for b in keep)
+    if max_x - min_x <= 0 or max_y - min_y <= 0:
+        raise CadError("Rysunek nie zawiera geometrii w przestrzeni modelu.")
+    return min_x, min_y, max_x, max_y
+
+
+def _insert_box(doc, insert, block_boxes, cache):
+    """Obrys wstawienia bloku: obrys definicji bloku liczony raz na blok i przekształcony macierzą wstawienia
+    (setki drzew czy śrub nie są rozwijane osobno)."""
+    name = insert.dxf.name
+    if name not in block_boxes:
+        block = doc.blocks.get(name)
+        block_boxes[name] = ezdxf_bbox.extents(block, fast=True, cache=cache) if block is not None else None
+    local = block_boxes[name]
+    if local is None or not local.has_data:
+        return None
+    try:
+        matrix = insert.matrix44()
+        corners = [matrix.transform((x, y, 0)) for x in (local.extmin.x, local.extmax.x) for y in (local.extmin.y, local.extmax.y)]
+    except Exception:
+        return None
+    return ezdxf_bbox.BoundingBox(corners)
 
 
 def plan_info(sha: str, content: bytes, fmt: str) -> dict:
@@ -332,12 +421,13 @@ def render_svg(sha: str, content: bytes, fmt: str) -> bytes:
         min_x, min_y, max_x, max_y = _extents(doc)
         scale = SVG_SIZE / max(max_x - min_x, max_y - min_y)
         view_w, view_h = (max_x - min_x) * scale, (max_y - min_y) * scale
-        tolerance = max(max_x - min_x, max_y - min_y) / 4000
+        tolerance = max(max_x - min_x, max_y - min_y) / 2500
+        points_total = 0
         by_color: dict[str, list[str]] = defaultdict(list)
         texts = []
         count = 0
         for entity in _primitives(doc):
-            if count >= MAX_PRIMITIVES:
+            if count >= MAX_PRIMITIVES or points_total >= MAX_POINTS:
                 break
             kind = entity.dxftype()
             if kind in ("TEXT", "MTEXT"):
@@ -354,6 +444,10 @@ def render_svg(sha: str, content: bytes, fmt: str) -> bytes:
                 points = list(sub.flattening(tolerance))
                 if len(points) < 2:
                     continue
+                # Poza kadrem (odległe obiekty) — nie rysujemy.
+                if all(p.x < min_x or p.x > max_x or p.y < min_y or p.y > max_y for p in points):
+                    continue
+                points_total += len(points)
                 coords = " L".join(f"{(p.x - min_x) * scale:.1f},{(max_y - p.y) * scale:.1f}" for p in points)
                 by_color[_color(doc, entity)].append(f"M{coords}")
                 count += 1

@@ -206,3 +206,49 @@ class RealDwgTest(unittest.TestCase):
         result = cad.analyze_cad(Path(os.environ["ASOLAR_TEST_DWG"]).read_bytes(), "real.dwg")
         self.assertEqual(result.pages, 1)
         self.assertTrue(result.suggestions or result.warnings)
+
+
+class CadRealWorldFixesTest(unittest.TestCase):
+    """Poprawki po testach na prawdziwych rysunkach (ODA, bloki z kopiuj-wklej, odległe obiekty)."""
+
+    def test_oda_found_in_versioned_install_folder(self):
+        root = Path(tempfile.mkdtemp(prefix="asolar2-pf-"))
+        for version in ("26.4.0", "27.9.0"):
+            folder = root / "ODA" / f"ODAFileConverter {version}"
+            folder.mkdir(parents=True)
+            (folder / "ODAFileConverter.exe").write_bytes(b"MZ")
+        with mock.patch.dict(os.environ, {"ProgramFiles": str(root), "ProgramW6432": str(root)}):
+            found = cad.installed_oda()
+        self.assertTrue(found.endswith(os.path.join("ODAFileConverter 27.9.0", "ODAFileConverter.exe")))
+
+    def test_autocad_copy_paste_blocks_are_not_components(self):
+        doc = ezdxf.new("R2018")
+        doc.blocks.new("A$Cd2c4f12b")
+        doc.blocks.new("TRK 56 tipo S")
+        msp = doc.modelspace()
+        msp.add_blockref("A$Cd2c4f12b", (0, 0))
+        for index in range(3):
+            msp.add_blockref("TRK 56 tipo S", (index * 10, 0))
+        self.assertEqual([(b["name"], b["count"]) for b in cad.block_counts(doc)], [("TRK 56 tipo S", 3)])
+
+    def test_far_away_object_does_not_shrink_the_drawing(self):
+        doc = ezdxf.new("R2018")
+        msp = doc.modelspace()
+        for index in range(100):
+            msp.add_line((index, 0), (index, 10))
+        msp.add_point((1_000_000, 1_000_000))  # np. punkt odniesienia daleko od budowy
+        min_x, min_y, max_x, max_y = cad._extents(doc)
+        self.assertLess(max_x - min_x, 200)
+        self.assertLess(max_y - min_y, 200)
+
+    def test_blocks_with_text_are_expanded_for_labels_only(self):
+        doc = ezdxf.new("R2018")
+        tree = doc.blocks.new("ALBERO")
+        tree.add_circle((0, 0), 1)
+        tag = doc.blocks.new("TARGA")
+        tag.add_text("T-7", dxfattribs={"height": 1})
+        outer = doc.blocks.new("STOL")
+        outer.add_blockref("TARGA", (0, 0))
+        self.assertEqual(cad.blocks_with_text(doc) & {"ALBERO", "TARGA", "STOL"}, {"TARGA", "STOL"})
+        doc.modelspace().add_blockref("STOL", (5, 5))
+        self.assertEqual([t[0] for t in cad.iter_texts(doc.modelspace())], ["T-7"])
