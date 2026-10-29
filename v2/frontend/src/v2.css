@@ -1,14 +1,18 @@
-/* ASOLAR v2 — układ bez bocznego menu: górny pasek z przełącznikiem budów. */
-.app-shell.v2 { display: block; }
-.v2-topbar { left: 0 !important; display: flex; align-items: center; gap: 1rem; padding: 0 clamp(1rem, 3vw, 2.4rem); }
-.v2-topbar .home-link { display: flex; align-items: center; gap: .55rem; border: 0; background: none; cursor: pointer; color: var(--green-900); }
-.v2-topbar .project-select { flex: 1 1 260px; max-width: 420px; }
-.v2-topbar .project-select select { width: 100%; }
-.top-links { display: flex; gap: .3rem; margin-left: auto; }
-.top-links button { border: 0; background: none; padding: .55rem .8rem; border-radius: 8px; font-weight: 700; color: var(--muted); cursor: pointer; }
-.top-links button.active { background: var(--green-50); color: var(--green-900); }
-.v2-content { margin-left: 0 !important; padding-top: 96px; max-width: 1240px; margin-inline: auto !important; }
-.project-tabs { margin: 0 0 1.2rem; flex-wrap: wrap; }
+/* ASOLAR v2 — rama jak w v1 (panel boczny, górny pasek z aktywną budową, dolny pasek na telefonie),
+ * ale obszar roboczy na całą szerokość i wysokość okna: mniej marginesów, więcej danych na ekranie. */
+.content { max-width: none; padding: 1rem clamp(.9rem, 1.6vw, 1.6rem) 1.4rem; }
+.page-head { min-height: 0; margin-bottom: .9rem; }
+.page-head h1 { font-size: clamp(1.25rem, 2vw, 1.65rem); }
+.card { padding: 1rem 1.1rem; }
+.split { gap: .9rem; margin: .9rem 0; }
+.sidebar .logo { border: 0; border-bottom: 1px solid rgba(255,255,255,.1); background: none; color: inherit; width: 100%; text-align: left; cursor: pointer; font: inherit; }
+.sidebar nav { overflow-y: auto; min-height: 0; padding: .8rem 0; gap: .1rem; }
+.sidebar nav button { padding: .62rem .8rem; cursor: pointer; }
+.sidebar nav button:disabled { opacity: .35; cursor: default; }
+.sidebar-foot .logout { cursor: pointer; }
+.topbar .mobile-logo { border: 0; background: none; cursor: pointer; color: var(--green-900); }
+.topbar .project-select select { max-width: 520px; font-size: .9rem; }
+.connection { border: 0; cursor: pointer; }
 .project-stats { display: flex; flex-wrap: wrap; gap: .4rem .9rem; font-size: .72rem; color: var(--muted); margin: .4rem 0 .8rem; }
 .project-stats b { color: var(--green-900); }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: .4rem 1rem; margin: 0 0 1rem; font-size: .82rem; }
@@ -20,11 +24,8 @@
 .zone-row.editing { display: grid; grid-template-columns: 1fr 1fr auto; padding: .6rem; border-radius: 10px; }
 .new-project { width: min(560px, 100%); }
 @media (max-width: 720px) {
-  .v2-topbar { flex-wrap: wrap; height: auto !important; padding: .5rem 16px; gap: .5rem; }
-  .v2-topbar .project-select { order: 3; flex-basis: 100%; max-width: none; }
-  .top-links { margin-left: auto; }
-  .v2-content { padding-top: 140px; }
   .zone-row.editing { grid-template-columns: 1fr; }
+  .content { padding-bottom: calc(80px + env(safe-area-inset-bottom)); }
 }
 /* Etap 2: dokumenty PDF i przegląd propozycji. */
 .drop-zone { display: grid; justify-items: center; gap: .45rem; padding: 1.6rem 1rem; margin-bottom: 1rem; border: 2px dashed var(--line); border-radius: 12px; text-align: center; background: var(--green-50); transition: border-color .15s, background .15s; }
@@ -266,4 +267,23 @@
   .queue-row { grid-template-columns: 1fr auto; }
   .queue-progress { grid-column: 1 / -1; }
   .doc-item { grid-template-columns: 1fr; }
+}
+
+/* Pełne wykorzystanie ekranu: listy i podglądy rosną z oknem zamiast stałych limitów. */
+@media (min-width: 1400px) {
+  .field-list { grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); }
+  .split.wide-left { grid-template-columns: minmax(0, 3fr) minmax(300px, 1fr); }
+  .type-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.table-chips { max-height: calc(100vh - 300px); grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+.plan-scroll { max-height: calc(100vh - 250px); min-height: 420px; }
+.review-preview { top: 84px; }
+.preview-frame { max-height: calc(100vh - 190px); }
+.review-grid { grid-template-columns: minmax(0, 1.25fr) minmax(380px, 1fr); }
+.table-scroll { max-height: calc(100vh - 260px); overflow: auto; }
+.grid-table thead th { position: sticky; top: 0; z-index: 1; }
+@media (max-width: 900px) {
+  .table-chips, .plan-scroll, .preview-frame, .table-scroll { max-height: none; }
+  .plan-scroll { min-height: 300px; max-height: 70vh; }
+  .review-grid { grid-template-columns: 1fr; }
 }

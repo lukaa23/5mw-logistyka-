@@ -58,7 +58,7 @@ export function PlanView({ project, access, user, notify }) {
     try { await send(`${base}/documents/${selected.id}`, "PATCH", { category: "rysunek" }); notify(`„${selected.filename}” oznaczony jako rysunek`); documents.reload(); } catch (failure) { notify(failure.message, "error"); }
   }
   if (documents.loading && !documents.data) return <Loader />;
-  if (!ready.length) return <Empty>Brak przeanalizowanych dokumentów PDF. Wgraj rysunek (planimetrię) w zakładce „Dokumenty i import”.</Empty>;
+  if (!ready.length) return <Empty>Brak przeanalizowanych dokumentów PDF. Wgraj rysunek (planimetrię) w zakładce „Dokumenty”.</Empty>;
   const counts = { todo: 0, built: 0, qc: 0 };
   (plan.data?.markers || []).forEach(m => { const t = byId.get(m.table_id); if (t) counts[statusOf(t)] += 1; });
   return <>

@@ -130,7 +130,7 @@ export function Constructions({ project, access, notify }) {
       <section className="card"><h2>Typy konstrukcji</h2>
         <p className="hint">Typy i ilości BOM na jeden stół pochodzą z zatwierdzonych propozycji PDF albo z ręcznego wpisu. Puste pola to dane do potwierdzenia — aplikacja niczego nie dopowiada.</p>
         {types.error && <div className="alert error" role="alert">{types.error}</div>}
-        {!types.loading && !types.data?.length && <Empty>Brak typów. Zatwierdź typy z zakładki „Dokumenty i import” albo dodaj typ ręcznie.</Empty>}
+        {!types.loading && !types.data?.length && <Empty>Brak typów. Zatwierdź typy z zakładki „Dokumenty” albo dodaj typ ręcznie.</Empty>}
       </section>
       {canEdit && <form className="card" onSubmit={create}><h2>Nowy typ konstrukcji</h2>
         <div className="form-grid"><label>Oznaczenie<input required placeholder="np. 1x28" value={form.code} onChange={event => setForm(c => ({ ...c, code: event.target.value }))} /></label>
@@ -243,7 +243,7 @@ export function Tables({ project, access, notify }) {
         </>}
       </div>}
       {tables.error && <div className="alert error" role="alert">{tables.error}</div>}
-      {tables.loading && !tables.data ? <Loader /> : !all.length ? <Empty>Brak stołów. Zatwierdź numerację z PDF (zakładka „Dokumenty i import”) albo dodaj zakres ręcznie.</Empty>
+      {tables.loading && !tables.data ? <Loader /> : !all.length ? <Empty>Brak stołów. Zatwierdź numerację z PDF (zakładka „Dokumenty”) albo dodaj zakres ręcznie.</Empty>
         : <div className="table-chips">{visible.map(t => {
           const missing = !t.structure_type_id || !t.zone_id;
           return <button type="button" key={t.id} data-testid="table-chip" className={`table-chip ${selected.has(t.id) ? "selected" : ""} ${missing ? "incomplete" : ""}`} aria-pressed={selected.has(t.id)} disabled={!canEdit}

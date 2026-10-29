@@ -12,6 +12,11 @@ ASOLAR v2 obsługuje wiele budów PV. Każda budowa ma własną, odizolowaną pr
 
 Jedno konto może mieć różne role na różnych budowach. Osoba spoza zespołu budowy jej nie widzi.
 
+## Ekran aplikacji (jak w v1)
+
+- **Panel boczny** (po lewej): Pulpit, Budowy, Postęp prac, Meldunki, Zapotrzebowanie, Dostawy na budowę, Mapa / Planimetria, Dokumenty oraz ustawienia budowy (Stoły i rzędy, Konstrukcje i BOM, Strefy, Zespół, Ustawienia budowy). Na telefonie — pasek na dole ekranu.
+- **Górny pasek:** „Aktywna budowa” — wybierz inną farmę z listy, a aplikacja zostanie w tym samym widoku. Obok wskaźnik **Online/Offline** z liczbą niewysłanych zmian (kliknij, aby je zobaczyć lub wysłać).
+
 ## Pierwsze kroki
 
 1. **Zaloguj się.** Pierwsze konto to `kierownik` (lokalnie hasło `Asolar2026!`; na serwerze hasło ustawione przy wdrożeniu). Od razu zmień hasło w zakładce **Konta**.

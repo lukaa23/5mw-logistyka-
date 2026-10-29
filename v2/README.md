@@ -89,6 +89,12 @@ v2/
 - „Przegląd”: pulpit postępu (zamontowane, odebrane, dziś, braki materiałów, montaż z 14 dni) i prognoza zakończenia liczona z dat montażu — tylko przy danych z ≥ 2 dni, zawsze z wypisanymi założeniami.
 - Raport dzienny PDF: liczby dnia, postęp wg stref, zamontowane stoły, meldunki, dziennik QA/QC, notatki, dostawy.
 
+**Interfejs jak w v1, pełny ekran (2.3.0)**
+
+- Rama identyczna z v1: ciemny panel boczny z nawigacją (Pulpit, Budowy, Postęp prac, Meldunki, Zapotrzebowanie, Dostawy na budowę, Mapa / Planimetria, Dokumenty, …), górny pasek „Aktywna budowa” z przełącznikiem i wskaźnikiem połączenia (Online/Offline + liczba niewysłanych zmian), dolny pasek na telefonie.
+- Nawigacja działa na aktywnej budowie (otwartej, ostatnio używanej lub pierwszej); przełącznik zmienia budowę i zostawia ten sam widok.
+- Obszar roboczy na całą szerokość okna (bez limitu 1240/1600 px), mniejsze marginesy; listy, tabele (z przyklejonym nagłówkiem), Planimetria i podgląd dokumentów rosną z wysokością okna.
+
 **Uproszczony import dokumentów (2.2.0)**
 
 - Trzy kafelki rodzajów (BOM / rysunki i schematy / instrukcje) z przeciągnij-i-upuść i „Wybierz pliki z dysku”, osobny pasek postępu dla każdego pliku.

@@ -50,7 +50,7 @@ function DeliveryForm({ materials, initial, onSubmit, onCancel }) {
     })}
     <button type="button" className="secondary" onClick={() => setForm(c => ({ ...c, items: [...c.items, { material_key: "", quantity_received: "", quantity_damaged: "" }] }))}>+ Pozycja</button>
     <label>Uwagi<textarea rows="2" value={form.note} onChange={e => setForm(c => ({ ...c, note: e.target.value }))} /></label>
-    {!materials.length && <p className="needs">Katalog materiałów jest pusty — najpierw zatwierdź BOM lub komponenty (zakładka „Dokumenty i import”).</p>}
+    {!materials.length && <p className="needs">Katalog materiałów jest pusty — najpierw zatwierdź BOM lub komponenty (zakładka „Dokumenty”).</p>}
     <div className="card-actions"><button className="primary" disabled={busy || !materials.length}>{busy ? "Zapisywanie…" : initial ? "Zapisz WZ" : "Przyjmij dostawę"}</button>{onCancel && <button type="button" className="secondary" onClick={onCancel}>Anuluj</button>}</div>
   </form>;
 }

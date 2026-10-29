@@ -10,7 +10,7 @@ import { Constructions, Requirements, Tables } from "./Structure";
 import { AsyncButton, Empty, fmt, Loader, PageHead, useConfirm, useEscape } from "./ui";
 import { useLoad } from "./useLoad";
 
-export const TABS = [["przeglad", "Przegląd"], ["postep", "Postęp prac"], ["planimetria", "Planimetria"], ["meldunki", "Meldunki"], ["dostawy", "Dostawy i magazyn"], ["dokumenty", "Dokumenty i import"], ["strefy", "Strefy"], ["konstrukcje", "Konstrukcje i BOM"], ["stoly", "Stoły i rzędy"], ["materialy", "Zapotrzebowanie"], ["zespol", "Zespół"], ["ustawienia", "Ustawienia"]];
+export const TABS = [["przeglad", "Pulpit"], ["postep", "Postęp prac"], ["planimetria", "Mapa / Planimetria"], ["meldunki", "Meldunki"], ["dostawy", "Dostawy na budowę"], ["dokumenty", "Dokumenty"], ["strefy", "Strefy"], ["konstrukcje", "Konstrukcje i BOM"], ["stoly", "Stoły i rzędy"], ["materialy", "Zapotrzebowanie"], ["zespol", "Zespół"], ["ustawienia", "Ustawienia budowy"]];
 const ACTIONS = { create: "utworzył(a)", update: "zmienił(a)", delete: "usunął(ęła)", upload: "wgrał(a)", assign: "przypisał(a)", progress: "zmienił(a) postęp:", review: "rozpatrzył(a)", "review-bulk": "zatwierdził(a) zbiorczo" };
 const ENTITIES = { project: "budowę", zone: "strefę", document: "dokument", suggestion: "propozycję", type: "typ konstrukcji", bom: "pozycję BOM", row: "rząd", tables: "stoły", table: "stół", note: "notatkę", photo: "zdjęcie", delivery: "dostawę", worklog: "meldunek", "worklog-photo": "zdjęcie meldunku" };
 
@@ -148,8 +148,7 @@ export default function ProjectView({ projectId, tab, user, notify, navigate }) 
   const access = { role: project.role, isManager: project.role === "kierownik" };
   const common = { project, access, user, notify };
   return <>
-    <PageHead eyebrow={project.archived ? "BUDOWA ZARCHIWIZOWANA" : "BUDOWA"} title={project.name}><span className="badge neutral">{roleLabel(project.role)}</span></PageHead>
-    <nav className="view-switch project-tabs" aria-label="Sekcje budowy">{TABS.map(([id, label]) => <button type="button" key={id} className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => navigate(`#/p/${project.id}/${id}`)}>{label}</button>)}</nav>
+    <PageHead eyebrow={`${project.archived ? "BUDOWA ZARCHIWIZOWANA" : project.name.toUpperCase()}`} title={TABS.find(([id]) => id === tab)?.[1] || project.name}><span className="badge neutral">{roleLabel(project.role)}</span></PageHead>
     {tab === "postep" ? <Fieldwork {...common} /> : tab === "planimetria" ? <PlanView {...common} /> : tab === "meldunki" ? <Worklogs {...common} /> : tab === "dostawy" ? <Deliveries {...common} /> : tab === "konstrukcje" ? <Constructions {...common} /> : tab === "stoly" ? <Tables {...common} /> : tab === "materialy" ? <Requirements {...common} /> : tab === "dokumenty" ? <Documents {...common} onChanged={reload} /> : tab === "strefy" ? <Zones {...common} /> : tab === "zespol" ? <Team {...common} /> : tab === "ustawienia" ? <Settings key={`${project.name}|${project.location}|${project.capacity_mw}|${project.description}|${project.archived}`} {...common} onChanged={reload} onDeleted={() => navigate("#/")} /> : <Overview {...common} navigate={navigate} />}
   </>;
 }

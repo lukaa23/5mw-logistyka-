@@ -34,15 +34,15 @@ export default function SyncStatus({ notify }) {
     return () => { window.removeEventListener("online", up); window.removeEventListener("offline", down); window.removeEventListener("asolar2:queue", queue); window.removeEventListener("asolar2:synced", synced); };
   }, [notify]);
   useEffect(() => { if (open) pendingItems().then(setItems); }, [open, counts]);
-  const total = counts.pending + counts.failed;
-  if (online && !total) return null;
-  const label = !online ? `Offline${total ? ` · ${total} do wysłania` : ""}` : counts.failed ? `${counts.failed} błąd wysyłki` : `${counts.pending} do wysłania`;
   async function discard(item) {
     if (!(await confirm({ title: "Odrzucić tę zmianę?", message: `${item.label} — zmiana nie trafi na serwer.`, danger: true, confirmLabel: "Odrzuć" }))) return;
     await discardQueued(item.seq);
   }
   return <div className="sync-status">
-    <button type="button" className={`sync-pill ${!online ? "offline" : counts.failed ? "failed" : "pending"}`} onClick={() => setOpen(value => !value)} aria-expanded={open}>{label}</button>
+    {/* Jak wskaźnik połączenia w v1: kropka stanu, liczba niewysłanych zmian, błędy wysyłki. */}
+    <button type="button" className={`connection ${online ? "online" : "offline"} ${counts.failed ? "has-failed" : ""}`} onClick={() => setOpen(value => !value)} aria-expanded={open}
+      title="Synchronizacja" aria-label={`${online ? "Online" : "Offline"}${counts.pending ? `, ${counts.pending} do wysłania` : ""}${counts.failed ? `, ${counts.failed} błędów wysyłki` : ""}`}>
+      <i />{online ? "Online" : "Offline"}{counts.pending > 0 && <b>{counts.pending}</b>}{counts.failed > 0 && <b className="failed">!{counts.failed}</b>}</button>
     {open && <div className="sync-panel card" role="dialog" aria-label="Niewysłane zmiany">
       <h3>Niewysłane zmiany</h3>
       {!online && <p className="hint">Brak połączenia. Zmiany są bezpieczne w pamięci tego urządzenia i zostaną wysłane automatycznie.</p>}

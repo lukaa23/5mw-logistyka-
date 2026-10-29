@@ -96,13 +96,16 @@ describe("przełączanie budów", () => {
     await screen.findByText("Strefa Momo B");
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 120)); });
     expect(screen.queryByText("Strefa Kalisz A")).toBeNull();
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Farma Momo");
+    // Jak w v1: nagłówek = sekcja, nad nim nazwa aktywnej budowy.
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Strefy");
+    expect(screen.getByText("FARMA MOMO")).toBeTruthy();
+    expect(screen.queryByText("FARMA KALISZ")).toBeNull();
   });
 
   it("wybór w przełączniku przechodzi do tej samej zakładki innej budowy", async () => {
     const navigate = vi.fn();
     render(<ProjectSwitcher route={{ view: "project", projectId: 1, tab: "zespol" }} navigate={navigate} refreshKey={0} />);
-    await screen.findByText("Farma Momo");
+    await screen.findByText(/Farma Momo/);
     fireEvent.change(screen.getByLabelText("Przełącz budowę"), { target: { value: "2" } });
     expect(navigate).toHaveBeenCalledWith("#/p/2/zespol");
     fireEvent.change(screen.getByLabelText("Przełącz budowę"), { target: { value: "" } });
@@ -158,6 +161,25 @@ describe("aplikacja", () => {
     await waitFor(() => expect(screen.getAllByTestId("project-card")).toHaveLength(2));
     fireEvent.click(within(screen.getAllByTestId("project-card")[1]).getByText("Otwórz"));
     await waitFor(() => expect(window.location.hash).toBe("#/p/2/przeglad"));
-    await screen.findByRole("heading", { level: 1, name: "Farma Momo" });
+    await screen.findByRole("heading", { level: 1, name: "Pulpit" });
+    expect(screen.getByText("FARMA MOMO")).toBeTruthy();
+  });
+
+  it("rama jak w v1: panel boczny z nawigacją aktywnej budowy, przełącznik, wskaźnik połączenia", async () => {
+    localStorage.setItem("asolar2_token", "t");
+    localStorage.setItem("asolar2_user", JSON.stringify(admin));
+    localStorage.setItem("asolar2_last_project", "2");
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Nawigacja" });
+    for (const label of ["Pulpit", "Budowy", "Postęp prac", "Meldunki", "Zapotrzebowanie", "Dostawy na budowę", "Mapa / Planimetria", "Dokumenty", "Użytkownicy"]) {
+      expect(within(nav).getByRole("button", { name: new RegExp(label.replace("/", "\/")) })).toBeTruthy();
+    }
+    await waitFor(() => expect(within(nav).getByRole("button", { name: /Meldunki/ }).disabled).toBe(false));
+    fireEvent.click(within(nav).getByRole("button", { name: /Meldunki/ }));
+    await waitFor(() => expect(window.location.hash).toBe("#/p/2/meldunki")); // ostatnio używana budowa
+    expect(screen.getByLabelText(/Online|Offline/)).toBeTruthy();
+    expect(screen.getByText("Aktywna budowa")).toBeTruthy();
+    fireEvent.click(within(nav).getByRole("button", { name: /Budowy/ }));
+    await waitFor(() => expect(window.location.hash).toBe("#/"));
   });
 });
