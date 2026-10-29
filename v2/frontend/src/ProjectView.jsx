@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { api, send } from "./api";
 import { roleLabel } from "./Dashboard";
 import Documents from "./Documents";
-import Fieldwork from "./Fieldwork";
+import ZonesAndRows from "./Zones";
 import { Deliveries, Worklogs } from "./Logistics";
 import { DashboardCard, PlanView } from "./Plan";
 import { cachedGet } from "./offline";
@@ -10,7 +10,7 @@ import { Constructions, Requirements, Tables } from "./Structure";
 import { AsyncButton, Empty, fmt, Loader, PageHead, useConfirm, useEscape } from "./ui";
 import { useLoad } from "./useLoad";
 
-export const TABS = [["przeglad", "Pulpit"], ["postep", "Postęp prac"], ["planimetria", "Mapa / Planimetria"], ["meldunki", "Meldunki"], ["dostawy", "Dostawy na budowę"], ["dokumenty", "Dokumenty"], ["strefy", "Strefy"], ["konstrukcje", "Konstrukcje i BOM"], ["stoly", "Stoły i rzędy"], ["materialy", "Zapotrzebowanie"], ["zespol", "Zespół"], ["ustawienia", "Ustawienia budowy"]];
+export const TABS = [["przeglad", "Pulpit"], ["strefy", "Strefy i rzędy"], ["postep", "Strefy i rzędy"], ["planimetria", "Mapa / Planimetria"], ["meldunki", "Meldunki"], ["dostawy", "Dostawy na budowę"], ["dokumenty", "Dokumenty"], ["konstrukcje", "Konstrukcje i BOM"], ["stoly", "Zaznaczanie stołów (zbiorczo)"], ["materialy", "Zapotrzebowanie"], ["zespol", "Zespół"], ["ustawienia", "Ustawienia budowy"]];
 const ACTIONS = { create: "utworzył(a)", update: "zmienił(a)", delete: "usunął(ęła)", upload: "wgrał(a)", assign: "przypisał(a)", progress: "zmienił(a) postęp:", review: "rozpatrzył(a)", "review-bulk": "zatwierdził(a) zbiorczo" };
 const ENTITIES = { project: "budowę", zone: "strefę", document: "dokument", suggestion: "propozycję", type: "typ konstrukcji", bom: "pozycję BOM", row: "rząd", tables: "stoły", table: "stół", note: "notatkę", photo: "zdjęcie", delivery: "dostawę", worklog: "meldunek", "worklog-photo": "zdjęcie meldunku" };
 
@@ -42,44 +42,6 @@ function Overview({ project, navigate }) {
       {!loading && !events?.length && <Empty>Brak zmian.</Empty>}
     </section>
   </div></>;
-}
-
-function ZoneRow({ zone, canDelete, onSave, onDelete }) {
-  const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ name: zone.name, description: zone.description });
-  const cancel = () => { setEditing(false); setForm({ name: zone.name, description: zone.description }); };
-  useEscape(cancel, editing);
-  async function submit(event) { event.preventDefault(); if (await onSave(zone, form)) setEditing(false); }
-  if (editing) return <form className="zone-row editing" onSubmit={submit}><input aria-label="Nazwa strefy" autoFocus required value={form.name} onChange={e => setForm(c => ({ ...c, name: e.target.value }))} /><input aria-label="Opis strefy" placeholder="Opis (opcjonalnie)" value={form.description} onChange={e => setForm(c => ({ ...c, description: e.target.value }))} /><div className="card-actions"><button className="primary">Zapisz</button><button type="button" className="secondary" onClick={cancel}>Anuluj</button></div></form>;
-  return <div className="zone-row" data-testid="zone-row"><div><strong>{zone.name}</strong>{zone.description && <small>{zone.description}</small>}</div><div className="card-actions"><button type="button" onClick={() => setEditing(true)}>Edytuj</button>{canDelete && <button type="button" className="danger-button" onClick={() => onDelete(zone)}>Usuń</button>}</div></div>;
-}
-
-function Zones({ project, access, notify }) {
-  const confirm = useConfirm();
-  const { data: zones, loading, error, reload } = useLoad(() => api(`/api/projects/${project.id}/zones`), [project.id]);
-  const [form, setForm] = useState({ name: "", description: "" });
-  const [busy, setBusy] = useState(false);
-  async function create(event) {
-    event.preventDefault(); setBusy(true);
-    try { await send(`/api/projects/${project.id}/zones`, "POST", form); notify(`Dodano strefę „${form.name.trim()}”`); setForm({ name: "", description: "" }); await reload(); }
-    catch (failure) { notify(failure.message, "error"); } finally { setBusy(false); }
-  }
-  async function save(zone, values) {
-    try { await send(`/api/projects/${project.id}/zones/${zone.id}`, "PATCH", values); notify("Zapisano strefę"); await reload(); return true; }
-    catch (failure) { notify(failure.message, "error"); return false; }
-  }
-  async function remove(zone) {
-    if (!(await confirm({ title: "Usunąć strefę?", message: `Strefa „${zone.name}” zostanie usunięta z budowy „${project.name}”.`, danger: true, confirmLabel: "Usuń strefę" }))) return;
-    try { await send(`/api/projects/${project.id}/zones/${zone.id}`, "DELETE"); notify("Strefa usunięta"); await reload(); } catch (failure) { notify(failure.message, "error"); }
-  }
-  return <div className="split">
-    <section className="card"><div className="card-head"><h2>Strefy budowy</h2><span className="badge neutral">{zones?.length || 0}</span></div>
-      {error && <div className="alert error" role="alert">{error}</div>}
-      {loading && !zones ? <Loader /> : (zones || []).map(zone => <ZoneRow key={zone.id} zone={zone} canDelete={access.isManager} onSave={save} onDelete={remove} />)}
-      {!loading && !zones?.length && <Empty>Brak stref. Dodaj pierwszą strefę.</Empty>}
-    </section>
-    {!project.archived && <form id="zone-form" className="card" onSubmit={create}><h2>Nowa strefa</h2><label>Nazwa<input required value={form.name} onChange={e => setForm(c => ({ ...c, name: e.target.value }))} placeholder="np. Strefa A — północ" /></label><label>Opis (opcjonalnie)<input value={form.description} onChange={e => setForm(c => ({ ...c, description: e.target.value }))} /></label><button className="primary wide" disabled={busy || !form.name.trim()}>{busy ? "Dodawanie…" : "Dodaj strefę"}</button></form>}
-  </div>;
 }
 
 function Team({ project, access, user, notify }) {
@@ -149,6 +111,6 @@ export default function ProjectView({ projectId, tab, user, notify, navigate }) 
   const common = { project, access, user, notify };
   return <>
     <PageHead eyebrow={`${project.archived ? "BUDOWA ZARCHIWIZOWANA" : project.name.toUpperCase()}`} title={TABS.find(([id]) => id === tab)?.[1] || project.name}><span className="badge neutral">{roleLabel(project.role)}</span></PageHead>
-    {tab === "postep" ? <Fieldwork {...common} /> : tab === "planimetria" ? <PlanView {...common} /> : tab === "meldunki" ? <Worklogs {...common} /> : tab === "dostawy" ? <Deliveries {...common} /> : tab === "konstrukcje" ? <Constructions {...common} /> : tab === "stoly" ? <Tables {...common} /> : tab === "materialy" ? <Requirements {...common} /> : tab === "dokumenty" ? <Documents {...common} onChanged={reload} /> : tab === "strefy" ? <Zones {...common} /> : tab === "zespol" ? <Team {...common} /> : tab === "ustawienia" ? <Settings key={`${project.name}|${project.location}|${project.capacity_mw}|${project.description}|${project.archived}`} {...common} onChanged={reload} onDeleted={() => navigate("#/")} /> : <Overview {...common} navigate={navigate} />}
+    {tab === "postep" || tab === "strefy" ? <ZonesAndRows {...common} navigate={navigate} tab={tab} /> : tab === "planimetria" ? <PlanView {...common} /> : tab === "meldunki" ? <Worklogs {...common} /> : tab === "dostawy" ? <Deliveries {...common} /> : tab === "konstrukcje" ? <Constructions {...common} /> : tab === "stoly" ? <Tables {...common} /> : tab === "materialy" ? <Requirements {...common} /> : tab === "dokumenty" ? <Documents {...common} onChanged={reload} /> : tab === "zespol" ? <Team {...common} /> : tab === "ustawienia" ? <Settings key={`${project.name}|${project.location}|${project.capacity_mw}|${project.description}|${project.archived}`} {...common} onChanged={reload} onDeleted={() => navigate("#/")} /> : <Overview {...common} navigate={navigate} />}
   </>;
 }

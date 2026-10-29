@@ -12,7 +12,7 @@ from xml.sax.saxutils import escape
 from sqlalchemy import func, select
 
 from . import logistics
-from .tenancy import Delivery, DeliveryItem, SiteTable, TableNote, WorkLog, Zone
+from .tenancy import Delivery, DeliveryItem, SiteTable, StructureType, TableNote, WorkLog, Zone
 
 FORECAST_WINDOW_DAYS = 14
 FORECAST_MIN_DAYS = 2
@@ -79,6 +79,50 @@ def report_font() -> str:
             except Exception:
                 continue
     return _font
+
+
+def _pdf_kit():
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_LEFT
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    font = report_font()
+    styles = getSampleStyleSheet()
+    normal = ParagraphStyle("PL", parent=styles["BodyText"], fontName=font, fontSize=8.5, leading=12, textColor=colors.HexColor("#33443c"))
+    small = ParagraphStyle("PLSmall", parent=normal, fontSize=7, leading=9.5)
+    title = ParagraphStyle("PLTitle", parent=styles["Title"], fontName=font, fontSize=17, leading=21, textColor=colors.HexColor("#123e30"), alignment=TA_LEFT)
+    heading = ParagraphStyle("PLHeading", parent=styles["Heading2"], fontName=font, fontSize=11, textColor=colors.HexColor("#123e30"), spaceBefore=10, spaceAfter=6)
+    return font, normal, small, title, heading
+
+
+def zone_protocol(session, project, zone, users: dict[int, str]) -> bytes:
+    """Protokół montażu i odbioru QA/QC strefy: każdy rząd z wariantem, kto i kiedy zamontował i odebrał."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    font, normal, small, title, heading = _pdf_kit()
+    p = lambda text, style=normal: Paragraph(escape(str(text or "")), style)
+    tables = session.scalars(select(SiteTable).where(SiteTable.zone_id == zone.id).order_by(SiteTable.prefix, SiteTable.number, SiteTable.code)).all()
+    types = {t.id: t.code for t in session.scalars(select(StructureType)).all()}
+    notes = dict(session.execute(select(TableNote.table_id, func.count(TableNote.id)).where(TableNote.table_id.in_([t.id for t in tables] or [-1])).group_by(TableNote.table_id)).all())
+    built = sum(bool(t.built) for t in tables)
+    qc = sum(bool(t.qc_checked) for t in tables)
+    stamp = lambda who, when: f"{users.get(who, '—')} · {when:%Y-%m-%d %H:%M}" if when else "—"
+    data = [["Rząd", "Wariant", "Montaż", "Odbiór QA/QC", "Notatki"]]
+    for t in tables:
+        data.append([t.code, types.get(t.structure_type_id, "—"), p(stamp(t.built_by, t.built_at) if t.built else "nie", small),
+                     p(stamp(t.qc_by, t.qc_at) if t.qc_checked else "nie", small), str(notes.get(t.id, 0) or "")])
+    output = BytesIO()
+    doc = SimpleDocTemplate(output, pagesize=A4, rightMargin=14 * mm, leftMargin=14 * mm, topMargin=14 * mm, bottomMargin=14 * mm, title=f"Protokół {zone.name}")
+    table = Table(data, repeatRows=1, colWidths=[28 * mm, 30 * mm, 46 * mm, 46 * mm, 18 * mm])
+    table.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 7.5), ("GRID", (0, 0), (-1, -1), .25, colors.HexColor("#d5ddd9")),
+                               ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#123e30")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story = [p("ASOLAR — PROTOKÓŁ MONTAŻU I ODBIORU STREFY", title), p(f"{project.name} · strefa: {zone.name}{f' — {zone.description}' if zone.description else ''}"),
+             p(f"Rzędów: {len(tables)} · zamontowanych: {built} · odebranych QA/QC: {qc} · wygenerowano: {datetime.now():%Y-%m-%d %H:%M}"), Spacer(1, 5 * mm), table,
+             Spacer(1, 12 * mm), p("Podpis kierownika budowy: ..............................................    Podpis odbierającego: ..............................................", small)]
+    doc.build(story)
+    return output.getvalue()
 
 
 def daily_report(session, project, users: dict[int, str], report_date: date) -> bytes:

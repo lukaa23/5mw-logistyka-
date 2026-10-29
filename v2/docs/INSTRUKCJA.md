@@ -39,11 +39,19 @@ Gdy aplikacja nic nie odczyta (skan, nietypowy układ), dokument ma status **Uzu
 - Z rysunku powstają propozycje: numeracja stołów (z warstwą, na której jest), strefy, typy konstrukcji, momenty oraz **bloki z liczbą wstawień** (np. `PALO` × 2063). Zatwierdzony blok trafia do katalogu jako ilość kontrolna — porównaj ją z zapotrzebowaniem z BOM.
 - **DWG** wymaga konwertera. Jeśli dokument ma status „Błąd odczytu” z prośbą o konwerter: w AutoCAD lub bezpłatnym DWG TrueView zapisz rysunek jako **DXF** i wgraj plik `.dxf` — albo poproś administratora o instalację ODA File Converter.
 
-## Struktura budowy
+## Strefy i rzędy (jak w v1)
 
-- **Konstrukcje i BOM:** typy stołów, liczba słupów na stół (uzupełnij — inaczej „wymaga potwierdzenia”), ilości BOM na jeden stół.
-- **Stoły i rzędy:** zaznacz stoły i przypisz zbiorczo strefę, rząd, typ. Brak numeracji w PDF (np. skan)? „Dodaj stoły ręcznie” (prefiks + zakres).
-- **Zapotrzebowanie:** BOM × liczba stołów danego typu, dla budowy lub strefy; eksport CSV.
+Panel boczny → **Strefy i rzędy** → „Konfiguracja stref”:
+
+1. **Strefa:** po lewej „+ Nowa strefa” — nazwa i opis.
+2. **Rzędy:** „Dodaj rzędy do strefy” — prefiks (podpowiedź: A, B, C… dla kolejnych stref), od, do (np. 1–50) i opcjonalnie wariant.
+3. **Warianty:** u góry „Warianty stołów na tej budowie” — dodaj warianty występujące na tej farmie (np. 1x28, 1x42, 1x56+1x42). Przypisz je do zakresu („Przypisz wariant do rzędów”: od–do) albo pojedynczo w tabeli rzędów.
+
+Tabela rzędów pokazuje wariant, montaż, odbiór QA/QC i pamięć rzędu (kliknij numer rzędu: notatki i zdjęcia). „Protokół PDF” — protokół montażu i odbioru strefy do podpisu.
+
+Widok **Rzędy operacyjne** (na telefonie: „Rzędy”) służy do pracy w terenie: „Zamontowany”, „Odbiór QC”, notatki i zdjęcia — także bez zasięgu.
+
+**Konstrukcje i BOM** — ilości materiałów na jeden stół każdego wariantu; **Zapotrzebowanie** liczy BOM × liczbę rzędów danego wariantu.
 
 ## Praca w terenie (telefon)
 

@@ -93,11 +93,11 @@ describe("przełączanie budów", () => {
     const view = render(<DialogProvider><ProjectView key={1} projectId={1} tab="strefy" user={admin} notify={notify} navigate={navigate} /></DialogProvider>);
     // Natychmiastowe przełączenie na budowę 2, zanim odpowiedź dla budowy 1 dotrze.
     view.rerender(<DialogProvider><ProjectView key={2} projectId={2} tab="strefy" user={admin} notify={notify} navigate={navigate} /></DialogProvider>);
-    await screen.findByText("Strefa Momo B");
+    await screen.findAllByText("Strefa Momo B");
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 120)); });
     expect(screen.queryByText("Strefa Kalisz A")).toBeNull();
     // Jak w v1: nagłówek = sekcja, nad nim nazwa aktywnej budowy.
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Strefy");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Strefy i rzędy");
     expect(screen.getByText("FARMA MOMO")).toBeTruthy();
     expect(screen.queryByText("FARMA KALISZ")).toBeNull();
   });
@@ -171,7 +171,7 @@ describe("aplikacja", () => {
     localStorage.setItem("asolar2_last_project", "2");
     render(<App />);
     const nav = await screen.findByRole("navigation", { name: "Nawigacja" });
-    for (const label of ["Pulpit", "Budowy", "Postęp prac", "Meldunki", "Zapotrzebowanie", "Dostawy na budowę", "Mapa / Planimetria", "Dokumenty", "Użytkownicy"]) {
+    for (const label of ["Pulpit", "Budowy", "Strefy i rzędy", "Meldunki", "Zapotrzebowanie", "Dostawy na budowę", "Mapa / Planimetria", "Dokumenty", "Użytkownicy"]) {
       expect(within(nav).getByRole("button", { name: new RegExp(label.replace("/", "\/")) })).toBeTruthy();
     }
     await waitFor(() => expect(within(nav).getByRole("button", { name: /Meldunki/ }).disabled).toBe(false));

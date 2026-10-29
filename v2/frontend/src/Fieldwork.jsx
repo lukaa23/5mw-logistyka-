@@ -6,6 +6,8 @@ import { useLoad } from "./useLoad";
 
 /* Etap 4a: praca w terenie — montaż i odbiór stołów, notatki, zdjęcia. Działa także bez zasięgu. */
 
+// Odpowiedź serwera lub kopia offline, która nie jest listą, nie może wywrócić widoku.
+const asList = value => (Array.isArray(value) ? value : []);
 const STATUSES = [["", "Wszystkie"], ["todo", "Do montażu"], ["built", "Zamontowane, bez odbioru"], ["qc", "Odebrane"]];
 
 /** Niewysłane zmiany z kolejki tego urządzenia — odświeżane po każdej zmianie kolejki. */
@@ -160,8 +162,8 @@ export default function Fieldwork({ project, access, user, notify }) {
   useSynced(useCallback(() => reloadTables(), [reloadTables]));
   const canWrite = !project.archived;
 
-  const all = useMemo(() => applyPendingTables(base, tables.data || [], pending), [base, tables.data, pending]);
-  const name = (list, id) => (list.data || []).find(item => item.id === id);
+  const all = useMemo(() => applyPendingTables(base, asList(tables.data), pending), [base, tables.data, pending]);
+  const name = (list, id) => asList(list.data).find(item => item.id === id);
   const visible = all.filter(t => (filter.zone_id === "" || (filter.zone_id === "0" ? t.zone_id == null : t.zone_id === Number(filter.zone_id)))
     && (filter.row_id === "" || (filter.row_id === "0" ? t.row_id == null : t.row_id === Number(filter.row_id)))
     && (filter.status === "" || (filter.status === "todo" && !t.built) || (filter.status === "built" && t.built && !t.qc_checked) || (filter.status === "qc" && t.qc_checked))
@@ -184,8 +186,8 @@ export default function Fieldwork({ project, access, user, notify }) {
       <div className="progress-head"><div><strong>{built}</strong> / {visible.length} zamontowanych <small>({pct(built, visible.length)}%)</small></div><div><strong>{qc}</strong> odebranych <small>({pct(qc, visible.length)}%)</small></div></div>
       <Progress value={pct(built, visible.length)} />
       <div className="filters">
-        <select aria-label="Strefa" value={filter.zone_id} onChange={set("zone_id")}><option value="">Wszystkie strefy</option><option value="0">— bez strefy —</option>{(zones.data || []).map(z => <option key={z.id} value={z.id}>{z.name}</option>)}</select>
-        <select aria-label="Rząd" value={filter.row_id} onChange={set("row_id")}><option value="">Wszystkie rzędy</option><option value="0">— bez rzędu —</option>{(rows.data || []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select>
+        <select aria-label="Strefa" value={filter.zone_id} onChange={set("zone_id")}><option value="">Wszystkie strefy</option><option value="0">— bez strefy —</option>{asList(zones.data).map(z => <option key={z.id} value={z.id}>{z.name}</option>)}</select>
+        <select aria-label="Rząd" value={filter.row_id} onChange={set("row_id")}><option value="">Wszystkie rzędy</option><option value="0">— bez rzędu —</option>{asList(rows.data).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select>
         <select aria-label="Stan" value={filter.status} onChange={set("status")}>{STATUSES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>
         <input type="search" aria-label="Szukaj stołu" placeholder="Szukaj, np. T-12" value={filter.q} onChange={set("q")} />
       </div>

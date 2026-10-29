@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from collections import defaultdict
@@ -317,7 +318,14 @@ def zone_dict(zone: Zone):
 @app.get("/api/projects/{project_id}/zones")
 def list_zones(access: Access = Depends(project_access)):
     with tenancy.project_session(access.project.storage_key) as session:
-        return [zone_dict(zone) for zone in session.scalars(select(Zone).order_by(Zone.sort_order, Zone.id)).all()]
+        stats = {}
+        for zone_id, built, qc in session.execute(select(SiteTable.zone_id, SiteTable.built, SiteTable.qc_checked)).all():
+            entry = stats.setdefault(zone_id, {"total": 0, "built": 0, "qc": 0})
+            entry["total"] += 1
+            entry["built"] += bool(built)
+            entry["qc"] += bool(qc)
+        return [{**zone_dict(zone), "stats": stats.get(zone.id, {"total": 0, "built": 0, "qc": 0})}
+                for zone in session.scalars(select(Zone).order_by(Zone.sort_order, Zone.id)).all()]
 
 
 @app.post("/api/projects/{project_id}/zones")
@@ -350,12 +358,22 @@ def update_zone(zone_id: int, data: ZoneIn, access: Access = Depends(project_acc
 
 
 @app.delete("/api/projects/{project_id}/zones/{zone_id}")
-def delete_zone(zone_id: int, access: Access = Depends(project_access)):
+def delete_zone(zone_id: int, with_tables: bool = False, access: Access = Depends(project_access)):
+    """with_tables=true usuwa też rzędy (stoły) strefy — jak w v1. Rzędów z postępem, notatkami lub zdjęciami nie usuwamy."""
     access.require_manager()
     with tenancy.project_session(access.project.storage_key) as session:
         zone = session.get(Zone, zone_id)
         if not zone:
             raise HTTPException(404, "Nie znaleziono strefy")
+        if with_tables:
+            tables = session.scalars(select(SiteTable).where(SiteTable.zone_id == zone.id)).all()
+            with_work = structure.tables_with_field_data(session, [table.id for table in tables])
+            if with_work:
+                raise HTTPException(409, f"{len(with_work)} rzędów tej strefy ma zapisany montaż, notatki lub zdjęcia — tych danych nie usuwamy. Usuń strefę bez rzędów albo najpierw cofnij te wpisy.")
+            for table in tables:
+                session.delete(table)
+            for row in session.scalars(select(SiteRow).where(SiteRow.zone_id == zone.id)).all():
+                session.delete(row)
         session.add(ProjectEvent(user_id=access.user.id, action="delete", entity="zone", entity_id=zone.id, details=zone.name))
         session.delete(zone)
         session.commit()
@@ -611,6 +629,7 @@ class RangeIn(BaseModel):
     first: int = Field(ge=0, le=100000)
     last: int = Field(ge=0, le=100000)
     structure_type_id: int | None = None  # nowe stoły od razu z typem (np. liczba stołów z BOM)
+    zone_id: int | None = None            # nowe rzędy od razu w strefie (kreator „Strefy i rzędy”)
 
 
 class AssignIn(BaseModel):
@@ -831,11 +850,13 @@ def add_tables(data: RangeIn, access: Access = Depends(project_access)):
     with tenancy.project_session(access.project.storage_key) as session:
         if data.structure_type_id is not None:
             get_or_404(session, StructureType, data.structure_type_id, "Nie znaleziono typu konstrukcji")
+        if data.zone_id is not None:
+            get_or_404(session, Zone, data.zone_id, "Nie znaleziono strefy")
         codes = {structure.table_code(prefix, n): n for n in range(data.first, data.last + 1)}
         existing = set(session.scalars(select(SiteTable.code).where(SiteTable.code.in_(list(codes)))).all())
         for code, number in codes.items():
             if code not in existing:
-                session.add(SiteTable(code=code, prefix=prefix, number=number, structure_type_id=data.structure_type_id))
+                session.add(SiteTable(code=code, prefix=prefix, number=number, structure_type_id=data.structure_type_id, zone_id=data.zone_id))
         added = len(codes) - len(existing)
         project_event(session, access, "create", "tables", None, f"{prefix} {data.first}–{data.last} (+{added})")
         session.commit()
@@ -1519,6 +1540,16 @@ def document_page_svg(document_id: int, page: int, access: Access = Depends(proj
         except cad.CadError as error:
             raise HTTPException(422, str(error)) from None
     return Response(image, media_type="image/svg+xml", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/api/projects/{project_id}/zones/{zone_id}/protocol")
+def zone_protocol(zone_id: int, access: Access = Depends(project_access)):
+    names = user_names(access)
+    with tenancy.project_session(access.project.storage_key) as session:
+        zone = get_or_404(session, Zone, zone_id, "Nie znaleziono strefy")
+        content = report.zone_protocol(session, access.project, zone, names)
+    filename = f"ASOLAR-protokol-{re.sub(r'[^A-Za-z0-9_-]+', '_', zone.name)[:40]}.pdf"
+    return Response(content, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.get("/api/projects/{project_id}/dashboard")

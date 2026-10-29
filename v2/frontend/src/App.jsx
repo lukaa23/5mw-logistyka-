@@ -8,7 +8,7 @@ import { cachedGet, clearCache } from "./offline";
 import { DialogProvider, Loader } from "./ui";
 import { useLoad } from "./useLoad";
 
-export const APP_VERSION = "2.3.0";
+export const APP_VERSION = "2.4.0";
 const LAST_PROJECT = "asolar2_last_project";
 
 /** Adres w pasku: #/ — budowy, #/p/12/strefy — budowa i zakładka, #/konta — konta. */
@@ -43,19 +43,19 @@ function Login({ onLogin }) {
 export const NAV = [
   ["przeglad", "Pulpit", "▦"],
   ["budowy", "Budowy", "◆"],
-  ["postep", "Postęp prac", "▤"],
+  ["strefy", "Strefy i rzędy", "▤"],
   ["meldunki", "Meldunki", "◷"],
   ["materialy", "Zapotrzebowanie", "⌗"],
   ["dostawy", "Dostawy na budowę", "⇩"],
   ["planimetria", "Mapa / Planimetria", "⌖"],
   ["dokumenty", "Dokumenty", "▱"],
-  ["stoly", "Stoły i rzędy", "☷"],
   ["konstrukcje", "Konstrukcje i BOM", "⚙"],
-  ["strefy", "Strefy", "◫"],
   ["zespol", "Zespół", "♙"],
   ["ustawienia", "Ustawienia budowy", "✎"],
 ];
-const MOBILE_NAV = ["przeglad", "postep", "meldunki", "dostawy", "planimetria", "dokumenty", "materialy", "budowy"];
+// Na telefonie „Rzędy” prowadzi od razu do widoku operacyjnego (praca w terenie), jak w v1.
+const MOBILE_NAV = [["przeglad", "Pulpit", "▦"], ["postep", "Rzędy", "▤"], ["meldunki", "Meldunki", "◷"], ["dostawy", "Dostawy", "⇩"], ["planimetria", "Mapa", "⌖"], ["dokumenty", "Dokumenty", "▱"], ["materialy", "Zapotrzebowanie", "⌗"], ["budowy", "Budowy", "◆"]];
+const SECTION_OF = { postep: "strefy", stoly: "strefy" };  // widoki należące do pozycji „Strefy i rzędy”
 
 /** Przełącznik budów w górnym pasku (jak „Aktywny projekt” w v1) — zmiana budowy zachowuje bieżący widok. */
 export function ProjectSwitcher({ route, navigate, refreshKey }) {
@@ -88,7 +88,8 @@ function Shell({ user, onLogout }) {
   const last = Number(localStorage.getItem(LAST_PROJECT) || 0);
   const activeId = route.view === "project" ? route.projectId
     : (projects || []).some(item => item.id === last) ? last : projects?.[0]?.id ?? null;
-  const current = route.view === "project" ? route.tab : route.view === "users" ? "konta" : "budowy";
+  const tab = route.view === "project" ? route.tab : route.view === "users" ? "konta" : "budowy";
+  const current = SECTION_OF[tab] || tab;
   const go = id => {
     if (id === "budowy") return navigate("#/");
     if (id === "konta") return navigate("#/konta");
@@ -115,7 +116,7 @@ function Shell({ user, onLogout }) {
         : route.view === "users" ? <UsersAdmin user={user} notify={notify} />
           : <Dashboard user={user} notify={notify} openProject={id => navigate(`#/p/${id}/przeglad`)} />}
     </main>
-    <nav className="bottom-nav" aria-label="Nawigacja (telefon)">{MOBILE_NAV.map(id => navButton(items.find(item => item[0] === id), true))}</nav>
+    <nav className="bottom-nav" aria-label="Nawigacja (telefon)">{MOBILE_NAV.map(item => <button type="button" key={item[0]} className={tab === item[0] || (item[0] === "postep" && tab === "strefy") ? "active" : ""} disabled={!activeId && item[0] !== "budowy"} onClick={() => go(item[0])}><span>{item[2]}</span><small>{item[1]}</small></button>)}</nav>
     {toast && <div className={`toast ${toast.type}`} role={toast.type === "error" ? "alert" : "status"} aria-live="polite" onClick={() => setToast(null)}>{toast.type === "error" ? "!" : "✓"}<span>{toast.message}</span></div>}
   </div>;
 }

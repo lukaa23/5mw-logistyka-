@@ -89,6 +89,14 @@ v2/
 - „Przegląd”: pulpit postępu (zamontowane, odebrane, dziś, braki materiałów, montaż z 14 dni) i prognoza zakończenia liczona z dat montażu — tylko przy danych z ≥ 2 dni, zawsze z wypisanymi założeniami.
 - Raport dzienny PDF: liczby dnia, postęp wg stref, zamontowane stoły, meldunki, dziennik QA/QC, notatki, dostawy.
 
+**Strefy i rzędy jak w v1 (2.4.0)**
+
+- Jeden moduł „Strefy i rzędy” (jak w v1) z widokami „Konfiguracja stref” i „Rzędy operacyjne”.
+- Konfiguracja w 3 krokach: 1) strefa (nazwa, opis), 2) rzędy z zakresu numerów (np. A-1…A-50, prefiks i kolejny numer podpowiadane), 3) warianty stołów zdefiniowane dla tej budowy (np. 1x28, 1x56+1x42 — nic na sztywno w kodzie), przypisywane do zakresu rzędów albo pojedynczo w tabeli.
+- Tabela rzędów strefy na całą wysokość okna: wariant, montaż, QA/QC, pamięć rzędu (notatki i zdjęcia), ostatnia zmiana; podsumowanie liczby rzędów na wariant.
+- Rzędy operacyjne: montaż, odbiór QA/QC, notatki, zdjęcia, offline — jak w v1. Protokół montażu i odbioru strefy (PDF) z wariantem, kto i kiedy.
+- Usunięcie strefy usuwa jej rzędy (jak w v1), ale nigdy rzędów z zapisanym montażem, notatkami lub zdjęciami.
+
 **Interfejs jak w v1, pełny ekran (2.3.0)**
 
 - Rama identyczna z v1: ciemny panel boczny z nawigacją (Pulpit, Budowy, Postęp prac, Meldunki, Zapotrzebowanie, Dostawy na budowę, Mapa / Planimetria, Dokumenty, …), górny pasek „Aktywna budowa” z przełącznikiem i wskaźnikiem połączenia (Online/Offline + liczba niewysłanych zmian), dolny pasek na telefonie.
