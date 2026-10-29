@@ -18,15 +18,15 @@ Jedno konto może mieć różne role na różnych budowach. Osoba spoza zespołu
 2. **Nowa budowa:** „Moje budowy” → **+ Nowa budowa** (nazwa, lokalizacja, moc). Budowę zmieniasz przełącznikiem w górnym pasku — zakładka zostaje ta sama.
 3. **Zespół:** zakładka „Zespół” → dodaj osoby i nadaj im rolę na tej budowie. Nowe konta zakłada administrator (zakładka „Konta”).
 
-## Dokumenty PDF i propozycje
+## Dokumenty: dodawanie i sprawdzanie (3 kroki)
 
-1. „Dokumenty i import” → przeciągnij wiele PDF naraz (BOM, rysunki, planimetrie, instrukcje).
-2. Analiza działa w tle, lokalnie na serwerze. Strony-skany są oznaczone „wymaga OCR” (OCR nie jest jeszcze wykonywany).
-3. Ekran propozycji: strefy, typy konstrukcji, numeracja stołów, BOM na typ, komponenty, narzędzia, momenty. Każda propozycja ma źródło (plik, strona) i pewność.
-4. **Zatwierdź**, **Popraw** (zmień wartość przed zatwierdzeniem) albo **Odrzuć**. „Cofnij decyzję” wycofuje skutki, jeśli dane nie są jeszcze używane.
-5. Rozbieżne ilości tej samej pozycji z różnych plików są oznaczone „wymaga potwierdzenia” i nie wchodzą do zatwierdzania zbiorczego.
+1. **Dodaj:** zakładka „Dokumenty i import” → upuść pliki na właściwy kafelek — **BOM / lista materiałowa**, **Rysunki i schematy** (PDF, DWG, DXF) albo **Instrukcje i manuale** — lub kliknij „Wybierz pliki z dysku”. Można wiele plików naraz; każdy ma własny pasek postępu.
+2. **Sprawdź:** przy pliku kliknij **Sprawdź**. Po lewej podgląd dokumentu (strony, „Powiększ”), po prawej odczytane pozycje (nazwa, ilość, kod) ze statusem **Wymaga potwierdzenia** / **Zatwierdzone**. Kliknięcie pozycji otwiera ją do poprawki i pokazuje jej stronę w podglądzie.
+3. **Zatwierdź:** ✓ przy pozycji albo **Zatwierdź wszystkie**. Pozycjom BOM bez typu stołu wpisz typ jednym polem („Ustaw i zatwierdź”).
 
-Nic nie trafia do danych budowy bez zatwierdzenia. Aplikacja niczego nie dopowiada — brakujące dane są puste i oznaczone.
+Rodzaj dokumentu decyduje, co aplikacja odczytuje: z BOM — pozycje i typy stołów, z rysunku — numerację, strefy, typy i bloki, z instrukcji — momenty, narzędzia i tabele przypisane do typu. Zły rodzaj? Zmień go na ekranie sprawdzania — plik zostanie odczytany ponownie.
+
+Gdy aplikacja nic nie odczyta (skan, nietypowy układ), dokument ma status **Uzupełnij ręcznie** — to nie błąd: obok podglądu jest formularz „Dodaj pozycję ręcznie” (przepisz dane ze strony, „Dodaj i zatwierdź”). Aplikacja nie zgaduje — pozycje niepewne nie są proponowane.
 
 ## Rysunki DWG i DXF
 

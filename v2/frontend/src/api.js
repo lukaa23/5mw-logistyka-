@@ -32,3 +32,25 @@ export async function api(path, options = {}) {
 }
 
 export const send = (path, method, body) => api(path, { method, body: body === undefined ? undefined : JSON.stringify(body) });
+
+/** Wysyłka jednego pliku z postępem (fetch nie raportuje postępu wysyłania — dlatego XMLHttpRequest). */
+export function uploadFile(path, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", path);
+    const token = getToken();
+    if (token) request.setRequestHeader("Authorization", `Bearer ${token}`);
+    request.upload.onprogress = event => { if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100)); };
+    request.onload = () => {
+      let body = null;
+      try { body = JSON.parse(request.responseText || "null"); } catch { /* odpowiedź bez JSON */ }
+      if (request.status === 401) { setSession(null); window.dispatchEvent(new Event("asolar2:unauthorized")); }
+      if (request.status >= 200 && request.status < 300) { onProgress?.(100); resolve(body); }
+      else reject(new ApiError(typeof body?.detail === "string" ? body.detail : `Błąd ${request.status}`, request.status));
+    };
+    request.onerror = () => reject(new ApiError("Brak połączenia z serwerem — wgrywanie wymaga internetu", 0));
+    const form = new FormData();
+    form.append("files", file, file.name);
+    request.send(form);
+  });
+}

@@ -10,6 +10,7 @@ w rejestrze centralnym, który przy SQLite jest osobnym plikiem).
 """
 import re
 import threading
+from pathlib import Path
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 
@@ -290,7 +291,8 @@ def _sqlite_engine(key: str):
     with _sqlite_lock:
         engine = _sqlite_engines.get(key)
         if engine is None:
-            engine = create_engine(f"sqlite:///{_sqlite_path(key)}", connect_args={"check_same_thread": False})
+            # timeout: zapis czeka na swoją kolej (do 30 s) zamiast od razu kończyć się „database is locked”.
+            engine = create_engine(f"sqlite:///{_sqlite_path(key)}", connect_args={"check_same_thread": False, "timeout": 30})
 
             @event.listens_for(engine, "connect")
             def _fk(connection, _record):
@@ -298,11 +300,15 @@ def _sqlite_engine(key: str):
                 connection.isolation_level = None
                 cursor = connection.cursor()
                 cursor.execute("PRAGMA foreign_keys=ON")
+                # WAL: odczyty nie blokują zapisu (np. lista dokumentów w trakcie analizy pliku w tle).
+                cursor.execute("PRAGMA journal_mode=WAL")
                 cursor.close()
 
             @event.listens_for(engine, "begin")
             def _begin(connection):
-                connection.exec_driver_sql("BEGIN")
+                # BEGIN IMMEDIATE: transakcja od razu rezerwuje zapis, więc dwie równoległe (wgrywanie kolejnego
+                # pliku + analiza poprzedniego) ustawiają się w kolejce zamiast zakleszczyć się przy zapisie.
+                connection.exec_driver_sql("BEGIN IMMEDIATE")
 
             _sqlite_engines[key] = engine
         return engine
@@ -366,7 +372,9 @@ def drop_storage(key: str) -> None:
         engine = _sqlite_engines.pop(key, None)
     if engine is not None:
         engine.dispose()
-    _sqlite_path(key).unlink(missing_ok=True)
+    path = _sqlite_path(key)
+    for suffix in ("", "-wal", "-shm"):  # pliki dziennika WAL należą do tej samej budowy
+        Path(f"{path}{suffix}").unlink(missing_ok=True)
 
 
 def storage_exists(key: str) -> bool:

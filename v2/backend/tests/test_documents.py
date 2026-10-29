@@ -260,8 +260,9 @@ class DocumentsApiTest(V2Base):
         response = self.upload(project["id"], [("uszkodzony.pdf", b"%PDF-1.4\nto nie jest prawdziwy pdf")])
         self.assertEqual(response.status_code, 200)
         document = self.client.get(f"/api/projects/{project['id']}/documents", headers=self.admin).json()[0]
-        self.assertEqual(document["status"], "błąd")
-        self.assertIn("Nie udało się odczytać", document["error"])
+        # Bez czerwonego błędu: dokument czeka na ręczne uzupełnienie obok podglądu.
+        self.assertEqual(document["status"], "ręcznie")
+        self.assertIn("Uzupełnij pozycje ręcznie", document["error"])
 
     def test_archived_project_rejects_uploads(self):
         project = self.make_project()

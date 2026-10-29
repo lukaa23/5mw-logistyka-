@@ -1,317 +1,380 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { api, send } from "./api";
-import { AsyncButton, Empty, fmt, Loader, qty, useConfirm, useEscape } from "./ui";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, send, uploadFile } from "./api";
+import { Empty, fmt, Loader, qty, useConfirm, useEscape } from "./ui";
 import { useLoad } from "./useLoad";
 
-/* Etap 2: wiele PDF / DWG / DXF naraz → lokalny parser → propozycje, które kierownik zatwierdza, poprawia lub odrzuca. */
+/* Dokumenty budowy: 1) wybierz rodzaj i upuść pliki, 2) sprawdź pozycje obok podglądu, 3) zatwierdź.
+ * Rodzaj dokumentu decyduje, co serwer z niego odczytuje. Gdy nic nie da się odczytać (skan, nietypowy
+ * układ), dokument nie jest „błędem” — obok podglądu jest prosty formularz ręcznego uzupełnienia. */
 
+export const DOC_TYPES = [
+  ["bom", "BOM / lista materiałowa", "Zestawienia materiałów z ilościami (PDF)", "≣"],
+  ["rysunek", "Rysunki i schematy", "Planimetrie, layouty — PDF, DWG, DXF", "▦"],
+  ["instrukcja", "Instrukcje i manuale", "Montaż, momenty dokręcania, narzędzia (PDF)", "☰"],
+];
+const TYPE_LABEL = { bom: "BOM", rysunek: "Rysunek / schemat", instrukcja: "Instrukcja", auto: "Inny", inne: "Inny" };
 const ACCEPTED = /\.(pdf|dwg|dxf)$/i;
-const isCad = document => document.format === "dwg" || document.format === "dxf";
+const MAX_MB = 60;
+const isCad = document => document?.format === "dwg" || document?.format === "dxf";
 
 export const KINDS = [
-  ["zone", "Strefy", "Zatwierdzona strefa trafia do zakładki „Strefy”."],
-  ["structure_type", "Typy konstrukcji", "Zatwierdzony typ trafia do zakładki „Konstrukcje i BOM”."],
-  ["numbering", "Numeracja stołów / trackerów", "Zatwierdzenie tworzy stoły o numerach odczytanych z rysunku (luki nie są dopisywane). Oznaczenia elektryczne (INV, MPPT…) są pomijane."],
-  ["bom_line", "BOM — ilości na typ konstrukcji", "Ilości na jeden stół danego typu. Zatwierdzona pozycja trafia do BOM typu — pozycja bez typu konstrukcji wymaga uzupełnienia (Popraw)."],
-  ["component", "Komponenty (bez ilości)", "Elementy z tabel bez kolumny ilości."],
-  ["tool", "Narzędzia", "Tabele narzędzi montażowych."],
-  ["torque", "Momenty dokręcania", "Wartości odczytane z tekstu — sprawdź z instrukcją producenta."],
-  ["drawing_block", "Bloki z rysunków DWG/DXF", "Liczba wstawień bloku w całym rysunku (np. pale, moduły, stoły). Rysunek nie mówi, ile przypada na jeden stół — po zatwierdzeniu liczba trafia do katalogu jako ilość kontrolna dla zapotrzebowania."],
+  ["bom_line", "Pozycje BOM"],
+  ["structure_type", "Typy konstrukcji"],
+  ["numbering", "Numeracja stołów"],
+  ["zone", "Strefy"],
+  ["drawing_block", "Bloki z rysunku"],
+  ["torque", "Momenty dokręcania"],
+  ["tool", "Narzędzia"],
+  ["component", "Komponenty"],
 ];
 const FIELDS = {
-  bom_line: [["name", "Nazwa"], ["code", "Kod"], ["spec", "Specyfikacja"], ["quantity", "Ilość", "number"], ["unit", "J.m."], ["group", "Typ konstrukcji"]],
+  bom_line: [["name", "Nazwa"], ["code", "Kod"], ["spec", "Specyfikacja"], ["quantity", "Ilość / stół", "number"], ["unit", "J.m."], ["group", "Typ stołu"]],
   component: [["name", "Nazwa"], ["code", "Kod"], ["spec", "Specyfikacja"]],
   tool: [["name", "Nazwa"], ["spec", "Specyfikacja"]],
-  structure_type: [["code", "Oznaczenie"], ["modules", "Moduły na stół", "number"], ["tables", "Liczba stołów", "number"]],
+  structure_type: [["code", "Oznaczenie (np. 2x26)"], ["modules", "Moduły na stół", "number"], ["tables", "Liczba stołów", "number"]],
   zone: [["name", "Nazwa strefy"]],
   numbering: [["prefix", "Prefiks"], ["first", "Od", "number"], ["last", "Do", "number"]],
-  torque: [["bolt", "Śruba"], ["min_nm", "Min [N·m]", "number"], ["max_nm", "Max [N·m]", "number"]],
+  torque: [["bolt", "Śruba (np. M12)"], ["min_nm", "Min N·m", "number"], ["max_nm", "Max N·m", "number"]],
   drawing_block: [["name", "Nazwa bloku"], ["count", "Liczba w rysunku", "number"]],
 };
-const REQUIRED = { drawing_block: ["name"], bom_line: ["name"], component: ["name"], tool: ["name"], structure_type: ["code"], zone: ["name"], numbering: ["prefix"], torque: ["bolt"] };
-const STATUS_LABEL ={ nowa: "Do przeglądu", zatwierdzona: "Zatwierdzona", odrzucona: "Odrzucona" };
-const DOC_STATUS = { oczekuje: ["W kolejce", "neutral"], analiza: ["Analiza…", "warning"], gotowy: ["Przeanalizowany", "success"], "błąd": ["Błąd odczytu", "danger"] };
-const CATEGORIES = [["auto", "Rozpoznaj automatycznie"], ["bom", "BOM / zestawienie materiałów"], ["rysunek", "Rysunek / planimetria"], ["instrukcja", "Instrukcja montażu"], ["inne", "Inne"]];
-const MAX_FILES = 20;
-const MAX_MB = 60;
-
-const size = bytes => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} kB`;
-const confidence = value => value >= 0.8 ? ["wysoka", "success"] : value >= 0.6 ? ["średnia", "neutral"] : ["niska", "warning"];
+const MANUAL_KINDS = { bom: ["bom_line", "structure_type"], rysunek: ["numbering", "zone", "structure_type"], instrukcja: ["torque", "tool", "structure_type"] };
+const STATUS = { nowa: ["Wymaga potwierdzenia", "warning"], zatwierdzona: ["Zatwierdzone", "success"], odrzucona: ["Odrzucone", "neutral"] };
 
 export function describe(item) {
   const p = item.payload;
   switch (item.kind) {
-    case "bom_line": return { title: p.name, detail: [p.position && `poz. ${p.position}`, p.code, p.spec, p.material].filter(Boolean).join(" · ") + (p.check ? ` · ⚠ ${p.check}` : ""), value: `${qty(p.quantity)} ${p.unit || "szt."}${p.per_table || p.group ? " / stół" : ""}` };
+    case "bom_line": return { title: p.name, detail: [p.code, p.spec, p.material].filter(Boolean).join(" · ") + (p.check ? ` · ⚠ ${p.check}` : ""), value: `${qty(p.quantity)} ${p.unit || "szt."}${p.group ? " / stół" : ""}` };
     case "component": return { title: p.name, detail: [p.code, p.spec].filter(Boolean).join(" · ") };
     case "tool": return { title: p.name, detail: p.spec };
-    case "structure_type": return { title: p.code, detail: `moduły na stół: ${p.modules}${p.tables ? ` · liczba stołów wg dokumentu: ${p.tables}` : ""} · ${p.occurrences}× w dokumentach` };
-    case "zone": return { title: p.name, detail: `${p.occurrences}× w dokumentach` };
-    case "numbering": return { title: `${p.prefix} ${p.first}–${p.last}`, detail: `${p.count} oznaczeń, np. ${p.example}${p.missing?.length ? ` · brak w zakresie: ${p.missing.slice(0, 12).join(", ")}${p.missing.length > 12 ? "…" : ""}` : ""}${p.layers?.length ? ` · warstwy: ${p.layers.join(", ")}` : ""}` };
-    case "drawing_block": return { title: p.name, detail: p.layers?.length ? `warstwy: ${p.layers.join(", ")}` : "", value: `${qty(p.count)} szt. w rysunku` };
-    case "torque": return { title: p.bolt, detail: p.context, value: p.min_nm === p.max_nm ? `${qty(p.min_nm)} N·m` : `${qty(p.min_nm)}–${qty(p.max_nm)} N·m` };
+    case "structure_type": return { title: p.code, detail: `moduły na stół: ${p.modules}${p.tables ? ` · stołów: ${p.tables}` : ""}` };
+    case "zone": return { title: p.name, detail: "" };
+    case "numbering": return { title: `${p.prefix} ${p.first}–${p.last}`, detail: `${p.count} oznaczeń${p.missing?.length ? ` · brakujące: ${p.missing.slice(0, 10).join(", ")}${p.missing.length > 10 ? "…" : ""}` : ""}${p.layers?.length ? ` · warstwa: ${p.layers.join(", ")}` : ""}` };
+    case "torque": return { title: p.bolt, detail: p.context || "", value: p.min_nm === p.max_nm ? `${qty(p.min_nm)} N·m` : `${qty(p.min_nm)}–${qty(p.max_nm)} N·m` };
+    case "drawing_block": return { title: p.name, detail: p.layers?.length ? `warstwa: ${p.layers.join(", ")}` : "", value: `${qty(p.count)} szt. w rysunku` };
     default: return { title: item.key, detail: "" };
   }
 }
 
-function Upload({ project, notify, onUploaded }) {
-  const input = useRef(null);
-  const [category, setCategory] = useState("auto");
-  const [over, setOver] = useState(false);
-  const [busy, setBusy] = useState(false);
-  async function upload(list) {
-    const files = Array.from(list || []);
-    if (!files.length) return;
-    const pdfs = files.filter(file => ACCEPTED.test(file.name) || file.type === "application/pdf");
-    const skipped = files.length - pdfs.length;
-    const tooBig = pdfs.filter(file => file.size > MAX_MB * 1048576);
-    const ready = pdfs.filter(file => file.size <= MAX_MB * 1048576);
-    if (skipped) notify(`Pominięto ${skipped} plik(ów) innych niż PDF, DWG lub DXF`, "error");
-    if (tooBig.length) notify(`Za duże (powyżej ${MAX_MB} MB): ${tooBig.map(file => file.name).join(", ")}`, "error");
-    if (!ready.length) return;
-    setBusy(true);
-    try {
-      let accepted = 0; const duplicates = []; const rejected = [];
-      for (let start = 0; start < ready.length; start += MAX_FILES) {
-        const form = new FormData();
-        ready.slice(start, start + MAX_FILES).forEach(file => form.append("files", file, file.name));
-        const result = await api(`/api/projects/${project.id}/documents?category=${category}`, { method: "POST", body: form });
-        accepted += result.accepted.length; duplicates.push(...result.duplicates); rejected.push(...result.rejected);
-      }
-      if (accepted) notify(`Wgrano ${accepted} plik(ów) — analiza trwa w tle`);
-      if (duplicates.length) notify(`Już wgrane wcześniej: ${duplicates.map(item => item.filename).join(", ")}`, "error");
-      if (rejected.length) notify(`Odrzucone: ${rejected.map(item => `${item.filename} (${item.reason})`).join(", ")}`, "error");
-      onUploaded();
-    } catch (failure) { notify(failure.message, "error"); }
-    finally { setBusy(false); if (input.current) input.current.value = ""; }
-  }
-  return <section className="card"><h2>Wgraj dokumenty budowy</h2>
-    <div className={`drop-zone ${over ? "over" : ""}`} data-testid="drop-zone"
-      onDragOver={event => { event.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
-      onDrop={event => { event.preventDefault(); setOver(false); if (!busy) upload(event.dataTransfer.files); }}>
-      <strong>{busy ? "Wysyłanie…" : "Przeciągnij tutaj pliki PDF, DWG lub DXF"}</strong>
-      <small>BOM, rysunki, planimetrie, instrukcje — wiele plików naraz (do {MAX_MB} MB każdy)</small>
-      <button type="button" className="secondary" disabled={busy} onClick={() => input.current?.click()}>Wybierz pliki…</button>
-      <input ref={input} type="file" accept="application/pdf,.pdf,.dwg,.dxf" multiple hidden aria-label="Pliki PDF, DWG lub DXF" onChange={event => upload(event.target.files)} />
-    </div>
-    <label>Rodzaj dokumentów (opcjonalnie)<select value={category} onChange={event => setCategory(event.target.value)}>{CATEGORIES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
-    <p className="hint">Analiza działa lokalnie na serwerze aplikacji — pliki nie są wysyłane do usług zewnętrznych. Strony zapisane jako obraz (skany) wymagają OCR, którego ta wersja jeszcze nie wykonuje. Rysunki DXF są czytane zawsze; DWG wymaga na serwerze konwertera (ODA File Converter lub LibreDWG) — bez niego zapisz rysunek jako DXF.</p>
-  </section>;
-}
+const sourcePage = (item, documentId) => item.sources.find(source => source.document_id === documentId)?.page || 1;
 
-function DocumentRow({ document, project, canEdit, notify, onChanged }) {
-  const confirm = useConfirm();
-  const [label, tone] = DOC_STATUS[document.status] || [document.status, "neutral"];
-  const counts = Object.entries(document.summary?.suggestions || {}).reduce((sum, [, value]) => sum + value, 0);
-  async function open() {
-    try {
-      const blob = await api(`/api/projects/${project.id}/documents/${document.id}/file`);
-      const url = URL.createObjectURL(blob);
-      if (isCad(document)) {
-        // DWG/DXF nie otworzy się w przeglądarce — zapis pliku (podgląd rysunku jest w Planimetrii).
-        const link = window.document.createElement("a");
-        link.href = url; link.download = document.filename; link.click();
-      } else window.open(url, "_blank", "noopener");
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-    } catch (failure) { notify(failure.message, "error"); }
-  }
-  async function reanalyze() {
-    try { await send(`/api/projects/${project.id}/documents/${document.id}/reanalyze`, "POST"); notify(`Ponowna analiza: ${document.filename}`); onChanged(); } catch (failure) { notify(failure.message, "error"); }
-  }
-  async function remove() {
-    if (!(await confirm({ title: "Usunąć dokument?", message: `Plik „${document.filename}” i jego nierozpatrzone propozycje zostaną usunięte. Zatwierdzone i odrzucone decyzje pozostaną.`, danger: true, confirmLabel: "Usuń dokument" }))) return;
-    try { await send(`/api/projects/${project.id}/documents/${document.id}`, "DELETE"); notify("Dokument usunięty"); onChanged(); } catch (failure) { notify(failure.message, "error"); }
-  }
-  return <div className="doc-row" data-testid="document-row">
-    <div className="doc-main">
-      <strong>{document.filename} {isCad(document) && <span className="badge neutral">{document.format.toUpperCase()}</span>}</strong>
-      <small>{size(document.size)}{document.pages && !isCad(document) ? ` · ${document.pages} str.` : ""} · {fmt(document.uploaded_at)}{document.status === "gotowy" ? ` · ${counts} propozycji` : ""}</small>
-      {document.error && <small className="doc-warning">{document.error}</small>}
-      {(document.warnings || []).map(warning => <small className="doc-warning" key={warning}>⚠ {warning}</small>)}
-    </div>
-    <span className={`badge ${tone}`}>{label}</span>
-    <div className="card-actions">
-      <button type="button" onClick={open}>{isCad(document) ? "Pobierz" : "Otwórz"}</button>
-      {canEdit && <AsyncButton onClick={reanalyze} busyLabel="…" disabled={document.status === "analiza" || document.status === "oczekuje"}>Analizuj ponownie</AsyncButton>}
-      {canEdit && <button type="button" className="danger-button" onClick={remove}>Usuń</button>}
-    </div>
+/* ---------- 1. Wgrywanie ---------- */
+
+function TypeTile({ type, label, hint, icon, onFiles }) {
+  const input = useRef(null);
+  const [over, setOver] = useState(false);
+  return <div className={`type-tile ${over ? "over" : ""}`} data-testid={`tile-${type}`}
+    onDragOver={event => { event.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
+    onDrop={event => { event.preventDefault(); setOver(false); onFiles(type, event.dataTransfer.files); }}>
+    <span className="type-icon" aria-hidden="true">{icon}</span>
+    <strong>{label}</strong>
+    <small>{hint}</small>
+    <small className="drop-hint">Przeciągnij pliki tutaj</small>
+    <button type="button" className="secondary" onClick={() => input.current?.click()}>Wybierz pliki z dysku</button>
+    <input ref={input} type="file" multiple hidden accept={type === "rysunek" ? ".pdf,.dwg,.dxf,application/pdf" : ".pdf,application/pdf"} aria-label={`Pliki: ${label}`}
+      onChange={event => { onFiles(type, event.target.files); event.target.value = ""; }} />
   </div>;
 }
 
-function EditForm({ item, onSave, onCancel }) {
-  const fields = FIELDS[item.kind] || [];
-  const [form, setForm] = useState(() => Object.fromEntries(fields.map(([field]) => [field, item.payload[field] ?? ""])));
-  useEscape(onCancel, true);
-  async function submit(event) {
+function QueueRow({ entry, document, onOpen }) {
+  const phase = entry.phase === "wysłany" ? (document?.status === "gotowy" ? "gotowy" : document?.status === "ręcznie" || document?.status === "błąd" ? "ręcznie" : "analiza") : entry.phase;
+  const text = { wysyłanie: `Wysyłanie… ${entry.progress}%`, analiza: "Odczytywanie danych…", gotowy: "Gotowe do sprawdzenia", ręcznie: "Do uzupełnienia ręcznie" }[phase] || entry.message;
+  const percent = phase === "wysyłanie" ? entry.progress : 100;
+  return <li className={`queue-row phase-${phase}`} data-testid="queue-row">
+    <div className="queue-name"><strong>{entry.name}</strong><small>{TYPE_LABEL[entry.type]}</small></div>
+    <div className="queue-progress" role="progressbar" aria-valuenow={percent} aria-valuemin="0" aria-valuemax="100" aria-label={`Postęp: ${entry.name}`}><i style={{ width: `${percent}%` }} className={phase === "analiza" ? "pulse" : ""} /></div>
+    <span className="queue-status">{text}</span>
+    {(phase === "gotowy" || phase === "ręcznie") && <button type="button" className="primary" onClick={() => onOpen(entry.documentId)}>Sprawdź</button>}
+  </li>;
+}
+
+function Upload({ project, documents, notify, onUploaded, onOpen }) {
+  const [queue, setQueue] = useState([]);
+  const update = (id, change) => setQueue(current => current.map(entry => (entry.id === id ? { ...entry, ...change } : entry)));
+  async function addFiles(type, list) {
+    const files = Array.from(list || []);
+    if (!files.length) return;
+    const entries = files.map((file, index) => ({ id: `${Date.now()}-${index}-${file.name}`, file, name: file.name, type, progress: 0, phase: "wysyłanie" }));
+    setQueue(current => [...entries, ...current]);
+    let sent = 0;
+    for (const entry of entries) {
+      if (!ACCEPTED.test(entry.name)) { update(entry.id, { phase: "odrzucony", message: "Obsługiwane są pliki PDF, DWG i DXF" }); continue; }
+      if (entry.file.size > MAX_MB * 1048576) { update(entry.id, { phase: "odrzucony", message: `Plik większy niż ${MAX_MB} MB` }); continue; }
+      try {
+        const result = await uploadFile(`/api/projects/${project.id}/documents?category=${type}`, entry.file, progress => update(entry.id, { progress }));
+        if (result?.accepted?.length) { update(entry.id, { phase: "wysłany", documentId: result.accepted[0].id, progress: 100 }); sent += 1; }
+        else if (result?.duplicates?.length) update(entry.id, { phase: "duplikat", message: `Już wgrany jako „${result.duplicates[0].existing}”` });
+        else update(entry.id, { phase: "odrzucony", message: result?.rejected?.[0]?.reason || "Plik odrzucony" });
+      } catch (failure) { update(entry.id, { phase: "błąd", message: failure.message }); }
+      onUploaded();
+    }
+    if (sent) notify(`Wysłano ${sent} plik(ów) — odczytuję dane`);
+  }
+  const byId = new Map((documents || []).map(item => [item.id, item]));
+  return <section className="card upload-card-v2">
+    <h2>Dodaj dokumenty</h2>
+    <p className="hint">Upuść pliki na kafelek z właściwym rodzajem dokumentu (można wiele naraz). Rodzaj podpowiada aplikacji, co odczytać.</p>
+    <div className="type-tiles">{DOC_TYPES.map(([type, label, hint, icon]) => <TypeTile key={type} type={type} label={label} hint={hint} icon={icon} onFiles={addFiles} />)}</div>
+    {queue.length > 0 && <ul className="upload-queue" aria-label="Wgrywane pliki">{queue.map(entry => <QueueRow key={entry.id} entry={entry} document={byId.get(entry.documentId)} onOpen={onOpen} />)}</ul>}
+  </section>;
+}
+
+/* ---------- Lista dokumentów ---------- */
+
+function docState(document, pending) {
+  if (document.status === "oczekuje" || document.status === "analiza") return ["Odczytywanie…", "neutral"];
+  if (document.status === "ręcznie" || document.status === "błąd") return ["Uzupełnij ręcznie", "warning"];
+  return pending ? [`Do sprawdzenia: ${pending}`, "warning"] : ["Sprawdzony", "success"];
+}
+
+function DocumentList({ project, documents, suggestions, canEdit, notify, onOpen, onChanged }) {
+  const confirm = useConfirm();
+  if (!documents?.length) return <Empty>Brak dokumentów. Dodaj pierwszy plik powyżej.</Empty>;
+  const pendingFor = id => suggestions.filter(item => item.status === "nowa" && item.sources.some(source => source.document_id === id)).length;
+  async function remove(document) {
+    if (!(await confirm({ title: "Usunąć dokument?", message: `„${document.filename}” i jego niesprawdzone pozycje zostaną usunięte. Zatwierdzone dane zostają w projekcie.`, danger: true, confirmLabel: "Usuń dokument" }))) return;
+    try { await send(`/api/projects/${project.id}/documents/${document.id}`, "DELETE"); notify("Dokument usunięty"); onChanged(); } catch (failure) { notify(failure.message, "error"); }
+  }
+  return <section className="card"><div className="card-head"><h2>Dokumenty budowy</h2><span className="badge neutral">{documents.length}</span></div>
+    <ul className="doc-list">{documents.map(document => {
+      const [label, tone] = docState(document, pendingFor(document.id));
+      return <li key={document.id} className="doc-item" data-testid="document-row">
+        <button type="button" className="doc-open" onClick={() => onOpen(document.id)}>
+          <strong>{document.filename}</strong>
+          <small>{TYPE_LABEL[document.category] || "Inny"}{isCad(document) ? ` · ${document.format.toUpperCase()}` : document.pages ? ` · ${document.pages} str.` : ""} · {fmt(document.uploaded_at)}</small>
+        </button>
+        <span className={`badge ${tone}`}>{label}</span>
+        <div className="card-actions"><button type="button" className="primary" onClick={() => onOpen(document.id)}>Sprawdź</button>{canEdit && <button type="button" className="danger-button" onClick={() => remove(document)}>Usuń</button>}</div>
+      </li>;
+    })}</ul>
+  </section>;
+}
+
+/* ---------- 2. Weryfikacja: podgląd po lewej, pozycje po prawej ---------- */
+
+function usePreview(path) {
+  const [state, setState] = useState({ url: "", error: "" });
+  useEffect(() => {
+    if (!path) { setState({ url: "", error: "" }); return undefined; }
+    let active = true, objectUrl = "";
+    setState({ url: "", error: "" });
+    api(path).then(blob => { if (!active) return; objectUrl = URL.createObjectURL(blob); setState({ url: objectUrl, error: "" }); })
+      .catch(error => { if (active) setState({ url: "", error: error.message || "Podgląd niedostępny" }); });
+    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [path]);
+  return state;
+}
+
+function Preview({ project, document, page, setPage }) {
+  const base = `/api/projects/${project.id}/documents/${document.id}`;
+  const pages = Math.max(1, document.pages || 1);
+  const path = isCad(document) ? `${base}/pages/1.svg` : document.pages ? `${base}/pages/${page}.png?scale=1.5` : "";
+  const preview = usePreview(path);
+  const [zoomed, setZoomed] = useState(false);
+  async function openOriginal() {
+    try {
+      const blob = await api(`${base}/file`);
+      const url = URL.createObjectURL(blob);
+      if (isCad(document)) { const link = window.document.createElement("a"); link.href = url; link.download = document.filename; link.click(); }
+      else window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch { /* brak pliku — podgląd i tak pokazuje komunikat */ }
+  }
+  return <section className="card review-preview" data-testid="preview">
+    <div className="preview-bar">
+      {!isCad(document) && pages > 1 ? <div className="pager"><button type="button" aria-label="Poprzednia strona" disabled={page <= 1} onClick={() => setPage(page - 1)}>‹</button><span>Strona {page} / {pages}</span><button type="button" aria-label="Następna strona" disabled={page >= pages} onClick={() => setPage(page + 1)}>›</button></div> : <span />}
+      <div className="card-actions">
+        {preview.url && <button type="button" className="secondary small" aria-pressed={zoomed} onClick={() => setZoomed(value => !value)}>{zoomed ? "Dopasuj" : "Powiększ"}</button>}
+        <button type="button" className="secondary small" onClick={openOriginal}>{isCad(document) ? "Pobierz oryginał" : "Otwórz oryginał"}</button>
+      </div>
+    </div>
+    <div className="preview-frame">
+      {preview.url ? <img src={preview.url} alt={`${document.filename}${isCad(document) ? "" : `, strona ${page}`}`} style={zoomed ? { width: "250%", maxWidth: "none" } : undefined} onDoubleClick={() => setZoomed(value => !value)} />
+        : preview.error || !path ? <Empty>Podgląd niedostępny{preview.error ? ` — ${preview.error}` : ""}. Użyj przycisku „{isCad(document) ? "Pobierz" : "Otwórz"} oryginał”.</Empty> : <Loader />}
+    </div>
+  </section>;
+}
+
+function EditFields({ kind, values, onChange, typeOptions, listId }) {
+  return <>
+    {(FIELDS[kind] || []).map(([field, label, type]) => <label key={field}>{label}
+      <input type={type || "text"} step="any" min={type === "number" ? 0 : undefined} value={values[field] ?? ""} list={field === "group" ? listId : undefined}
+        onChange={event => onChange({ ...values, [field]: event.target.value })} /></label>)}
+    {kind === "bom_line" && <datalist id={listId}>{typeOptions.map(option => <option key={option} value={option} />)}</datalist>}
+  </>;
+}
+
+function ItemRow({ item, documentId, canEdit, error, typeOptions, onSave, onStatus, onFocus }) {
+  const [form, setForm] = useState(null);
+  const cancel = useCallback(() => setForm(null), []);
+  useEscape(cancel, !!form);
+  const info = describe(item);
+  const [label, tone] = STATUS[item.status];
+  const missingType = item.kind === "bom_line" && !item.payload.group;
+  const conflict = item.payload.conflict;
+  async function save(event) {
     event.preventDefault();
     const changes = {};
-    for (const [field, , type] of fields) {
-      const value = type === "number" ? Number(form[field]) : String(form[field]).trim();
-      if (value !== item.payload[field]) changes[field] = value;
+    for (const [field, , type] of FIELDS[item.kind] || []) {
+      const raw = form[field];
+      if (type === "number" && (raw === "" || raw === null)) continue;
+      const value = type === "number" ? Number(raw) : String(raw ?? "").trim();
+      if (value !== (item.payload[field] ?? "")) changes[field] = value;
     }
-    await onSave(changes);
+    if (await onSave(item, changes)) cancel();
   }
-  return <form className="suggestion-edit" onSubmit={submit} aria-label={`Popraw: ${describe(item).title}`}>
-    {fields.map(([field, label, type], index) => <label key={field}>{label}<input autoFocus={index === 0} type={type || "text"} step="any" min={type === "number" ? 0 : undefined} required={(REQUIRED[item.kind] || []).includes(field)} value={form[field]} onChange={event => setForm(current => ({ ...current, [field]: event.target.value }))} /></label>)}
-    <div className="card-actions"><button className="primary">Zapisz i zatwierdź</button><button type="button" className="secondary" onClick={onCancel}>Anuluj</button></div>
+  if (form) {
+    return <li className="item-row editing" data-testid="item-row">
+      <form onSubmit={save} className="item-edit" aria-label={`Edycja: ${info.title}`}>
+        <EditFields kind={item.kind} values={form} onChange={setForm} typeOptions={typeOptions} listId={`types-${item.id}`} />
+        <div className="card-actions"><button className="primary">Zapisz</button><button type="button" className="secondary" onClick={cancel}>Anuluj</button></div>
+      </form>
+    </li>;
+  }
+  const startEdit = () => { onFocus(sourcePage(item, documentId)); if (canEdit) setForm(Object.fromEntries((FIELDS[item.kind] || []).map(([field]) => [field, item.payload[field] ?? ""]))); };
+  return <li className={`item-row status-${item.status}`} data-testid="item-row">
+    <button type="button" className="item-main" onClick={startEdit} title={canEdit ? "Kliknij, aby poprawić" : "Pokaż w podglądzie"}>
+      <span className="item-title"><strong>{info.title}</strong>{info.value && <span className="item-value">{info.value}</span>}</span>
+      {info.detail && <small>{info.detail}</small>}
+      {item.kind === "bom_line" && item.payload.group && <small>Typ stołu: {item.payload.group}</small>}
+      {missingType && <small className="needs">Brak typu stołu — kliknij, aby wpisać</small>}
+      {conflict && <small className="needs">Różne ilości w dokumentach: {conflict.map(value => qty(value)).join(" / ")}</small>}
+      {error && <small className="item-error" role="alert">{error}</small>}
+    </button>
+    <span className={`badge ${tone}`}>{label}</span>
+    {canEdit && <div className="item-actions">
+      {item.status === "nowa"
+        ? <><button type="button" className="approve" aria-label={`Zatwierdź: ${info.title}`} onClick={() => onStatus(item, "zatwierdzona")}>✓</button><button type="button" className="reject" aria-label={`Odrzuć: ${info.title}`} onClick={() => onStatus(item, "odrzucona")}>✕</button></>
+        : <button type="button" className="secondary small" onClick={() => onStatus(item, "nowa")}>Cofnij</button>}
+    </div>}
+  </li>;
+}
+
+function ManualForm({ project, document, page, typeOptions, notify, onAdded }) {
+  const kinds = MANUAL_KINDS[document.category] || ["bom_line", "structure_type", "numbering", "zone", "torque"];
+  const [kind, setKind] = useState(kinds[0]);
+  const [values, setValues] = useState({});
+  const [busy, setBusy] = useState(false);
+  async function add(approve) {
+    setBusy(true);
+    const payload = {};
+    for (const [field, , type] of FIELDS[kind]) {
+      const raw = values[field];
+      if (raw === undefined || raw === "") continue;
+      payload[field] = type === "number" ? Number(raw) : String(raw).trim();
+    }
+    try {
+      await send(`/api/projects/${project.id}/suggestions`, "POST", { kind, payload, document_id: document.id, page, approve });
+      notify(approve ? "Dodano i zatwierdzono" : "Dodano pozycję do sprawdzenia");
+      setValues({}); onAdded();
+    } catch (failure) { notify(failure.message, "error"); } finally { setBusy(false); }
+  }
+  return <form className="card manual-form" onSubmit={event => { event.preventDefault(); add(false); }} aria-label="Dodaj pozycję ręcznie">
+    <h3>Dodaj pozycję ręcznie</h3>
+    <p className="hint">Przepisz dane z podglądu po lewej (strona {page}).</p>
+    <label>Rodzaj<select value={kind} onChange={event => { setKind(event.target.value); setValues({}); }}>{kinds.map(option => <option key={option} value={option}>{KINDS.find(([id]) => id === option)?.[1]}</option>)}</select></label>
+    <div className="manual-fields"><EditFields kind={kind} values={values} onChange={setValues} typeOptions={typeOptions} listId="types-manual" /></div>
+    <div className="card-actions"><button type="button" className="primary" disabled={busy} onClick={() => add(true)}>Dodaj i zatwierdź</button><button className="secondary" disabled={busy}>Dodaj</button></div>
   </form>;
 }
 
-function SuggestionRow({ item, canEdit, onUpdate }) {
-  const [editing, setEditing] = useState(false);
-  const info = describe(item);
-  const [level, tone] = confidence(item.confidence);
-  const conflict = item.payload.conflict;
-  // Rysunek CAD ma jedną „stronę” (przestrzeń modelu) — numer strony nic nie mówi.
-  const where = source => (/\.(dwg|dxf)$/i.test(source.filename) ? source.filename : `${source.filename} s. ${source.page}`);
-  const pages = item.sources.slice(0, 4).map(where).join("; ");
-  async function save(changes) { if (await onUpdate(item, { status: "zatwierdzona", ...(Object.keys(changes).length ? { payload: changes } : {}) })) setEditing(false); }
-  return <div className={`suggestion-row status-${item.status}`} data-testid="suggestion-row">
-    <div className="suggestion-main">
-      <div className="suggestion-title"><strong>{info.title}</strong>{info.value && <span className="suggestion-value">{info.value}</span>}</div>
-      {info.detail && <small>{info.detail}</small>}
-      <small className="suggestion-source" title={item.sources.map(source => `${source.filename}, str. ${source.page}: ${source.excerpt}`).join("\n")}>
-        Źródło: {pages || "plik usunięty"}{item.sources.length > 4 ? ` i ${item.sources.length - 4} więcej` : ""}
-      </small>
-      {conflict && <small className="doc-warning">⚠ Rozbieżność ilości między źródłami: {conflict.map(value => qty(value)).join(" / ")} — wymaga potwierdzenia</small>}
-      {item.edited && <small className="hint">Poprawione ręcznie (parser odczytał: {describe({ ...item, payload: item.original }).value || describe({ ...item, payload: item.original }).title})</small>}
-      {item.applied_ref?.startsWith("zone:") && <small className="hint">Dodano do stref budowy.</small>}
-    </div>
-    <div className="suggestion-side">
-      <span className={`badge ${tone}`} title={`Pewność odczytu ${Math.round(item.confidence * 100)}%`}>pewność {level}</span>
-      {item.status !== "nowa" && <span className={`badge ${item.status === "zatwierdzona" ? "success" : "danger"}`}>{STATUS_LABEL[item.status]}</span>}
-    </div>
-    {canEdit && !editing && <div className="card-actions suggestion-actions">
-      {item.status === "nowa" ? <>
-        <AsyncButton className="primary" busyLabel="…" onClick={() => onUpdate(item, { status: "zatwierdzona" })}>Zatwierdź</AsyncButton>
-        <button type="button" onClick={() => setEditing(true)}>Popraw</button>
-        <AsyncButton busyLabel="…" onClick={() => onUpdate(item, { status: "odrzucona" })}>Odrzuć</AsyncButton>
-      </> : <AsyncButton busyLabel="…" onClick={() => onUpdate(item, { status: "nowa" })}>Cofnij decyzję</AsyncButton>}
-    </div>}
-    {editing && <EditForm item={item} onSave={save} onCancel={() => setEditing(false)} />}
-  </div>;
-}
-
-const NO_TYPE = "bez przypisanego typu";
-
-/** Pozycje BOM bez typu (np. z tabel instrukcji): wybór typu i zatwierdzenie jednym kliknięciem. */
-function AssignType({ items, typeOptions, onBulk, onReject }) {
-  const [code, setCode] = useState("");
-  const waiting = items.filter(item => item.status === "nowa");
-  if (!waiting.length) return null;
-  return <div className="assign-type">
-    <span className="needs">Te pozycje nie mają typu konstrukcji — ilość „na stół” nie wiadomo, do którego stołu należy.</span>
-    <select aria-label="Typ dla pozycji bez typu" value={code} onChange={event => setCode(event.target.value)}><option value="">Wybierz typ…</option>{typeOptions.map(option => <option key={option} value={option}>{option}</option>)}</select>
-    <button type="button" className="secondary" disabled={!code} onClick={() => onBulk(waiting, NO_TYPE, code)}>Przypisz {code || "typ"} i zatwierdź ({waiting.length})</button>
-    <button type="button" className="danger-button" onClick={() => onReject(waiting)}>Odrzuć pozycje bez typu ({waiting.length})</button>
-    <small className="hint">Typowo to tabele z instrukcji montażu. Jeśli wybrany typ ma już BOM (np. z zestawienia materiałów), te pozycje tylko go potwierdzą — pozycje, których w BOM nie ma, nie zostaną dodane, żeby nie liczyć materiału dwa razy. Gdy typ nie ma BOM, staną się jego BOM.</small>
-  </div>;
-}
-
-function KindSection({ kind, title, hint, items, canEdit, onUpdate, onBulk, onReject, typeOptions = [] }) {
-  const [open, setOpen] = useState(items.length <= 40);
-  const groups = useMemo(() => {
-    if (kind !== "bom_line") return [["", items]];
-    const map = new Map();
-    for (const item of items) { const key = item.payload.group || NO_TYPE; map.set(key, [...(map.get(key) || []), item]); }
-    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b, "pl", { numeric: true }));
-  }, [kind, items]);
-  // Zbiorczo tylko to, co da się zastosować: bez rozbieżności i (dla BOM) z typem konstrukcji.
-  const bulkable = items.filter(item => item.status === "nowa" && !item.payload.conflict && (kind !== "bom_line" || item.payload.group));
-  return <section className="card suggestion-section" data-testid={`section-${kind}`}>
-    <div className="card-head"><h2>{title}</h2><span className="badge neutral">{items.length}</span>
-      <div className="card-actions">
-        {canEdit && bulkable.length > 0 && <button type="button" className="secondary" onClick={() => onBulk(bulkable, title)}>Zatwierdź wszystkie ({bulkable.length})</button>}
-        <button type="button" onClick={() => setOpen(value => !value)} aria-expanded={open}>{open ? "Zwiń" : "Rozwiń"}</button>
-      </div>
-    </div>
-    <p className="hint">{hint}</p>
-    {open && groups.map(([group, list]) => <div key={group || "all"}>
-      {group && <h3 className="suggestion-group">Typ konstrukcji: {group} <small>({list.length})</small></h3>}
-      {group === NO_TYPE && canEdit && <AssignType items={list} typeOptions={typeOptions} onBulk={onBulk} onReject={onReject} />}
-      {list.map(item => <SuggestionRow key={item.id} item={item} canEdit={canEdit} onUpdate={onUpdate} />)}
-    </div>)}
-  </section>;
-}
-
-function Review({ project, canEdit, notify, suggestions, reload, onChanged }) {
+function Review({ project, document, suggestions, canEdit, notify, reload, onBack, onChanged }) {
   const confirm = useConfirm();
-  const [status, setStatus] = useState("nowa");
-  const [query, setQuery] = useState("");
-  const all = suggestions || [];
-  const counts = all.reduce((sum, item) => ({ ...sum, [item.status]: (sum[item.status] || 0) + 1 }), {});
-  const needle = query.trim().toLowerCase();
-  const types = useLoad(() => api(`/api/projects/${project.id}/types`), [project.id, all.length]);
-  const typeOptions = [...new Set([...(Array.isArray(types.data) ? types.data : []).map(type => type.code), ...all.filter(item => item.kind === "structure_type" && item.status !== "odrzucona").map(item => item.payload.code)])].sort();
-  const visible = all.filter(item => (status === "wszystkie" || item.status === status) && (!needle || JSON.stringify(item.payload).toLowerCase().includes(needle) || item.sources.some(source => source.filename.toLowerCase().includes(needle))));
-  async function update(item, body) {
-    try {
-      await send(`/api/projects/${project.id}/suggestions/${item.id}`, "PATCH", body);
-      const name = describe(item).title;
-      notify(body.status === "zatwierdzona" ? `Zatwierdzono: ${name}` : body.status === "odrzucona" ? `Odrzucono: ${name}` : `Przywrócono do przeglądu: ${name}`);
-      await reload(); onChanged?.();
-      return true;
-    } catch (failure) { notify(failure.message, "error"); return false; }
+  const [page, setPage] = useState(1);
+  const [errors, setErrors] = useState({});
+  const [showRejected, setShowRejected] = useState(false);
+  const [bulkType, setBulkType] = useState("");
+  // Esc wraca do listy — ale nie wtedy, gdy poprawiana jest pozycja (wtedy Esc anuluje tylko edycję).
+  const backUnlessEditing = useCallback(() => { if (!window.document.querySelector(".item-row.editing")) onBack(); }, [onBack]);
+  useEscape(backUnlessEditing, true);
+  const items = suggestions.filter(item => item.sources.some(source => source.document_id === document.id));
+  const visible = items.filter(item => showRejected || item.status !== "odrzucona");
+  const pending = items.filter(item => item.status === "nowa");
+  const untyped = pending.filter(item => item.kind === "bom_line" && !item.payload.group);
+  const ready = pending.filter(item => !untyped.includes(item));
+  const counts = { zatwierdzona: items.filter(item => item.status === "zatwierdzona").length, odrzucona: items.filter(item => item.status === "odrzucona").length };
+  const types = useLoad(() => api(`/api/projects/${project.id}/types`), [project.id, counts.zatwierdzona]);
+  const typeOptions = [...new Set([...(Array.isArray(types.data) ? types.data : []).map(type => type.code), ...suggestions.filter(item => item.kind === "structure_type" && item.status !== "odrzucona").map(item => item.payload.code)])].sort();
+  const done = () => { reload(); onChanged?.(); };
+
+  async function patch(item, body) {
+    try { await send(`/api/projects/${project.id}/suggestions/${item.id}`, "PATCH", body); setErrors(current => ({ ...current, [item.id]: "" })); done(); return true; }
+    catch (failure) { setErrors(current => ({ ...current, [item.id]: failure.message })); return false; }
   }
-  async function bulk(items, title, group) {
-    const message = group
-      ? `${items.length} pozycji BOM bez typu dostanie typ ${group} (ilości jako „na jeden stół ${group}”) i zostanie zatwierdzonych.`
-      : `Zostanie zatwierdzonych ${items.length} propozycji z sekcji „${title}”. Pozycje z rozbieżnością ilości i pozycje BOM bez typu trzeba rozpatrzyć osobno.`;
-    if (!(await confirm({ title: group ? `Przypisać typ ${group}?` : "Zatwierdzić wszystkie?", message, confirmLabel: `Zatwierdź ${items.length}` }))) return;
+  const save = (item, changes) => (Object.keys(changes).length ? patch(item, { payload: changes }) : Promise.resolve(true));
+  const setStatus = (item, status) => patch(item, { status });
+  async function approveAll(group) {
+    const target = group ? untyped : ready;
+    if (!target.length) return;
+    if (!(await confirm({ title: group ? `Ustawić typ ${group}?` : "Zatwierdzić wszystkie?", message: group ? `${target.length} pozycji bez typu dostanie typ ${group} i zostanie zatwierdzonych.` : `Zostanie zatwierdzonych ${target.length} pozycji z tego dokumentu.`, confirmLabel: `Zatwierdź ${target.length}` }))) return;
     try {
-      const result = await send(`/api/projects/${project.id}/suggestions/bulk`, "POST", { ids: items.map(item => item.id), status: "zatwierdzona", ...(group ? { group } : {}) });
-      notify(group ? `Typ ${group}: zatwierdzono ${result.updated} pozycji` : `Zatwierdzono ${result.updated} propozycji`);
-      if (result.failed?.length) notify(`Pominięto ${result.failed.length}: ${result.failed.slice(0, 3).map(item => item.reason).join(" · ")}${result.failed.length > 3 ? " …" : ""}`, "error");
-      await reload(); onChanged?.();
-    }
-    catch (failure) { notify(failure.message, "error"); }
-  }
-  async function rejectAll(items) {
-    if (!(await confirm({ title: "Odrzucić pozycje bez typu?", message: `${items.length} pozycji BOM bez typu konstrukcji zostanie odrzuconych. Decyzję można cofnąć w widoku „Odrzucone”.`, danger: true, confirmLabel: `Odrzuć ${items.length}` }))) return;
-    try {
-      const result = await send(`/api/projects/${project.id}/suggestions/bulk`, "POST", { ids: items.map(item => item.id), status: "odrzucona" });
-      notify(`Odrzucono ${result.updated} pozycji`); await reload(); onChanged?.();
+      const result = await send(`/api/projects/${project.id}/suggestions/bulk`, "POST", { ids: target.map(item => item.id), status: "zatwierdzona", ...(group ? { group } : {}) });
+      setErrors(Object.fromEntries((result.failed || []).map(failure => [failure.id, failure.reason])));
+      notify(result.failed?.length ? `Zatwierdzono ${result.updated}; ${result.failed.length} wymaga poprawki (opis przy pozycji)` : `Zatwierdzono ${result.updated} pozycji`, result.failed?.length ? "error" : "success");
+      done();
     } catch (failure) { notify(failure.message, "error"); }
   }
-  return <>
-    <div className="toolbar review-toolbar">
-      <nav className="view-switch" aria-label="Filtr propozycji">{[["nowa", "Do przeglądu"], ["zatwierdzona", "Zatwierdzone"], ["odrzucona", "Odrzucone"], ["wszystkie", "Wszystkie"]].map(([id, label]) => <button type="button" key={id} className={status === id ? "active" : ""} onClick={() => setStatus(id)}>{label} ({id === "wszystkie" ? all.length : counts[id] || 0})</button>)}</nav>
-      <input type="search" aria-label="Szukaj w propozycjach" placeholder="Szukaj (nazwa, kod, plik)…" value={query} onChange={event => setQuery(event.target.value)} />
+  async function changeType(category) {
+    try { await send(`/api/projects/${project.id}/documents/${document.id}`, "PATCH", { category }); notify(`Rodzaj: „${TYPE_LABEL[category]}” — odczytuję ponownie`); done(); } catch (failure) { notify(failure.message, "error"); }
+  }
+  const reading = document.status === "oczekuje" || document.status === "analiza";
+  return <div className="review-v2" data-testid="review">
+    <div className="review-head">
+      <button type="button" className="secondary" onClick={onBack}>← Dokumenty</button>
+      <div className="review-title"><h2>{document.filename}</h2>
+        <small>{pending.length} wymaga potwierdzenia · {counts.zatwierdzona} zatwierdzonych{counts.odrzucona ? ` · ${counts.odrzucona} odrzuconych` : ""}</small></div>
+      {canEdit && <label className="inline-label">Rodzaj<select aria-label="Rodzaj dokumentu" value={DOC_TYPES.some(([type]) => type === document.category) ? document.category : ""} onChange={event => changeType(event.target.value)}>
+        {!DOC_TYPES.some(([type]) => type === document.category) && <option value="">Inny</option>}
+        {DOC_TYPES.map(([type, label]) => <option key={type} value={type}>{label}</option>)}</select></label>}
     </div>
-    {!canEdit && <p className="hint">Propozycje zatwierdza kierownik budowy. Masz podgląd.</p>}
-    {!all.length && <Empty>Brak propozycji. Wgraj dokumenty PDF, DWG lub DXF — po analizie pojawią się tutaj.</Empty>}
-    {all.length > 0 && !visible.length && <Empty>Brak propozycji w tym widoku.</Empty>}
-    {KINDS.map(([kind, title, hint]) => {
-      const items = visible.filter(item => item.kind === kind);
-      return items.length ? <KindSection key={`${kind}-${status}`} kind={kind} title={title} hint={hint} items={items} canEdit={canEdit} onUpdate={update} onBulk={bulk} onReject={rejectAll} typeOptions={typeOptions} /> : null;
-    })}
-    {all.length > 0 && <p className="hint">Nic nie trafia do danych budowy bez zatwierdzenia. Cofnięcie decyzji usuwa utworzone dane, o ile nie są już używane.</p>}
-  </>;
+    <div className="review-grid">
+      <Preview project={project} document={document} page={page} setPage={setPage} />
+      <div className="review-items">
+        {reading && <div className="alert info">Odczytuję dane z pliku…</div>}
+        {!reading && document.error && <div className="alert info">{document.error}</div>}
+        {canEdit && pending.length > 0 && <div className="review-actions">
+          {ready.length > 0 && <button type="button" className="primary" onClick={() => approveAll()}>Zatwierdź wszystkie ({ready.length})</button>}
+          {untyped.length > 0 && <span className="untyped">{untyped.length} bez typu stołu:
+            <input aria-label="Typ dla pozycji bez typu" list="types-bulk" placeholder="np. 2x26" value={bulkType} onChange={event => setBulkType(event.target.value)} />
+            <datalist id="types-bulk">{typeOptions.map(option => <option key={option} value={option} />)}</datalist>
+            <button type="button" className="secondary" disabled={!bulkType.trim()} onClick={() => approveAll(bulkType.trim())}>Ustaw i zatwierdź</button></span>}
+        </div>}
+        {!items.length && !reading && <Empty>Nic nie odczytano automatycznie. Dodaj pozycje ręcznie poniżej.</Empty>}
+        {KINDS.map(([kind, title]) => {
+          const list = visible.filter(item => item.kind === kind);
+          return list.length ? <section key={kind} className="item-group" data-testid={`group-${kind}`}><h3>{title} <small>({list.length})</small></h3>
+            <ul>{list.map(item => <ItemRow key={item.id} item={item} documentId={document.id} canEdit={canEdit} error={errors[item.id]} typeOptions={typeOptions} onSave={save} onStatus={setStatus} onFocus={setPage} />)}</ul>
+          </section> : null;
+        })}
+        {counts.odrzucona > 0 && <label className="check"><input type="checkbox" checked={showRejected} onChange={event => setShowRejected(event.target.checked)} /> Pokaż odrzucone</label>}
+        {canEdit && <ManualForm project={project} document={document} page={page} typeOptions={typeOptions} notify={notify} onAdded={done} />}
+      </div>
+    </div>
+  </div>;
 }
+
+/* ---------- Zakładka ---------- */
 
 export default function Documents({ project, access, notify, onChanged }) {
   const documents = useLoad(() => api(`/api/projects/${project.id}/documents`), [project.id]);
   const suggestions = useLoad(() => api(`/api/projects/${project.id}/suggestions`), [project.id]);
+  const [openId, setOpenId] = useState(null);
   const canEdit = access.isManager && !project.archived;
+  const reloadDocs = documents.reload, reloadSuggestions = suggestions.reload;
+  const reload = useCallback(() => { reloadDocs(); reloadSuggestions(); }, [reloadDocs, reloadSuggestions]);
   const working = (documents.data || []).some(item => item.status === "oczekuje" || item.status === "analiza");
-  const reloadDocs = documents.reload;
-  const reloadSuggestions = suggestions.reload;
   useEffect(() => {
     if (!working) return undefined;
-    const timer = setInterval(() => { reloadDocs(); reloadSuggestions(); }, 2500);
+    const timer = setInterval(reload, 2000);
     return () => clearInterval(timer);
-  }, [working, reloadDocs, reloadSuggestions]);
-  const refresh = () => { reloadDocs(); reloadSuggestions(); onChanged?.(); };
+  }, [working, reload]);
+  const all = useMemo(() => (Array.isArray(suggestions.data) ? suggestions.data : []), [suggestions.data]);
+  const open = (documents.data || []).find(item => item.id === openId);
+  if (documents.loading && !documents.data) return <Loader />;
+  if (open) return <Review project={project} document={open} suggestions={all} canEdit={canEdit} notify={notify} reload={reload} onBack={() => setOpenId(null)} onChanged={onChanged} />;
   return <>
-    <div className="split">
-      {canEdit ? <Upload project={project} notify={notify} onUploaded={refresh} /> : <section className="card"><h2>Dokumenty budowy</h2><p className="hint">{project.archived ? "Budowa jest zarchiwizowana — nie przyjmuje nowych dokumentów." : "Dokumenty wgrywa kierownik budowy."}</p></section>}
-      <section className="card"><div className="card-head"><h2>Wgrane pliki</h2><span className="badge neutral">{documents.data?.length || 0}</span>{working && <span className="badge warning">analiza w toku</span>}</div>
-        {documents.error && <div className="alert error" role="alert">{documents.error}</div>}
-        {documents.loading && !documents.data ? <Loader /> : (documents.data || []).map(item => <DocumentRow key={item.id} document={item} project={project} canEdit={canEdit} notify={notify} onChanged={refresh} />)}
-        {!documents.loading && !documents.data?.length && <Empty>Brak dokumentów.</Empty>}
-      </section>
-    </div>
-    <h2 className="section-title">Propozycje z dokumentów</h2>
-    {suggestions.error && <div className="alert error" role="alert">{suggestions.error}</div>}
-    {suggestions.loading && !suggestions.data ? <Loader /> : <Review project={project} canEdit={canEdit} notify={notify} suggestions={suggestions.data} reload={reloadSuggestions} onChanged={onChanged} />}
+    {documents.error && <div className="alert error" role="alert">{documents.error}</div>}
+    {canEdit ? <Upload project={project} documents={documents.data} notify={notify} onUploaded={reload} onOpen={setOpenId} />
+      : <p className="hint">{project.archived ? "Budowa jest zarchiwizowana — nie przyjmuje nowych dokumentów." : "Dokumenty dodaje i zatwierdza kierownik budowy. Masz podgląd."}</p>}
+    <DocumentList project={project} documents={documents.data} suggestions={all} canEdit={canEdit} notify={notify} onOpen={setOpenId} onChanged={() => { reload(); onChanged?.(); }} />
   </>;
 }

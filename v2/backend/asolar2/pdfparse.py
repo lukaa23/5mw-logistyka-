@@ -19,7 +19,8 @@ from dataclasses import dataclass, field
 
 import pdfplumber
 
-PARSER_VERSION = "2.1"
+PARSER_VERSION = "3.0"
+MIN_CONFIDENCE = 0.5
 MAX_PAGES = 400
 
 # --- nagłówki kolumn (porównanie po normalizacji) ------------------------------------------------
@@ -273,44 +274,6 @@ def bom_from_table(rows: list[list[str]], page: int, group: str | None, caption:
     return result
 
 
-def bom_from_text_lines(text: str, page: int, group: str | None, caption: str) -> list[Suggestion]:
-    """Rezerwa: wiersze pod tekstowym nagłówkiem tabeli, gdy pdfplumber nie złożył tabeli."""
-    lines = [norm(line) for line in text.splitlines()]
-    result = []
-    in_table = False
-    for line in lines:
-        tokens = line.split(" ")
-        lowered = line.lower()
-        header_hits = sum(1 for kind in ("description", "opis", "nazwa", "quantit", "ilość", "qty", "spec", "item no", "kod") if kind in lowered)
-        if header_hits >= 2 and re.match(r"^(no\.?|nr|lp\.?|pos\.?)\b", lowered):
-            in_table = True
-            continue
-        if not in_table:
-            continue
-        if not re.match(r"^\d{1,3}\s", line):
-            if re.match(r"^(figure|rys|table|tabela|note|uwaga)", lowered):
-                in_table = False
-            continue
-        # Ilość musi być ostatnim tokenem wiersza, a wiersz musi mieć kod albo wymiar —
-        # odrzuca zdania instrukcji typu „2 Torque 8 N.m” czy „Hex bolt (1 big flat washer…”.
-        qty = parse_number(tokens[-1]) if len(tokens) >= 3 else None
-        if qty is None:
-            continue
-        qty_index = len(tokens) - 1
-        body = tokens[1:qty_index]
-        code = next((token for token in body if ITEM_CODE.match(token)), "")
-        spec = next((token for token in body if token != code and DIMENSION.search(token)), "")
-        if not code and not spec:
-            continue
-        name = " ".join(token for token in body if token not in (code, spec))
-        if not name:
-            continue
-        payload = {"name": name, "code": code, "spec": spec, "quantity": qty, "unit": "szt.", "group": group or "", "caption": caption}
-        key = f"bom|{(group or '').lower()}|{(code or name).lower()}|{spec.lower()}|{qty:g}"
-        result.append(Suggestion("bom_line", key, payload, page, line[:240], 0.65))
-    return result
-
-
 # --- wzorce w tekście ---------------------------------------------------------------------------
 
 def scan_text(text: str, page: int, types: Counter, type_pages: dict, zones: Counter, zone_pages: dict, torques: list):
@@ -397,8 +360,6 @@ def analyze_pdf(content: bytes) -> Analysis:
                 if TOOLS_CUE.search(above) or TOOLS_CUE.search(" ".join(rows[0])):
                     items = [as_tool(item) for item in items]
                 page_bom.extend(items)
-            if not any(item.kind == "bom_line" for item in page_bom):
-                page_bom.extend(bom_from_text_lines(text, number, group, caption))
             analysis.suggestions.extend(page_bom)
             scan_text(text, number, types, type_pages, zones, zone_pages, torques)
             for word in page.extract_words():
@@ -430,6 +391,8 @@ def analyze_pdf(content: bytes) -> Analysis:
     if not analysis.text_pages:
         analysis.warnings.append("Dokument nie zawiera warstwy tekstowej. Do odczytu potrzebny jest OCR (planowany jako opcja).")
     flag_conflicts(analysis.suggestions)
+    # Bez zgadywania: propozycje o niskiej pewności (np. typ wspomniany raz w tekście) pomijamy.
+    analysis.suggestions = [item for item in analysis.suggestions if item.confidence >= MIN_CONFIDENCE or "conflict" in item.payload]
     return analysis
 
 

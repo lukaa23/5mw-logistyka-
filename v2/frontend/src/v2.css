@@ -195,3 +195,75 @@
 .assign-type { display: flex; flex-wrap: wrap; gap: .4rem .6rem; align-items: center; padding: .6rem; margin: .4rem 0 .6rem; border-radius: 10px; background: #fff8ea; font-size: .78rem; }
 .assign-type select { flex: 0 1 180px; }
 .assign-type .hint { flex-basis: 100%; }
+/* Dokumenty (uproszczone): kafelki rodzajów, kolejka z postępem, weryfikacja z podglądem. */
+.upload-card-v2 { margin-bottom: 1rem; }
+.type-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .8rem; margin: .6rem 0; }
+.type-tile { display: grid; justify-items: center; align-content: start; gap: .35rem; padding: 1.4rem 1rem; text-align: center; border: 2px dashed var(--line); border-radius: 14px; background: #fafcfb; transition: border-color .15s, background .15s, transform .15s; min-height: 210px; }
+.type-tile.over { border-color: var(--green-900); background: #e6f3ea; transform: scale(1.02); }
+.type-tile strong { font-size: .95rem; color: var(--green-900); }
+.type-tile small { color: var(--muted); font-size: .72rem; }
+.type-tile .drop-hint { margin-top: .3rem; font-weight: 700; }
+.type-tile button { margin-top: .4rem; }
+.type-icon { font-size: 2rem; line-height: 1; color: var(--green-700); }
+.upload-queue { list-style: none; margin: .8rem 0 0; padding: 0; display: grid; gap: .4rem; }
+.queue-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(90px, 1fr) minmax(0, 1fr) auto; gap: .6rem; align-items: center; padding: .5rem .6rem; border: 1px solid var(--line); border-radius: 10px; font-size: .78rem; }
+.queue-name { display: grid; min-width: 0; }
+.queue-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-name small { color: var(--muted); }
+.queue-progress { height: 8px; border-radius: 99px; background: #e7ecea; overflow: hidden; }
+.queue-progress i { display: block; height: 100%; background: var(--green-700); transition: width .2s; }
+.queue-progress i.pulse { animation: queue-pulse 1.2s ease-in-out infinite; }
+@keyframes queue-pulse { 50% { opacity: .45; } }
+.queue-row.phase-odrzucony .queue-progress i, .queue-row.phase-błąd .queue-progress i, .queue-row.phase-duplikat .queue-progress i { background: #d9b26a; }
+.queue-row.phase-ręcznie .queue-status { color: #9a5b00; }
+.queue-status { color: var(--muted); }
+.doc-list { list-style: none; margin: 0; padding: 0; }
+.doc-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: .6rem; align-items: center; padding: .65rem 0; border-bottom: 1px solid var(--line); }
+.doc-open { display: grid; gap: .1rem; text-align: left; border: 0; background: none; padding: 0; cursor: pointer; font: inherit; color: inherit; min-width: 0; }
+.doc-open strong { overflow-wrap: anywhere; }
+.doc-open small { color: var(--muted); font-size: .7rem; }
+.review-head { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; margin-bottom: .8rem; }
+.review-title { flex: 1 1 260px; min-width: 0; }
+.review-title h2 { margin: 0; font-size: 1.05rem; overflow-wrap: anywhere; }
+.review-title small { color: var(--muted); }
+.review-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.review-preview { position: sticky; top: 90px; padding: .6rem; }
+.preview-bar { display: flex; justify-content: space-between; align-items: center; gap: .5rem; margin-bottom: .4rem; font-size: .75rem; }
+.pager { display: flex; align-items: center; gap: .4rem; }
+.pager button { min-width: 2.2rem; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: .25rem; cursor: pointer; }
+.preview-frame { max-height: 75vh; overflow: auto; border-radius: 10px; background: #f3f5f4; }
+.preview-frame img { display: block; width: 100%; height: auto; }
+.review-items { display: grid; gap: .8rem; }
+.alert.info { background: #eef4fb; border-color: #c9dbef; color: #23577f; }
+.review-actions { display: flex; flex-wrap: wrap; gap: .5rem .8rem; align-items: center; }
+.review-actions .untyped { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; font-size: .78rem; color: #9a5b00; }
+.review-actions .untyped input { width: 7rem; }
+.item-group h3 { margin: 0 0 .3rem; font-size: .85rem; color: var(--green-900); }
+.item-group ul { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.item-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: .5rem; align-items: center; padding: .55rem .7rem; border-bottom: 1px solid var(--line); }
+.item-row:last-child { border-bottom: 0; }
+.item-row.status-odrzucona .item-main { opacity: .55; }
+.item-main { display: grid; gap: .1rem; text-align: left; border: 0; background: none; padding: 0; cursor: pointer; font: inherit; color: inherit; min-width: 0; }
+.item-main:hover strong { text-decoration: underline; }
+.item-main small { color: var(--muted); font-size: .7rem; overflow-wrap: anywhere; }
+.item-title { display: flex; flex-wrap: wrap; gap: .2rem .7rem; align-items: baseline; }
+.item-value { font-weight: 800; color: var(--green-900); }
+.item-error { color: #9b1c1c !important; }
+.item-actions { display: flex; gap: .3rem; }
+.item-actions .approve, .item-actions .reject { width: 2.4rem; height: 2.4rem; border-radius: 10px; border: 1px solid var(--line); background: #fff; font-size: 1rem; cursor: pointer; }
+.item-actions .approve { color: #146c43; border-color: #9fd0b6; }
+.item-actions .approve:hover { background: #e6f3ea; }
+.item-actions .reject { color: #9b1c1c; border-color: #f0c2c2; }
+.item-actions .reject:hover { background: #fdecec; }
+.item-row.editing { display: block; background: var(--green-50); }
+.item-edit, .manual-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .5rem; }
+.item-edit .card-actions { grid-column: 1 / -1; }
+.manual-form h3 { margin: 0; font-size: .9rem; }
+@media (max-width: 900px) {
+  .review-grid { grid-template-columns: 1fr; }
+  .review-preview { position: static; }
+  .preview-frame { max-height: 50vh; }
+  .queue-row { grid-template-columns: 1fr auto; }
+  .queue-progress { grid-column: 1 / -1; }
+  .doc-item { grid-template-columns: 1fr; }
+}

@@ -89,6 +89,14 @@ v2/
 - „Przegląd”: pulpit postępu (zamontowane, odebrane, dziś, braki materiałów, montaż z 14 dni) i prognoza zakończenia liczona z dat montażu — tylko przy danych z ≥ 2 dni, zawsze z wypisanymi założeniami.
 - Raport dzienny PDF: liczby dnia, postęp wg stref, zamontowane stoły, meldunki, dziennik QA/QC, notatki, dostawy.
 
+**Uproszczony import dokumentów (2.2.0)**
+
+- Trzy kafelki rodzajów (BOM / rysunki i schematy / instrukcje) z przeciągnij-i-upuść i „Wybierz pliki z dysku”, osobny pasek postępu dla każdego pliku.
+- Rodzaj dokumentu decyduje o odczycie (bez wyciągania „przy okazji”); bez awaryjnego odczytu wierszy tekstu i bez propozycji o niskiej pewności.
+- Brak „błędów odczytu”: skan / nic nie znaleziono → status „Uzupełnij ręcznie”, podgląd i formularz ręcznych pozycji.
+- Weryfikacja: podgląd po lewej, pozycje po prawej, status przy każdej, edycja jednym kliknięciem, „Zatwierdź wszystkie”.
+- SQLite (tryb lokalny): WAL + `BEGIN IMMEDIATE` — wgrywanie kolejnych plików w trakcie analizy nie kończy się „database is locked”.
+
 **Rysunki DWG i DXF (2.1.0)**
 
 - W „Dokumenty i import” można wgrywać pliki `.dwg` i `.dxf` razem z PDF (rozpoznawane po zawartości, nie tylko po rozszerzeniu).

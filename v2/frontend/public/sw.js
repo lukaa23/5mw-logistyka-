@@ -8,7 +8,7 @@
  * - fallback do index.html wyłącznie dla nawigacji.
  */
 const CACHE_PREFIX = "asolar2-";
-const CACHE_NAME = "asolar2-shell-2.1.1";
+const CACHE_NAME = "asolar2-shell-2.2.0";
 const SHELL = ["/", "/index.html", "/manifest.json", "/icon.svg", "/icon-192.png", "/icon-512.png"];
 
 function shouldHandle(request) {

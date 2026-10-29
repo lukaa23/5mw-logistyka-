@@ -19,6 +19,40 @@ from .tenancy import Document, ProjectEvent, Suggestion, now
 log = logging.getLogger("asolar2.imports")
 
 MAX_SOURCES = 30
+
+# Rodzaj dokumentu wskazany przy wgrywaniu decyduje, co z niego wyciągamy — mniej szumu, nic „przy okazji”.
+KINDS_BY_CATEGORY = {
+    "bom": {"bom_line", "component", "structure_type"},
+    "rysunek": {"numbering", "zone", "structure_type", "drawing_block"},
+    "instrukcja": {"torque", "tool", "structure_type", "bom_line"},
+}
+MANUAL_NOTE = "Nie znaleziono danych do automatycznego odczytu (np. skan albo nietypowy układ). Uzupełnij pozycje ręcznie obok podglądu."
+
+
+def for_category(suggestions, category: str):
+    allowed = KINDS_BY_CATEGORY.get(category)
+    if allowed is None:  # „auto”/„inne” i dokumenty sprzed tej wersji — wszystko
+        return list(suggestions)
+    result = [item for item in suggestions if item.kind in allowed]
+    if category == "instrukcja":
+        # Z instrukcji tylko pozycje przypisane do typu (tabela pod podpisem „… for 1x42”); listy bez typu
+        # dublowałyby BOM i wymagały zgadywania, do którego stołu należą.
+        result = [item for item in result if item.kind != "bom_line" or item.payload.get("group")]
+    return result
+
+
+def page_count(content: bytes, fmt: str) -> int:
+    if fmt in ("dwg", "dxf"):
+        return 1
+    try:
+        import pypdfium2
+        document = pypdfium2.PdfDocument(content)
+        try:
+            return len(document)
+        finally:
+            document.close()
+    except Exception:
+        return 0
 STATUSES = ("nowa", "zatwierdzona", "odrzucona")
 
 # Pola, które kierownik może poprawić w propozycji danego rodzaju (reszta to dane diagnostyczne parsera).
@@ -69,6 +103,8 @@ def detach_document(session, document_id: int) -> int:
     removed = 0
     for item in session.scalars(select(Suggestion)).all():
         sources = loads(item.sources_json, [])
+        if item.key.startswith("manual|"):
+            continue  # wpis ręczny należy do użytkownika, nie do odczytu pliku
         kept = [source for source in sources if source.get("document_id") != document_id]
         if len(kept) == len(sources):
             continue
@@ -156,27 +192,24 @@ def analyze_document(storage_key: str, document_id: int):
                 return
             document.status, document.error = "analiza", ""
             session.commit()
-            content, filename = document.content, document.filename
+            content, filename, category = document.content, document.filename, document.category
+        fmt = cad.detect_format(filename, content) or cad.format_of(filename)
         try:
-            fmt = cad.detect_format(filename, content)
             analysis = cad.analyze_cad(content, filename) if fmt in ("dwg", "dxf") else analyze_pdf(content)
-        except cad.CadError as error:  # np. brak konwertera DWG — komunikat już jest dla użytkownika
+        except Exception as error:
+            # Nie „błąd”: plik zostaje, pokazujemy podgląd i formularz ręcznego uzupełnienia.
+            if not isinstance(error, cad.CadError):
+                log.warning("Analiza dokumentu %s/%s nie powiodła się: %s", storage_key, document_id, error)
+            note = str(error) if isinstance(error, cad.CadError) else MANUAL_NOTE
             with tenancy.project_session(storage_key) as session:
                 document = session.get(Document, document_id)
                 if document is not None:
-                    document.status, document.error = "błąd", str(error)
+                    document.status, document.error = "ręcznie", note
+                    document.pages = page_count(content, fmt)
                     document.analyzed_at, document.parser_version = now(), PARSER_VERSION
                     session.commit()
             return
-        except Exception as error:  # uszkodzony / zaszyfrowany PDF itp.
-            log.warning("Analiza dokumentu %s/%s nie powiodła się: %s", storage_key, document_id, error)
-            with tenancy.project_session(storage_key) as session:
-                document = session.get(Document, document_id)
-                if document is not None:
-                    document.status, document.error = "błąd", f"Nie udało się odczytać pliku ({type(error).__name__}: {str(error)[:300]})"
-                    document.analyzed_at, document.parser_version = now(), PARSER_VERSION
-                    session.commit()
-            return
+        analysis.suggestions = for_category(analysis.suggestions, category)
         with tenancy.project_session(storage_key) as session:
             document = session.get(Document, document_id)
             if document is None:  # usunięty w trakcie analizy
@@ -185,7 +218,8 @@ def analyze_document(storage_key: str, document_id: int):
             session.flush()
             result = merge_analysis(session, document, analysis.suggestions)
             recompute_conflicts(session)
-            document.status = "gotowy"
+            document.status = "gotowy" if analysis.suggestions else "ręcznie"
+            document.error = "" if analysis.suggestions else MANUAL_NOTE
             document.pages = analysis.pages
             document.summary_json = dumps(analysis.summary())
             document.warnings_json = dumps(analysis.warnings)

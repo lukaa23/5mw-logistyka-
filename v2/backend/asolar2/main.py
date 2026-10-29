@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import uuid
 from dataclasses import dataclass
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
@@ -1395,6 +1396,14 @@ class DocumentUpdate(BaseModel):
     category: Literal["auto", "bom", "rysunek", "instrukcja", "inne"]
 
 
+class ManualItemIn(BaseModel):
+    kind: Literal["bom_line", "structure_type", "zone", "numbering", "torque", "component", "tool"]
+    payload: dict
+    document_id: int | None = None
+    page: int = Field(default=1, ge=1, le=10000)
+    approve: bool = False
+
+
 def document_content(session, document_id: int) -> Document:
     document = get_or_404(session, Document, document_id, "Nie znaleziono dokumentu")
     _ = document.content  # kolumna odroczona — wczytaj, póki sesja jest otwarta
@@ -1402,15 +1411,62 @@ def document_content(session, document_id: int) -> Document:
 
 
 @app.patch("/api/projects/{project_id}/documents/{document_id}")
-def update_document(document_id: int, data: DocumentUpdate, access: Access = Depends(project_access)):
-    """Rodzaj dokumentu (np. „rysunek” — trafia na listę planów w Planimetrii)."""
+def update_document(document_id: int, data: DocumentUpdate, background: BackgroundTasks, access: Access = Depends(project_access)):
+    """Rodzaj dokumentu. Zmiana rodzaju = ponowny odczyt (inny rodzaj → inne dane do wyciągnięcia)."""
     writable(access)
     with tenancy.project_session(access.project.storage_key) as session:
         document = get_or_404(session, Document, document_id, "Nie znaleziono dokumentu")
+        changed = document.category != data.category
         document.category = data.category
+        if changed and document.status != "analiza":
+            document.status = "oczekuje"
         project_event(session, access, "update", "document", document.id, f"{document.filename}: {data.category}")
         session.commit()
-        return document_dict(document)
+        result = document_dict(document)
+    if changed:
+        background.add_task(imports.analyze_document, access.project.storage_key, document_id)
+    return result
+
+
+@app.post("/api/projects/{project_id}/suggestions")
+def create_manual_item(data: ManualItemIn, access: Access = Depends(project_access)):
+    """Pozycja wpisana ręcznie obok podglądu dokumentu (np. ze skanu). Trafia na ten sam ekran weryfikacji."""
+    writable(access)
+    try:
+        payload = imports.clean_payload(data.kind, data.payload)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+    required = {"bom_line": ("name", "quantity"), "structure_type": ("code",), "zone": ("name",), "numbering": ("prefix", "first", "last"),
+                "torque": ("bolt", "min_nm", "max_nm"), "component": ("name",), "tool": ("name",)}[data.kind]
+    missing = [field for field in required if payload.get(field) in (None, "")]
+    if missing:
+        raise HTTPException(400, f"Uzupełnij: {', '.join(missing)}")
+    if data.kind == "structure_type":
+        payload["code"] = structure.normalize_type_code(payload["code"])
+        payload.setdefault("modules", structure.modules_of(payload["code"]))
+    if data.kind == "numbering":
+        payload.update({"prefix": payload["prefix"].upper(), "count": payload["last"] - payload["first"] + 1, "missing": [], "example": f"{payload['prefix'].upper()}-{payload['first']}"})
+    if data.kind == "bom_line":
+        payload.setdefault("unit", "szt.")
+        payload.setdefault("group", "")
+    with tenancy.project_session(access.project.storage_key) as session:
+        source = {"document_id": None, "filename": "wpis ręczny", "page": data.page, "excerpt": "wpis ręczny"}
+        if data.document_id is not None:
+            document = get_or_404(session, Document, data.document_id, "Nie znaleziono dokumentu")
+            source.update({"document_id": document.id, "filename": document.filename, "excerpt": f"wpis ręczny (strona {data.page})"})
+        item = Suggestion(kind=data.kind, key=f"manual|{uuid.uuid4().hex}", payload_json=imports.dumps(payload), original_json=imports.dumps(payload),
+                          sources_json=imports.dumps([source]), confidence=1.0, edited=True)
+        session.add(item)
+        session.flush()
+        if data.approve:
+            try:
+                set_status(session, item, "zatwierdzona", access.user.id)
+            except structure.ApplyError as error:
+                session.rollback()
+                raise HTTPException(409, str(error)) from None
+        project_event(session, access, "create", "suggestion", item.id, imports.dumps({"ręcznie": data.kind}))
+        session.commit()
+        return suggestion_dict(item)
 
 
 @app.get("/api/projects/{project_id}/documents/{document_id}/plan")

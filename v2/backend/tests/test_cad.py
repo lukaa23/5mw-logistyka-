@@ -173,7 +173,7 @@ class CadFlowTest(StructureBase):
         with mock.patch.object(cad, "find_converter", return_value=None):
             self.upload_file("GA.dwg", FAKE_DWG)
         document = self.get("/documents")[0]
-        self.assertEqual(document["status"], "błąd")
+        self.assertEqual(document["status"], "ręcznie")
         self.assertIn("ODA File Converter", document["error"])
         self.assertIn("DXF", document["error"])
 

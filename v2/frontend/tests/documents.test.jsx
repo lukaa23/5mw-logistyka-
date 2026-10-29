@@ -1,4 +1,5 @@
-/* ASOLAR v2, etap 2: wgrywanie wielu PDF, lista dokumentów, ekran przeglądu propozycji. */
+/* Dokumenty (uproszczone): kafelki rodzajów + przeciągnij i upuść, postęp dla każdego pliku,
+ * weryfikacja z podglądem po lewej i pozycjami po prawej, edycja jednym kliknięciem, tryb ręczny. */
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -7,165 +8,202 @@ import { DialogProvider } from "../src/ui";
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const project = { id: 7, name: "Farma Test", archived: false, stats: {} };
-const source = (page, filename = "montaz.pdf") => ({ document_id: 1, filename, page, excerpt: `fragment ze strony ${page}` });
-const suggestion = (id, kind, payload, extra = {}) => ({ id, kind, key: `${kind}|${id}`, payload, original: payload, sources: [source(53)], confidence: 0.9, status: "nowa", edited: false, applied_ref: "", ...extra });
+const manager = { role: "kierownik", isManager: true };
+const foreman = { role: "brygadzista", isManager: false };
+const source = (documentId, page = 1) => ({ document_id: documentId, filename: "bom.pdf", page, excerpt: "..." });
+const item = (id, kind, payload, extra = {}) => ({ id, kind, key: `${kind}|${id}`, payload, original: payload, sources: [source(1)], confidence: 0.9, status: "nowa", edited: false, applied_ref: "", ...extra });
 
-let server;
+let server, xhrs;
+
+class FakeXHR {
+  constructor() { this.upload = {}; this.headers = {}; xhrs.push(this); }
+  open(method, url) { this.method = method; this.url = url; }
+  setRequestHeader(name, value) { this.headers[name] = value; }
+  send(body) {
+    this.body = body;
+    const file = body.get("files");
+    setTimeout(() => {
+      this.upload.onprogress?.({ lengthComputable: true, loaded: 50, total: 100 });
+      setTimeout(() => {
+        const duplicate = file.name === "kopia.pdf";
+        this.status = 200;
+        this.responseText = JSON.stringify(duplicate ? { accepted: [], duplicates: [{ filename: file.name, existing: "bom.pdf" }], rejected: [] }
+          : { accepted: [{ id: 100 + xhrs.length, filename: file.name }], duplicates: [], rejected: [] });
+        this.onload();
+      }, 5);
+    }, 5);
+  }
+}
+
 beforeEach(() => {
+  xhrs = [];
+  globalThis.URL.createObjectURL = vi.fn(() => "blob:preview");
+  globalThis.URL.revokeObjectURL = vi.fn();
+  vi.stubGlobal("XMLHttpRequest", FakeXHR);
   server = {
+    calls: [],
     documents: [
-      { id: 1, filename: "montaz.pdf", size: 4500000, status: "gotowy", pages: 60, summary: { suggestions: { bom_line: 3 } }, warnings: [], error: "", uploaded_at: "2026-10-28T08:00:00" },
-      { id: 2, filename: "planimetria.pdf", size: 7900000, status: "gotowy", pages: 12, summary: { suggestions: {} }, warnings: ["Strony zapisane jako obraz (skan) — bez OCR nie da się odczytać ich treści: 1, 2."], error: "", uploaded_at: "2026-10-28T08:01:00" },
+      { id: 1, filename: "bom.pdf", format: "pdf", category: "bom", size: 190000, status: "gotowy", pages: 3, summary: {}, warnings: [], error: "", uploaded_at: "2026-10-29T08:00:00" },
+      { id: 2, filename: "skan.pdf", format: "pdf", category: "bom", size: 500000, status: "ręcznie", pages: 2, summary: {}, warnings: [], error: "Nie znaleziono danych do automatycznego odczytu (np. skan albo nietypowy układ). Uzupełnij pozycje ręcznie obok podglądu.", uploaded_at: "2026-10-29T08:01:00" },
     ],
     suggestions: [
-      suggestion(1, "bom_line", { name: "Purlin 1", code: "LT1-1450", spec: "J60x30x1.8", quantity: 44, unit: "szt.", group: "1x42" }),
-      suggestion(2, "bom_line", { name: "Purlin 1", code: "LT1-1450", spec: "J60x30x1.8", quantity: 58, unit: "szt.", group: "1x56" }),
-      suggestion(3, "bom_line", { name: "Clamp", code: "CL-7", spec: "M8", quantity: 88, unit: "szt.", group: "1x42", conflict: [88, 90] }, { confidence: 0.5 }),
-      suggestion(4, "zone", { name: "Zone A1", occurrences: 3 }),
-      suggestion(5, "numbering", { prefix: "T", first: 1, last: 55, count: 55, example: "T-1", missing: [] }, { confidence: 0.75 }),
+      item(10, "bom_line", { name: "Pole 1", code: "", spec: "C120", quantity: 11, unit: "PCS", group: "2x26" }, { sources: [source(1, 1)] }),
+      item(11, "bom_line", { name: "Beam", code: "", spec: "C120x50", quantity: 11, unit: "PCS", group: "" }, { sources: [source(1, 3)] }),
+      item(12, "structure_type", { code: "2x26", modules: 52, tables: 157 }),
+      item(13, "bom_line", { name: "Purlin", code: "", spec: "", quantity: 4, unit: "PCS", group: "2x26" }, { status: "zatwierdzona" }),
     ],
-    calls: [],
+    types: [{ id: 1, code: "2x13" }],
   };
   vi.stubGlobal("fetch", vi.fn(async (path, options = {}) => {
     const method = options.method || "GET";
-    server.calls.push({ path, method, body: options.body });
+    server.calls.push({ path, method, body: options.body ? JSON.parse(options.body) : null });
     if (path.endsWith("/documents") && method === "GET") return json(server.documents);
-    if (path.includes("/documents?category=")) return json({ accepted: [{ id: 9 }], duplicates: [], rejected: [] });
-    if (path.endsWith("/suggestions")) return json(server.suggestions);
+    if (path.endsWith("/suggestions") && method === "GET") return json(server.suggestions);
+    if (path.endsWith("/suggestions") && method === "POST") return json({ id: 99 });
+    if (path.endsWith("/types")) return json(server.types);
+    if (path.includes("/pages/")) return new Response(new Uint8Array([137, 80]), { headers: { "Content-Type": "image/png" } });
+    if (path.endsWith("/suggestions/bulk")) return json({ updated: JSON.parse(options.body).ids.length, failed: [] });
     const one = /\/suggestions\/(\d+)$/.exec(path);
     if (one && method === "PATCH") {
-      const item = server.suggestions.find(s => s.id === Number(one[1]));
       const body = JSON.parse(options.body);
-      Object.assign(item, { status: body.status || item.status, payload: { ...item.payload, ...(body.payload || {}) }, edited: item.edited || !!body.payload });
-      return json(item);
+      if (Number(one[1]) === 11 && body.status === "zatwierdzona") return json({ detail: "„Beam”: brak typu konstrukcji — uzupełnij pole „Typ konstrukcji”" }, 409);
+      const target = server.suggestions.find(s => s.id === Number(one[1]));
+      Object.assign(target, { status: body.status || target.status, payload: { ...target.payload, ...(body.payload || {}) } });
+      return json(target);
     }
-    if (path.endsWith("/suggestions/bulk")) { const body = JSON.parse(options.body); server.suggestions.filter(s => body.ids.includes(s.id)).forEach(s => { s.status = body.status; }); return json({ updated: body.ids.length }); }
-    return json({});
+    return json({ ok: true });
   }));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const notify = vi.fn();
-const manager = { role: "kierownik", isManager: true };
-const foreman = { role: "brygadzista", isManager: false };
-const show = (access = manager, proj = project) => render(<DialogProvider><Documents project={proj} access={access} notify={notify} /></DialogProvider>);
-const patches = () => server.calls.filter(call => call.method === "PATCH").map(call => ({ path: call.path, body: JSON.parse(call.body) }));
+const show = (access = manager) => render(<DialogProvider><Documents project={project} access={access} notify={notify} /></DialogProvider>);
+const writes = () => server.calls.filter(call => call.method !== "GET");
+async function openReview(name = "bom.pdf") {
+  const row = (await screen.findAllByTestId("document-row")).find(element => element.textContent.includes(name));
+  fireEvent.click(within(row).getByText("Sprawdź"));
+  return screen.findByTestId("review");
+}
 
-describe("dokumenty i przegląd propozycji", () => {
-  it("pokazuje pliki z ostrzeżeniem OCR i propozycje pogrupowane wg rodzaju i typu konstrukcji", async () => {
+describe("dodawanie plików", () => {
+  it("trzy kafelki rodzajów; wybór z dysku wgrywa każdy plik osobno z paskiem postępu i rodzajem", async () => {
     show();
-    expect(await screen.findByText("montaz.pdf")).toBeTruthy();
-    expect(screen.getByText(/bez OCR nie da się odczytać/)).toBeTruthy();
-    const bom = await screen.findByTestId("section-bom_line");
-    expect(within(bom).getByText(/Typ konstrukcji: 1x42/)).toBeTruthy();
-    expect(within(bom).getByText(/Typ konstrukcji: 1x56/)).toBeTruthy();
-    expect(within(bom).getByText(/Rozbieżność ilości między źródłami: 88 \/ 90/)).toBeTruthy();
-    expect(within(bom).getAllByText(/Źródło: montaz.pdf s. 53/).length).toBe(3);
-    expect(screen.getByTestId("section-zone")).toBeTruthy();
-    expect(screen.getByText("T 1–55")).toBeTruthy();
+    await screen.findAllByTestId("document-row");
+    expect(screen.getByText("BOM / lista materiałowa")).toBeTruthy();
+    expect(screen.getByText("Rysunki i schematy")).toBeTruthy();
+    expect(screen.getByText("Instrukcje i manuale")).toBeTruthy();
+    const files = [new File(["%PDF-1"], "a.pdf", { type: "application/pdf" }), new File(["%PDF-1"], "kopia.pdf", { type: "application/pdf" }), new File(["x"], "notatka.docx")];
+    fireEvent.change(screen.getByLabelText("Pliki: BOM / lista materiałowa"), { target: { files } });
+    const rows = await screen.findAllByTestId("queue-row");
+    expect(rows).toHaveLength(3);
+    await waitFor(() => expect(xhrs).toHaveLength(2));
+    expect(xhrs.map(request => request.url)).toEqual(["/api/projects/7/documents?category=bom", "/api/projects/7/documents?category=bom"]);
+    expect(xhrs[0].body.getAll("files").map(file => file.name)).toEqual(["a.pdf"]);
+    await waitFor(() => expect(screen.getByText("Już wgrany jako „bom.pdf”")).toBeTruthy());
+    expect(screen.getByText("Obsługiwane są pliki PDF, DWG i DXF")).toBeTruthy();
+    expect(screen.getAllByRole("progressbar").length).toBe(3);
   });
 
-  it("zatwierdza i odrzuca pojedynczą propozycję", async () => {
+  it("przeciągnij i upuść na kafelek rysunków wysyła z rodzajem „rysunek”", async () => {
     show();
-    const zone = await screen.findByTestId("section-zone");
-    fireEvent.click(within(zone).getByText("Zatwierdź"));
-    await waitFor(() => expect(patches()).toEqual([{ path: "/api/projects/7/suggestions/4", body: { status: "zatwierdzona" } }]));
-    const numbering = screen.getByTestId("section-numbering");
-    fireEvent.click(within(numbering).getByText("Odrzuć"));
-    await waitFor(() => expect(patches()[1]).toEqual({ path: "/api/projects/7/suggestions/5", body: { status: "odrzucona" } }));
+    await screen.findAllByTestId("document-row");
+    const tile = screen.getByTestId("tile-rysunek");
+    fireEvent.dragOver(tile, { dataTransfer: { files: [] } });
+    expect(tile.className).toContain("over");
+    fireEvent.drop(tile, { dataTransfer: { files: [new File(["AC1032"], "layout.dwg")] } });
+    await waitFor(() => expect(xhrs[0]?.url).toBe("/api/projects/7/documents?category=rysunek"));
   });
 
-  it("poprawia ilość przed zatwierdzeniem; Esc anuluje edycję", async () => {
-    show();
-    const bom = await screen.findByTestId("section-bom_line");
-    const row = within(bom).getAllByTestId("suggestion-row")[0];
-    fireEvent.click(within(row).getByText("Popraw"));
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(within(row).queryByLabelText("Ilość")).toBeNull());
-    fireEvent.click(within(row).getByText("Popraw"));
-    fireEvent.change(within(row).getByLabelText("Ilość"), { target: { value: "46" } });
-    fireEvent.click(within(row).getByText("Zapisz i zatwierdź"));
-    await waitFor(() => expect(patches()).toEqual([{ path: "/api/projects/7/suggestions/1", body: { status: "zatwierdzona", payload: { quantity: 46 } } }]));
-  });
-
-  it("zatwierdzenie zbiorcze pomija pozycje z rozbieżnością i wymaga potwierdzenia", async () => {
-    show();
-    const bom = await screen.findByTestId("section-bom_line");
-    fireEvent.click(within(bom).getByText("Zatwierdź wszystkie (2)"));
-    fireEvent.click(await screen.findByText("Zatwierdź 2"));
-    await waitFor(() => expect(server.calls.some(call => call.path.endsWith("/bulk"))).toBe(true));
-    const bulk = server.calls.find(call => call.path.endsWith("/bulk"));
-    expect(JSON.parse(bulk.body)).toEqual({ ids: [1, 2], status: "zatwierdzona" });
-  });
-
-  it("brygadzista ma tylko podgląd: bez wgrywania i bez przycisków decyzji", async () => {
+  it("lista pokazuje prosty stan dokumentów; brygadzista nie wgrywa", async () => {
     show(foreman);
-    await screen.findByTestId("section-bom_line");
-    expect(screen.queryByTestId("drop-zone")).toBeNull();
-    expect(screen.queryByText("Zatwierdź")).toBeNull();
+    const rows = await screen.findAllByTestId("document-row");
+    expect(within(rows[0]).getByText("Do sprawdzenia: 3")).toBeTruthy();
+    expect(within(rows[1]).getByText("Uzupełnij ręcznie")).toBeTruthy();
+    expect(screen.queryByTestId("tile-bom")).toBeNull();
     expect(screen.queryByText("Usuń")).toBeNull();
-    expect(screen.getByText(/Masz podgląd/)).toBeTruthy();
-  });
-
-  it("wgrywa wiele PDF, DWG i DXF jednym żądaniem i pomija pliki innego typu", async () => {
-    show();
-    await screen.findByText("montaz.pdf");
-    const files = [new File(["%PDF-1"], "a.pdf", { type: "application/pdf" }), new File(["AC1032"], "plan.dwg"), new File(["0 SECTION"], "plan.DXF"), new File(["x"], "c.docx", { type: "application/msword" })];
-    fireEvent.change(screen.getByLabelText("Pliki PDF, DWG lub DXF"), { target: { files } });
-    await waitFor(() => expect(server.calls.some(call => call.path.includes("/documents?category=auto"))).toBe(true));
-    const upload = server.calls.find(call => call.path.includes("/documents?category=auto"));
-    expect(upload.body.getAll("files").map(file => file.name)).toEqual(["a.pdf", "plan.dwg", "plan.DXF"]);
-    expect(notify).toHaveBeenCalledWith("Pominięto 1 plik(ów) innych niż PDF, DWG lub DXF", "error");
-  });
-
-  it("rysunek DWG: znacznik formatu, „Pobierz” zamiast podglądu, bloki z rysunku w propozycjach", async () => {
-    server.documents.push({ id: 3, filename: "GA.dwg", format: "dwg", size: 419000, status: "gotowy", pages: 1, summary: { suggestions: { drawing_block: 1 } }, warnings: [], error: "", uploaded_at: "2026-10-29T08:00:00" });
-    server.suggestions.push(suggestion(9, "drawing_block", { name: "PALO", count: 2063, layers: ["PALI"] }));
-    show();
-    const row = (await screen.findAllByTestId("document-row")).find(item => item.textContent.includes("GA.dwg"));
-    expect(within(row).getByText("DWG")).toBeTruthy();
-    expect(within(row).getByText("Pobierz")).toBeTruthy();
-    const blocks = await screen.findByTestId("section-drawing_block");
-    expect(within(blocks).getByText("PALO")).toBeTruthy();
-    expect(within(blocks).getByText("2063 szt. w rysunku")).toBeTruthy();
-    expect(within(blocks).getByText("warstwy: PALI")).toBeTruthy();
-  });
-
-  it("opisuje propozycje czytelnie", () => {
-    expect(describeItem({ kind: "torque", payload: { bolt: "M10", min_nm: 25, max_nm: 32, context: "" } }).value).toBe("25–32 N·m");
-    expect(describeItem({ kind: "numbering", payload: { prefix: "T", first: 1, last: 55, count: 53, example: "T-1", missing: [7, 9] } }).detail).toContain("brak w zakresie: 7, 9");
   });
 });
 
-describe("pozycje BOM bez typu", () => {
-  it("nie wchodzą do „Zatwierdź wszystkie”; można im przypisać typ zbiorczo", async () => {
-    server.suggestions.push(
-      suggestion(6, "bom_line", { name: "Pole 1", code: "", spec: "", quantity: 11, unit: "szt.", group: "" }),
-      suggestion(7, "bom_line", { name: "Pole 2", code: "", spec: "", quantity: 11, unit: "szt.", group: "" }),
-      suggestion(8, "structure_type", { code: "2x26", modules: 52, tables: 157, occurrences: 1 }),
-    );
-    render(<DialogProvider><Documents project={project} access={manager} notify={notify} /></DialogProvider>);
-    const bom = await screen.findByTestId("section-bom_line");
-    expect(within(bom).getByText("Zatwierdź wszystkie (2)")).toBeTruthy();
-    expect(screen.getByText(/liczba stołów wg dokumentu: 157/)).toBeTruthy();
-    const select = await within(bom).findByLabelText("Typ dla pozycji bez typu");
-    await within(select).findByRole("option", { name: "2x26" });
-    fireEvent.change(select, { target: { value: "2x26" } });
-    fireEvent.click(within(bom).getByText("Przypisz 2x26 i zatwierdź (2)"));
+describe("weryfikacja: podgląd po lewej, pozycje po prawej", () => {
+  it("pokazuje podgląd strony i pozycje ze statusem; kliknięcie pozycji przenosi podgląd na jej stronę", async () => {
+    show();
+    const review = await openReview();
+    await waitFor(() => expect(server.calls.some(call => call.path.endsWith("/documents/1/pages/1.png?scale=1.5"))).toBe(true));
+    expect(within(review).getByText("Strona 1 / 3")).toBeTruthy();
+    const rows = within(review).getAllByTestId("item-row");
+    expect(rows.map(row => row.textContent).join(" ")).toContain("Wymaga potwierdzenia");
+    expect(rows.map(row => row.textContent).join(" ")).toContain("Zatwierdzone");
+    fireEvent.click(within(review).getByText("Beam"));
+    await waitFor(() => expect(within(review).getByText("Strona 3 / 3")).toBeTruthy());
+  });
+
+  it("edycja jednym kliknięciem: zmiana ilości i Zapisz; Esc anuluje", async () => {
+    show();
+    const review = await openReview();
+    fireEvent.click(within(review).getByText("Pole 1"));
+    const form = await within(review).findByRole("form", { name: "Edycja: Pole 1" });
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(within(review).queryByRole("form", { name: "Edycja: Pole 1" })).toBeNull());
+    expect(screen.getByTestId("review")).toBe(review); // Esc w edycji nie zamyka ekranu weryfikacji
+    fireEvent.click(within(review).getByText("Pole 1"));
+    const again = await within(review).findByRole("form", { name: "Edycja: Pole 1" });
+    fireEvent.change(within(again).getByLabelText("Ilość / stół"), { target: { value: "12" } });
+    fireEvent.click(within(again).getByText("Zapisz"));
+    await waitFor(() => expect(writes()[0]).toEqual({ path: "/api/projects/7/suggestions/10", method: "PATCH", body: { payload: { quantity: 12 } } }));
+    expect(form).toBeTruthy();
+  });
+
+  it("zatwierdzenie ✓; odmowa serwera pokazuje się przy pozycji, nie jako błąd całej strony", async () => {
+    show();
+    const review = await openReview();
+    fireEvent.click(within(review).getByLabelText("Zatwierdź: Pole 1"));
+    await waitFor(() => expect(writes()[0].body).toEqual({ status: "zatwierdzona" }));
+    fireEvent.click(within(review).getByLabelText("Zatwierdź: Beam"));
+    expect(await within(review).findByRole("alert")).toBeTruthy();
+    expect(within(review).getByRole("alert").textContent).toContain("brak typu konstrukcji");
+  });
+
+  it("„Zatwierdź wszystkie” pomija pozycje bez typu; te dostają typ jednym polem", async () => {
+    show();
+    const review = await openReview();
+    fireEvent.click(within(review).getByText("Zatwierdź wszystkie (2)"));
     fireEvent.click(await screen.findByText("Zatwierdź 2"));
-    await waitFor(() => expect(server.calls.some(call => call.path.endsWith("/bulk"))).toBe(true));
-    expect(JSON.parse(server.calls.find(call => call.path.endsWith("/bulk")).body)).toEqual({ ids: [6, 7], status: "zatwierdzona", group: "2x26" });
+    await waitFor(() => expect(writes()[0]).toEqual({ path: "/api/projects/7/suggestions/bulk", method: "POST", body: { ids: [10, 12], status: "zatwierdzona" } }));
+    fireEvent.change(within(review).getByLabelText("Typ dla pozycji bez typu"), { target: { value: "2x26" } });
+    fireEvent.click(within(review).getByText("Ustaw i zatwierdź"));
+    fireEvent.click(await screen.findByText("Zatwierdź 1"));
+    await waitFor(() => expect(writes()[1].body).toEqual({ ids: [11], status: "zatwierdzona", group: "2x26" }));
   });
-});
 
-describe("odrzucanie pozycji bez typu", () => {
-  it("jednym kliknięciem z potwierdzeniem", async () => {
-    server.suggestions.push(suggestion(6, "bom_line", { name: "Pole 1", code: "", spec: "", quantity: 11, unit: "szt.", group: "" }));
-    render(<DialogProvider><Documents project={project} access={manager} notify={notify} /></DialogProvider>);
-    const bom = await screen.findByTestId("section-bom_line");
-    fireEvent.click(within(bom).getByText("Odrzuć pozycje bez typu (1)"));
-    fireEvent.click(await screen.findByText("Odrzuć 1"));
-    await waitFor(() => expect(server.calls.some(call => call.path.endsWith("/bulk"))).toBe(true));
-    expect(JSON.parse(server.calls.find(call => call.path.endsWith("/bulk")).body)).toEqual({ ids: [6], status: "odrzucona" });
+  it("dokument do uzupełnienia ręcznego: komunikat bez błędu i formularz obok podglądu", async () => {
+    show();
+    const review = await openReview("skan.pdf");
+    expect(within(review).getByText(/Uzupełnij pozycje ręcznie obok podglądu/)).toBeTruthy();
+    expect(within(review).getByText("Nic nie odczytano automatycznie. Dodaj pozycje ręcznie poniżej.")).toBeTruthy();
+    fireEvent.click(within(review).getByLabelText("Następna strona"));
+    const form = within(review).getByRole("form", { name: "Dodaj pozycję ręcznie" });
+    fireEvent.change(within(form).getByLabelText("Nazwa"), { target: { value: "Pole 1" } });
+    fireEvent.change(within(form).getByLabelText("Ilość / stół"), { target: { value: "11" } });
+    fireEvent.change(within(form).getByLabelText("Typ stołu"), { target: { value: "2x26" } });
+    fireEvent.click(within(form).getByText("Dodaj i zatwierdź"));
+    await waitFor(() => expect(writes()[0]).toEqual({ path: "/api/projects/7/suggestions", method: "POST",
+      body: { kind: "bom_line", payload: { name: "Pole 1", quantity: 11, group: "2x26" }, document_id: 2, page: 2, approve: true } }));
+  });
+
+  it("zmiana rodzaju dokumentu = ponowny odczyt; brygadzista bez przycisków decyzji", async () => {
+    show();
+    const review = await openReview();
+    fireEvent.change(within(review).getByLabelText("Rodzaj dokumentu"), { target: { value: "instrukcja" } });
+    await waitFor(() => expect(writes()[0]).toEqual({ path: "/api/projects/7/documents/1", method: "PATCH", body: { category: "instrukcja" } }));
+    cleanup();
+    show(foreman);
+    const readOnly = await openReview();
+    expect(within(readOnly).queryByLabelText("Zatwierdź: Pole 1")).toBeNull();
+    expect(within(readOnly).queryByRole("form", { name: "Dodaj pozycję ręcznie" })).toBeNull();
+  });
+
+  it("opisuje pozycje czytelnie", () => {
+    expect(describeItem({ kind: "torque", payload: { bolt: "M10", min_nm: 25, max_nm: 32, context: "" } }).value).toBe("25–32 N·m");
+    expect(describeItem({ kind: "bom_line", payload: { name: "Pole 1", quantity: 11, unit: "PCS", group: "2x26", spec: "C120" } }).value).toBe("11 PCS / stół");
   });
 });
