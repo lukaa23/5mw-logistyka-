@@ -61,5 +61,5 @@ def validate_items(session, items, already_in_delivery: dict[str, dict] | None =
     known = {**(already_in_delivery or {}), **catalogue(session)}
     unknown = [key for key in keys if key not in known]
     if unknown:
-        raise ValueError("Pozycja spoza katalogu materiałów budowy (BOM / komponenty) — najpierw zatwierdź ją w zakładce „Dokumenty i import” albo dodaj do BOM")
+        raise ValueError("Pozycja spoza katalogu materiałów budowy (BOM / komponenty) — najpierw zatwierdź ją w zakładce „Dokumenty” albo dodaj do BOM")
     return known

@@ -193,7 +193,7 @@ export default function Fieldwork({ project, access, user, notify }) {
       </div>
     </section>
     {tables.error && <div className="alert error" role="alert">{tables.error}</div>}
-    {tables.loading && !tables.data ? <Loader /> : !all.length ? <Empty>Brak stołów. Kierownik tworzy je w zakładce „Stoły i rzędy” (z numeracji PDF albo ręcznie).</Empty>
+    {tables.loading && !tables.data ? <Loader /> : !all.length ? <Empty>Brak stołów. Kierownik tworzy je w „Strefy i rzędy” → „Konfiguracja stref” (zakres numerów albo numeracja z PDF).</Empty>
       : <div className="field-list">{visible.map(t => <div key={t.id} className={`field-row ${t.qc_checked ? "qc" : t.built ? "built" : ""}`} data-testid="field-row">
         <button type="button" className="field-code" onClick={() => setOpenId(t.id)} aria-label={`Szczegóły stołu ${t.code}`}>
           <strong>{t.code}</strong>

@@ -75,7 +75,7 @@ export function PlanView({ project, access, user, notify }) {
       </div>
       <div className="plan-legend"><span className="dot todo" /> do montażu {counts.todo}<span className="dot built" /> zamontowane {counts.built}<span className="dot qc" /> odebrane {counts.qc}
         {access.isManager && selected && selected.category !== "rysunek" && !project.archived && <button type="button" className="secondary small" onClick={markAsDrawing}>Oznacz jako rysunek</button>}</div>
-      {plan.data && !plan.data.markers.length && <p className="needs">{plan.data.codes_on_page ? "Na tej stronie są oznaczenia, ale żadne nie pasuje do stołów budowy — dodaj stoły (zakładka „Stoły i rzędy”) albo zatwierdź numerację z PDF." : "Na tej stronie nie znaleziono oznaczeń stołów w warstwie tekstowej (np. skan) — znaczników nie da się umieścić automatycznie."}</p>}
+      {plan.data && !plan.data.markers.length && <p className="needs">{plan.data.codes_on_page ? "Na tej stronie są oznaczenia, ale żadne nie pasuje do stołów budowy — dodaj rzędy („Strefy i rzędy”) albo zatwierdź numerację z PDF." : "Na tej stronie nie znaleziono oznaczeń stołów w warstwie tekstowej (np. skan) — znaczników nie da się umieścić automatycznie."}</p>}
       {plan.data?.markers.length > 0 && plan.data.tables_not_on_page > 0 && <p className="hint">{plan.data.tables_not_on_page} stołów budowy nie występuje na tej stronie.</p>}
       {plan.loading && !plan.data && <p className="hint">Odczytywanie położenia stołów z rysunku… (duży arkusz może potrwać kilka sekund)</p>}
       {plan.error && <div className="alert error" role="alert">{plan.error}</div>}

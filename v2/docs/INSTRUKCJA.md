@@ -14,7 +14,7 @@ Jedno konto może mieć różne role na różnych budowach. Osoba spoza zespołu
 
 ## Ekran aplikacji (jak w v1)
 
-- **Panel boczny** (po lewej): Pulpit, Budowy, Postęp prac, Meldunki, Zapotrzebowanie, Dostawy na budowę, Mapa / Planimetria, Dokumenty oraz ustawienia budowy (Stoły i rzędy, Konstrukcje i BOM, Strefy, Zespół, Ustawienia budowy). Na telefonie — pasek na dole ekranu.
+- **Panel boczny** (po lewej): Pulpit, Budowy, Strefy i rzędy, Meldunki, Zapotrzebowanie, Dostawy na budowę, Mapa / Planimetria, Dokumenty, Konstrukcje i BOM, Zespół, Ustawienia budowy. Na telefonie — pasek na dole ekranu (tam „Rzędy” to widok operacyjny).
 - **Górny pasek:** „Aktywna budowa” — wybierz inną farmę z listy, a aplikacja zostanie w tym samym widoku. Obok wskaźnik **Online/Offline** z liczbą niewysłanych zmian (kliknij, aby je zobaczyć lub wysłać).
 
 ## Pierwsze kroki
@@ -25,7 +25,7 @@ Jedno konto może mieć różne role na różnych budowach. Osoba spoza zespołu
 
 ## Dokumenty: dodawanie i sprawdzanie (3 kroki)
 
-1. **Dodaj:** zakładka „Dokumenty i import” → upuść pliki na właściwy kafelek — **BOM / lista materiałowa**, **Rysunki i schematy** (PDF, DWG, DXF) albo **Instrukcje i manuale** — lub kliknij „Wybierz pliki z dysku”. Można wiele plików naraz; każdy ma własny pasek postępu.
+1. **Dodaj:** zakładka „Dokumenty” → upuść pliki na właściwy kafelek — **BOM / lista materiałowa**, **Rysunki i schematy** (PDF, DWG, DXF) albo **Instrukcje i manuale** — lub kliknij „Wybierz pliki z dysku”. Można wiele plików naraz; każdy ma własny pasek postępu.
 2. **Sprawdź:** przy pliku kliknij **Sprawdź**. Po lewej podgląd dokumentu (strony, „Powiększ”), po prawej odczytane pozycje (nazwa, ilość, kod) ze statusem **Wymaga potwierdzenia** / **Zatwierdzone**. Kliknięcie pozycji otwiera ją do poprawki i pokazuje jej stronę w podglądzie.
 3. **Zatwierdź:** ✓ przy pozycji albo **Zatwierdź wszystkie**. Pozycjom BOM bez typu stołu wpisz typ jednym polem („Ustaw i zatwierdź”).
 
@@ -35,7 +35,7 @@ Gdy aplikacja nic nie odczyta (skan, nietypowy układ), dokument ma status **Uzu
 
 ## Rysunki DWG i DXF
 
-- Wgraj `.dwg` lub `.dxf` w „Dokumenty i import” (razem z PDF). Plik DWG/DXF nie otworzy się w przeglądarce — przycisk „Pobierz”, a podgląd rysunku jest w zakładce **Planimetria**.
+- Wgraj `.dwg` lub `.dxf` w zakładce „Dokumenty” (razem z PDF). Plik DWG/DXF nie otworzy się w przeglądarce — przycisk „Pobierz”, a podgląd rysunku jest w zakładce **Planimetria**.
 - Z rysunku powstają propozycje: numeracja stołów (z warstwą, na której jest), strefy, typy konstrukcji, momenty oraz **bloki z liczbą wstawień** (np. `PALO` × 2063). Zatwierdzony blok trafia do katalogu jako ilość kontrolna — porównaj ją z zapotrzebowaniem z BOM.
 - **DWG** wymaga konwertera. Jeśli dokument ma status „Błąd odczytu” z prośbą o konwerter: w AutoCAD lub bezpłatnym DWG TrueView zapisz rysunek jako **DXF** i wgraj plik `.dxf` — albo poproś administratora o instalację ODA File Converter.
 
@@ -56,7 +56,7 @@ Widok **Rzędy operacyjne** (na telefonie: „Rzędy”) służy do pracy w tere
 ## Praca w terenie (telefon)
 
 - Otwórz adres serwera w przeglądarce telefonu i dodaj do ekranu głównego (PWA).
-- **Postęp prac:** przycisk „Zamontowany” (brygadzista i kierownik), „Odbiór QC” (kierownik, po montażu). Nazwa stołu otwiera notatki i zdjęcia (aparat telefonu).
+- **Rzędy operacyjne** („Strefy i rzędy”; na telefonie „Rzędy”): przycisk „Zamontowany” (brygadzista i kierownik), „Odbiór QC” (kierownik, po montażu). Nazwa stołu otwiera notatki i zdjęcia (aparat telefonu).
 - **Bez zasięgu:** zmiany zapisują się w telefonie („czeka na wysłanie”) i wysyłają się same po powrocie sieci. Licznik w górnym pasku pokazuje niewysłane zmiany; tam można je też wysłać ręcznie lub odrzucić.
 - **Meldunki:** dzienny meldunek brygady z liczbą osób i godzin, dziennikiem QA/QC i zdjęciami — także offline.
 - **Dostawy i magazyn:** przyjęcie WZ (pozycje z katalogu materiałów budowy), stan: potrzeba / dostarczono / uszkodzone / bilans.
